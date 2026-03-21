@@ -152,6 +152,8 @@ model StockItem {
   movements       StockMovement[]
   productionMaterialUsages ProductionMaterialUsage[]
   supplierDeliveries SupplierDelivery[]
+
+  @@index([branchId])
 }
 
 model StockMovement {
@@ -164,6 +166,10 @@ model StockMovement {
   type        StockMovementType
   reason      String?
   createdAt   DateTime          @default(now())
+
+  @@index([stockItemId])
+  @@index([userId])
+  @@index([createdAt])
 }
 
 model ProductionBatch {
@@ -178,6 +184,9 @@ model ProductionBatch {
   createdAt DateTime    @default(now())
   items     ProductionItem[]
   materialUsages ProductionMaterialUsage[]
+
+  @@index([branchId, date])
+  @@index([branchId, status])
 }
 
 model ProductionItem {
@@ -238,6 +247,10 @@ model Sale {
   paymentMethod PaymentMethod @default(CASH)
   createdAt     DateTime  @default(now())
   items         SaleItem[]
+
+  @@index([sessionId])
+  @@index([userId])
+  @@index([createdAt])
 }
 
 model SaleItem {
@@ -250,6 +263,9 @@ model SaleItem {
   unitPrice Decimal  @db.Decimal(12, 2)
   subtotal  Decimal  @db.Decimal(12, 2)
   createdAt DateTime @default(now())
+
+  @@index([saleId])
+  @@index([productId])
 }
 
 model LeftoverRecord {
@@ -288,6 +304,9 @@ model SupplierDelivery {
   isPaid           Boolean    @default(false)
   returnedQuantity Int        @default(0)
   createdAt        DateTime   @default(now())
+
+  @@index([supplierId])
+  @@index([createdAt])
 }
 
 enum ExpenseType {
@@ -307,6 +326,9 @@ model Expense {
   description String?
   date        DateTime    @db.Date
   createdAt   DateTime    @default(now())
+
+  @@index([branchId, date])
+  @@index([userId])
 }
 
 model Loan {
@@ -323,6 +345,8 @@ model Loan {
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
   payments         LoanPayment[]
+
+  @@index([branchId])
 }
 
 model LoanPayment {
@@ -343,6 +367,8 @@ model Penalty {
   date       DateTime @db.Date
   isDeducted Boolean  @default(false)
   createdAt  DateTime @default(now())
+
+  @@index([userId])
 }
 
 model PayrollRecord {

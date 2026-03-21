@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma.js';
+import { toAuthUserDto } from '../lib/authUser.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 
 export const authRouter = Router();
@@ -15,7 +16,7 @@ authRouter.post('/login', async (req, res) => {
   }
   const user = await prisma.user.findUnique({
     where: { phone: phoneTrim, isActive: true },
-    include: { branch: true },
+    include: { branch: { select: { id: true, name: true } } },
   });
   if (!user) {
     return res.status(401).json({ error: 'Invalid credentials' });
@@ -29,22 +30,22 @@ authRouter.post('/login', async (req, res) => {
   );
   res.json({
     token,
-    user: {
-      id: user.id,
-      fullName: user.fullName,
-      phone: user.phone,
-      role: user.role,
-      branchId: user.branchId,
-      branch: user.branch ? { id: user.branch.id, name: user.branch.name } : null,
-    },
+    user: toAuthUserDto(user),
   });
 });
 
 authRouter.get('/me', authMiddleware, async (req: AuthRequest, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user!.id },
-    select: { id: true, fullName: true, phone: true, role: true, branchId: true, branch: true },
+    select: {
+      id: true,
+      fullName: true,
+      phone: true,
+      role: true,
+      branchId: true,
+      branch: { select: { id: true, name: true } },
+    },
   });
   if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json(user);
+  res.json(toAuthUserDto(user));
 });
