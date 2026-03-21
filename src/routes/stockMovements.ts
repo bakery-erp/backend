@@ -38,7 +38,7 @@ stockMovementsRouter.get('/:id', async (req, res) => {
   res.json(movement);
 });
 
-stockMovementsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER'), async (req: AuthRequest, res) => {
+stockMovementsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER', 'SAMBUSA_WORKER'), async (req: AuthRequest, res) => {
   const { stockItemId, quantity, type, reason } = req.body as {
     stockItemId: string;
     quantity: number | string;

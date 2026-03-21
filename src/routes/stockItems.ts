@@ -31,7 +31,7 @@ stockItemsRouter.get('/:id', async (req, res) => {
   res.json(item);
 });
 
-stockItemsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER'), async (req: AuthRequest, res) => {
+stockItemsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER', 'SAMBUSA_WORKER'), async (req: AuthRequest, res) => {
   const { branchId, name, unitType, currentQuantity, minStockLevel } = req.body as Record<string, unknown>;
   const bid = (branchId as string) || req.user?.branchId;
   if (!bid || !name || !unitType) return res.status(400).json({ error: 'branchId, name, unitType required' });
@@ -47,7 +47,7 @@ stockItemsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER'), async (req: A
   res.status(201).json(item);
 });
 
-stockItemsRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'BAKER'), async (req, res) => {
+stockItemsRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'SAMBUSA_WORKER'), async (req, res) => {
   const { name, unitType, currentQuantity, minStockLevel } = req.body as Record<string, unknown>;
   const data: Record<string, unknown> = {};
   if (name != null) data.name = String(name).trim();

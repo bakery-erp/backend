@@ -13,7 +13,7 @@ Express + TypeScript + Prisma (MySQL). Serves REST JSON for web, mobile, and Swa
 cp .env.example .env
 # Edit .env: DATABASE_URL, JWT_SECRET, PORT
 npm install
-npx prisma migrate deploy   # or: npx prisma db push (dev)
+npx prisma migrate deploy   # applies migrations (e.g. query indexes); or `npx prisma db push` for quick dev
 npm run dev
 ```
 

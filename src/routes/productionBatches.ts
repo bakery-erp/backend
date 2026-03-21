@@ -53,7 +53,7 @@ productionBatchesRouter.get('/:id', async (req, res) => {
   res.json(batch);
 });
 
-productionBatchesRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER'), async (req: AuthRequest, res) => {
+productionBatchesRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER', 'SAMBUSA_WORKER'), async (req: AuthRequest, res) => {
   const { branchId, date, shift, items, materialUsages } = req.body as {
     branchId?: string;
     date?: string;
@@ -119,7 +119,7 @@ productionBatchesRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER'), async 
   res.status(201).json(batch);
 });
 
-productionBatchesRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'BAKER'), async (req, res) => {
+productionBatchesRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'SAMBUSA_WORKER'), async (req, res) => {
   const { status } = req.body as { status?: string };
   const batch = await prisma.productionBatch.update({
     where: { id: req.params.id },
