@@ -1,0 +1,71 @@
+import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+const prisma = new PrismaClient();
+async function main() {
+    let branch = await prisma.branch.findFirst({ where: { name: 'Main Branch' } });
+    if (!branch) {
+        branch = await prisma.branch.create({
+            data: { name: 'Main Branch', address: 'Addis Ababa' },
+        });
+    }
+    const passwordHash = await bcrypt.hash('password123', 10);
+    const hamza = await prisma.user.upsert({
+        where: { username: 'hamza' },
+        update: {},
+        create: {
+            fullName: 'Hamza',
+            username: 'hamza',
+            passwordHash,
+            role: 'OWNER',
+            branchId: branch.id,
+        },
+    });
+    const categories = [
+        { name: 'Bread (Machine)', type: 'PRODUCED' },
+        { name: 'Sambusa / Spring / Fetira / Pizza / Sandwich', type: 'PRODUCED' },
+        { name: 'Milk & Yoghurt', type: 'RESELL' },
+        { name: 'Injera', type: 'RESELL' },
+    ];
+    for (const c of categories) {
+        const existing = await prisma.productCategory.findFirst({ where: { name: c.name } });
+        if (!existing)
+            await prisma.productCategory.create({ data: c });
+    }
+    const catBread = await prisma.productCategory.findFirst({ where: { name: 'Bread (Machine)' } });
+    const catMilk = await prisma.productCategory.findFirst({ where: { name: 'Milk & Yoghurt' } });
+    const catInjera = await prisma.productCategory.findFirst({ where: { name: 'Injera' } });
+    const products = [
+        { categoryId: catBread.id, name: 'Bread', flavor: 'Normal', unitType: 'PIECE', basePrice: 10, buyPrice: null },
+        { categoryId: catBread.id, name: 'Bread', flavor: 'Barley', unitType: 'PIECE', basePrice: 12, buyPrice: null },
+        { categoryId: catBread.id, name: 'Bomboloni', flavor: null, unitType: 'PIECE', basePrice: 15, buyPrice: null },
+        { categoryId: catBread.id, name: 'Donut', flavor: null, unitType: 'PIECE', basePrice: 18, buyPrice: null },
+        { categoryId: catMilk.id, name: 'Milk', flavor: null, unitType: 'LITER', basePrice: 50, buyPrice: 40 },
+        { categoryId: catMilk.id, name: 'Yoghurt', flavor: null, unitType: 'PIECE', basePrice: 25, buyPrice: 20 },
+        { categoryId: catInjera.id, name: 'Injera', flavor: 'Red', unitType: 'PIECE', basePrice: 35, buyPrice: 28 },
+        { categoryId: catInjera.id, name: 'Injera', flavor: 'White', unitType: 'PIECE', basePrice: 35, buyPrice: 28 },
+    ];
+    for (const p of products) {
+        const exists = await prisma.product.findFirst({
+            where: { categoryId: p.categoryId, name: p.name, flavor: p.flavor },
+        });
+        if (!exists)
+            await prisma.product.create({ data: p });
+    }
+    const stockItems = [
+        { branchId: branch.id, name: 'Dough', unitType: 'KG', currentQuantity: 100, minStockLevel: 20 },
+        { branchId: branch.id, name: 'Flour', unitType: 'KG', currentQuantity: 200, minStockLevel: 50 },
+    ];
+    for (const s of stockItems) {
+        const exists = await prisma.stockItem.findFirst({ where: { branchId: s.branchId, name: s.name } });
+        if (!exists)
+            await prisma.stockItem.create({ data: s });
+    }
+    console.log('Seed done. Login: hamza / password123');
+}
+main()
+    .then(() => prisma.$disconnect())
+    .catch((e) => {
+    console.error(e);
+    prisma.$disconnect();
+    process.exit(1);
+});
