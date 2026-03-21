@@ -12,7 +12,7 @@ async function main() {
   }
 
   const passwordHash = await bcrypt.hash('password123', 10);
-  const hamza = await prisma.user.upsert({
+  await prisma.user.upsert({
     where: { phone: '0912345678' },
     update: {},
     create: {
@@ -34,6 +34,18 @@ async function main() {
     const existing = await prisma.productCategory.findFirst({ where: { name: c.name } });
     if (!existing) await prisma.productCategory.create({ data: c });
   }
+
+  async function ensureFinancialCategory(name: string, type: 'REVENUE' | 'EXPENSE') {
+    let fc = await prisma.financialCategory.findFirst({ where: { name, type } });
+    if (!fc) fc = await prisma.financialCategory.create({ data: { name, type } });
+    return fc;
+  }
+  const fcRetail = await ensureFinancialCategory('Retail sales (bakery)', 'REVENUE');
+  const fcResell = await ensureFinancialCategory('Resell goods', 'REVENUE');
+  await ensureFinancialCategory('Rent & facilities', 'EXPENSE');
+  await ensureFinancialCategory('Utilities', 'EXPENSE');
+  await ensureFinancialCategory('Supplies & ingredients', 'EXPENSE');
+
   const catBread = await prisma.productCategory.findFirst({ where: { name: 'Bread (Machine)' } })!;
   const catMilk = await prisma.productCategory.findFirst({ where: { name: 'Milk & Yoghurt' } })!;
   const catInjera = await prisma.productCategory.findFirst({ where: { name: 'Injera' } })!;
@@ -49,10 +61,18 @@ async function main() {
     { categoryId: catInjera.id, name: 'Injera', flavor: 'White', unitType: 'PIECE' as const, basePrice: 35, buyPrice: 28 },
   ];
   for (const p of products) {
+    const revId = p.categoryId === catInjera.id || p.categoryId === catMilk.id ? fcResell.id : fcRetail.id;
     const exists = await prisma.product.findFirst({
       where: { categoryId: p.categoryId, name: p.name, flavor: p.flavor },
     });
-    if (!exists) await prisma.product.create({ data: p });
+    if (!exists) {
+      await prisma.product.create({ data: { ...p, financialCategoryId: revId } });
+    } else if (exists.financialCategoryId == null) {
+      await prisma.product.update({
+        where: { id: exists.id },
+        data: { financialCategoryId: revId },
+      });
+    }
   }
 
   const stockItems = [

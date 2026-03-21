@@ -45,10 +45,14 @@ analyticsRouter.get('/daily', async (req: AuthRequest, res) => {
     include: { sales: true, leftoverRecords: true },
   });
   const salesSum = sessions.reduce((acc, s) => acc + s.sales.reduce((t, x) => t + Number(x.totalAmount), 0), 0);
-  const expenses = await prisma.expense.findMany({
-    where: { branchId, date: { gte: dayStart, lte: dayEnd } },
+  const expensesCompany = await prisma.expense.findMany({
+    where: { branchId, date: { gte: dayStart, lte: dayEnd }, type: 'COMPANY' },
   });
-  const expenseTotal = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+  const expensesOwner = await prisma.expense.findMany({
+    where: { branchId, date: { gte: dayStart, lte: dayEnd }, type: 'OWNER' },
+  });
+  const expenseTotal = expensesCompany.reduce((sum, e) => sum + Number(e.amount), 0);
+  const ownerExpenseTotal = expensesOwner.reduce((sum, e) => sum + Number(e.amount), 0);
   const batches = await prisma.productionBatch.count({
     where: { branchId, date: { gte: dayStart, lte: dayEnd } },
   });
@@ -64,7 +68,8 @@ analyticsRouter.get('/daily', async (req: AuthRequest, res) => {
     sessions: sessions.length,
     salesCount: sessions.reduce((acc, s) => acc + s.sales.length, 0),
     salesTotal: salesSum,
-    expenseTotal: expenseTotal,
+    expenseTotal,
+    ownerExpenseTotal,
     productionBatches: batches,
     supplierDeliveries: deliveries.length,
     supplierDeliveryCost: deliveryCost,
@@ -85,10 +90,14 @@ analyticsRouter.get('/weekly', async (req: AuthRequest, res) => {
     include: { sales: true },
   });
   const salesTotal = sessions.reduce((acc, s) => acc + s.sales.reduce((t, x) => t + Number(x.totalAmount), 0), 0);
-  const expenses = await prisma.expense.findMany({
-    where: { branchId, date: { gte: weekStart, lte: weekEnd } },
+  const expensesCompany = await prisma.expense.findMany({
+    where: { branchId, date: { gte: weekStart, lte: weekEnd }, type: 'COMPANY' },
   });
-  const expenseTotal = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+  const expensesOwner = await prisma.expense.findMany({
+    where: { branchId, date: { gte: weekStart, lte: weekEnd }, type: 'OWNER' },
+  });
+  const expenseTotal = expensesCompany.reduce((sum, e) => sum + Number(e.amount), 0);
+  const ownerExpenseTotal = expensesOwner.reduce((sum, e) => sum + Number(e.amount), 0);
   const batches = await prisma.productionBatch.count({
     where: { branchId, date: { gte: weekStart, lte: weekEnd } },
   });
@@ -105,6 +114,7 @@ analyticsRouter.get('/weekly', async (req: AuthRequest, res) => {
     sessionsCount: sessions.length,
     salesTotal,
     expenseTotal,
+    ownerExpenseTotal,
     productionBatches: batches,
     supplierDeliveriesCount: deliveries.length,
     supplierDeliveryCost: deliveryCost,
@@ -125,10 +135,12 @@ analyticsRouter.get('/monthly', async (req: AuthRequest, res) => {
     include: { sales: true },
   });
   const salesTotal = sessions.reduce((acc, s) => acc + s.sales.reduce((t, x) => t + Number(x.totalAmount), 0), 0);
-  const expenses = await prisma.expense.findMany({
+  const expensesAll = await prisma.expense.findMany({
     where: { branchId, date: { gte: monthStart, lte: monthEnd } },
   });
-  const expenseTotal = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+  const expenseTotal = expensesAll.reduce((sum, e) => sum + Number(e.amount), 0);
+  const expenseCompanyTotal = expensesAll.filter((e) => e.type === 'COMPANY').reduce((sum, e) => sum + Number(e.amount), 0);
+  const expenseOwnerTotal = expensesAll.filter((e) => e.type === 'OWNER').reduce((sum, e) => sum + Number(e.amount), 0);
   const batches = await prisma.productionBatch.count({
     where: { branchId, date: { gte: monthStart, lte: monthEnd } },
   });
@@ -151,6 +163,8 @@ analyticsRouter.get('/monthly', async (req: AuthRequest, res) => {
     sessionsCount: sessions.length,
     salesTotal,
     expenseTotal,
+    expenseCompanyTotal,
+    expenseOwnerTotal,
     payrollTotal,
     productionBatches: batches,
     supplierDeliveriesCount: deliveries.length,

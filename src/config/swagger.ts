@@ -36,6 +36,7 @@ Production API for Bakery ERP. Used by:
     { name: 'Branches', description: 'Branch management (Web)' },
     { name: 'Users', description: 'User management (Web). All users are staff; salary, startDate, shift, etc. on User' },
     { name: 'Product categories', description: 'Categories (Web)' },
+    { name: 'Financial categories', description: 'P&L reporting: REVENUE | EXPENSE (Web OWNER/ADMIN CRUD; all roles can list)' },
     { name: 'Products', description: 'Product catalog' },
     { name: 'Stock items', description: 'Inventory items per branch' },
     { name: 'Stock movements', description: 'IN/OUT/ADJUSTMENT/PRODUCTION_USAGE' },
@@ -46,7 +47,7 @@ Production API for Bakery ERP. Used by:
     { name: 'Leftover records', description: 'Per-session leftover quantities (Mobile: Cashier)' },
     { name: 'Suppliers', description: 'Supplier list (Web + Sambusa)' },
     { name: 'Supplier deliveries', description: 'Deliveries; optional link to stock (Web + Sambusa)' },
-    { name: 'Expenses', description: 'Expenses with type OPERATIONAL/PERSONAL (Web)' },
+    { name: 'Expenses', description: 'type COMPANY (operating) | OWNER (withdrawal). Legacy OPERATIONAL/PERSONAL accepted as aliases.' },
     { name: 'Loans', description: 'User (staff) / customer loans (Web)' },
     { name: 'Penalties', description: 'User (staff) penalties (Web)' },
     { name: 'Payroll', description: 'Payroll records (Web)' },
@@ -700,6 +701,56 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
         responses: { 200: { description: 'Updated category' } },
       },
     },
+    '/api/financial-categories': {
+      get: {
+        tags: ['Financial categories'],
+        summary: 'List financial categories',
+        description: 'Optional query type=REVENUE|EXPENSE. All authenticated users.',
+        parameters: [{ name: 'type', in: 'query', schema: { type: 'string', enum: ['REVENUE', 'EXPENSE'] } }],
+        responses: {
+          200: {
+            description: 'Array of financial categories',
+            content: { 'application/json': { example: [{ id: 'clxx...', name: 'Retail sales (bakery)', type: 'REVENUE', _count: { products: 4, expenses: 0 } }] } },
+          },
+        },
+      },
+      post: {
+        tags: ['Financial categories'],
+        summary: 'Create financial category',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { type: 'object', required: ['name', 'type'], properties: { name: { type: 'string' }, type: { type: 'string', enum: ['REVENUE', 'EXPENSE'] } } },
+              example: { name: 'Utilities', type: 'EXPENSE' },
+            },
+          },
+        },
+        responses: { 201: { description: 'Created', content: { 'application/json': { example: { id: 'clxx...', name: 'Utilities', type: 'EXPENSE' } } } }, 409: { description: 'Duplicate name+type' } },
+      },
+    },
+    '/api/financial-categories/{id}': {
+      get: {
+        tags: ['Financial categories'],
+        summary: 'Get financial category by ID',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'Category', content: { 'application/json': { example: { id: 'clxx...', name: 'Retail sales (bakery)', type: 'REVENUE' } } } }, 404: { description: 'Not found' } },
+      },
+      patch: {
+        tags: ['Financial categories'],
+        summary: 'Update financial category',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { name: { type: 'string' }, type: { type: 'string', enum: ['REVENUE', 'EXPENSE'] } } }, example: { name: 'Rent & facilities' } } } },
+        responses: { 200: { description: 'Updated' }, 404: { description: 'Not found' } },
+      },
+      delete: {
+        tags: ['Financial categories'],
+        summary: 'Delete financial category',
+        description: 'Products/expenses using this category get financialCategoryId cleared (SET NULL).',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 204: { description: 'Deleted' }, 404: { description: 'Not found' } },
+      },
+    },
     '/api/products': {
       get: {
         tags: ['Products'],
@@ -715,7 +766,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
       post: {
         tags: ['Products'],
         summary: 'Create product',
-        description: `Web only. Required: categoryId, name, unitType, basePrice. unitType: PIECE | KG | LITER.`,
+        description: `Web only. Required: categoryId, name, unitType, basePrice. unitType: PIECE | KG | LITER. Optional financialCategoryId must reference a REVENUE financial category.`,
         requestBody: {
           required: true,
           content: {
@@ -723,9 +774,9 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
               schema: {
                 type: 'object',
                 required: ['categoryId', 'name', 'unitType', 'basePrice'],
-                properties: { categoryId: { type: 'string' }, name: { type: 'string' }, flavor: { type: 'string', nullable: true }, unitType: { enum: ['PIECE', 'KG', 'LITER'] }, basePrice: { type: 'number' }, buyPrice: { type: 'number', nullable: true } },
+                properties: { categoryId: { type: 'string' }, financialCategoryId: { type: 'string', nullable: true }, name: { type: 'string' }, flavor: { type: 'string', nullable: true }, unitType: { enum: ['PIECE', 'KG', 'LITER'] }, basePrice: { type: 'number' }, buyPrice: { type: 'number', nullable: true } },
               },
-              example: { categoryId: 'clyy...', name: 'Injera', unitType: 'PIECE', basePrice: 25 },
+              example: { categoryId: 'clyy...', financialCategoryId: 'clfc...', name: 'Injera', unitType: 'PIECE', basePrice: 25 },
             },
           },
         },
@@ -971,7 +1022,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
             description: 'Array of expenses',
             content: {
               'application/json': {
-                example: [{ id: 'clxx...', branchId: 'clyy...', userId: 'clzz...', type: 'OPERATIONAL', amount: 500, category: 'LUNCH', description: 'Team lunch', date: '2025-03-07', user: { id: 'clzz...', fullName: 'Admin' } }],
+                example: [{ id: 'clxx...', branchId: 'clyy...', userId: 'clzz...', type: 'COMPANY', financialCategoryId: 'clfc...', amount: 500, category: 'LUNCH', description: 'Team lunch', date: '2025-03-07', user: { id: 'clzz...', fullName: 'Admin' }, financialCategory: { id: 'clfc...', name: 'Supplies & ingredients', type: 'EXPENSE' } }],
               },
             },
           },
@@ -980,17 +1031,17 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
       post: {
         tags: ['Expenses'],
         summary: 'Create expense',
-        description: 'type: OPERATIONAL | PERSONAL. category: RENT, SALARY, LUNCH, SUPPLIER, EKUB, UTILITIES, OTHER.',
+        description: 'type: COMPANY | OWNER (legacy OPERATIONAL→COMPANY, PERSONAL→OWNER). Optional financialCategoryId must be EXPENSE type. category: RENT, SALARY, LUNCH, …',
         requestBody: {
           required: true,
           content: {
             'application/json': {
-              schema: { type: 'object', required: ['amount', 'category'], properties: { branchId: { type: 'string' }, type: { enum: ['OPERATIONAL', 'PERSONAL'] }, amount: { type: 'number' }, category: { type: 'string' }, description: { type: 'string' }, date: { type: 'string', format: 'date' } } },
-              example: { branchId: 'clyy...', type: 'OPERATIONAL', amount: 500, category: 'LUNCH', description: 'Team lunch', date: '2025-03-07' },
+              schema: { type: 'object', required: ['amount', 'category'], properties: { branchId: { type: 'string' }, type: { enum: ['COMPANY', 'OWNER', 'OPERATIONAL', 'PERSONAL'] }, financialCategoryId: { type: 'string' }, amount: { type: 'number' }, category: { type: 'string' }, description: { type: 'string' }, date: { type: 'string', format: 'date' } } },
+              example: { branchId: 'clyy...', type: 'COMPANY', financialCategoryId: 'clfc...', amount: 500, category: 'LUNCH', description: 'Team lunch', date: '2025-03-07' },
             },
           },
         },
-        responses: { 201: { description: 'Created expense', content: { 'application/json': { example: { id: 'clxx...', branchId: 'clyy...', userId: 'clzz...', type: 'OPERATIONAL', amount: 500, category: 'LUNCH', description: 'Team lunch', date: '2025-03-07' } } } } },
+        responses: { 201: { description: 'Created expense', content: { 'application/json': { example: { id: 'clxx...', branchId: 'clyy...', userId: 'clzz...', type: 'COMPANY', amount: 500, category: 'LUNCH', description: 'Team lunch', date: '2025-03-07' } } } } },
       },
     },
     '/api/expenses/{id}': {
@@ -1000,7 +1051,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
         description: 'OWNER/ADMIN only.',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
-          200: { description: 'Expense', content: { 'application/json': { example: { id: 'clxx...', branchId: 'clyy...', userId: 'clzz...', type: 'OPERATIONAL', amount: 500, category: 'LUNCH', description: 'Team lunch', date: '2025-03-07', user: { fullName: 'Admin', phone: '0912345678' } } } } },
+          200: { description: 'Expense', content: { 'application/json': { example: { id: 'clxx...', branchId: 'clyy...', userId: 'clzz...', type: 'COMPANY', amount: 500, category: 'LUNCH', description: 'Team lunch', date: '2025-03-07', user: { fullName: 'Admin', phone: '0912345678' } } } } },
           404: { description: 'Expense not found' },
         },
       },
@@ -1012,7 +1063,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
         requestBody: {
           content: {
             'application/json': {
-              schema: { type: 'object', properties: { type: { enum: ['OPERATIONAL', 'PERSONAL'] }, amount: { type: 'number' }, category: { type: 'string' }, description: { type: 'string' }, date: { type: 'string', format: 'date' } } },
+              schema: { type: 'object', properties: { type: { enum: ['COMPANY', 'OWNER', 'OPERATIONAL', 'PERSONAL'] }, financialCategoryId: { type: 'string', nullable: true }, amount: { type: 'number' }, category: { type: 'string' }, description: { type: 'string' }, date: { type: 'string', format: 'date' } } },
               example: { amount: 600, description: 'Updated description' },
             },
           },
@@ -1220,7 +1271,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
       get: {
         tags: ['Analytics'],
         summary: 'Daily analytics',
-        description: `**OWNER role only** (ADMIN receives 403). Aggregates for a day: sessions, salesTotal, expenseTotal, productionBatches, supplierDeliveries, netDaily.`,
+        description: `**OWNER role only** (ADMIN receives 403). expenseTotal = COMPANY expenses only (operating); ownerExpenseTotal = OWNER withdrawals. netDaily uses expenseTotal.`,
         parameters: [
           { name: 'branchId', in: 'query', required: true, schema: { type: 'string' } },
           { name: 'date', in: 'query', schema: { type: 'string', format: 'date' }, example: '2025-03-07' },
@@ -1230,7 +1281,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
             description: 'Daily aggregates',
             content: {
               'application/json': {
-                example: { date: '2025-03-07', branchId: 'clxx...', sessions: 1, salesCount: 5, salesTotal: 12500, expenseTotal: 500, productionBatches: 2, supplierDeliveries: 1, supplierDeliveryCost: 2000, supplierDeliveryRevenue: 2500, netDaily: 12000 },
+                example: { date: '2025-03-07', branchId: 'clxx...', sessions: 1, salesCount: 5, salesTotal: 12500, expenseTotal: 500, ownerExpenseTotal: 100, productionBatches: 2, supplierDeliveries: 1, supplierDeliveryCost: 2000, supplierDeliveryRevenue: 2500, netDaily: 12000 },
               },
             },
           },
@@ -1242,7 +1293,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
       get: {
         tags: ['Analytics'],
         summary: 'Weekly analytics',
-        description: '**OWNER role only.** Aggregates for the week ending on endDate: salesTotal, expenseTotal, netWeekly.',
+        description: '**OWNER role only.** expenseTotal = COMPANY only; ownerExpenseTotal = OWNER.',
         parameters: [
           { name: 'branchId', in: 'query', required: true, schema: { type: 'string' } },
           { name: 'endDate', in: 'query', schema: { type: 'string', format: 'date', example: '2025-03-07' } },
@@ -1252,7 +1303,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
             description: 'Weekly aggregates',
             content: {
               'application/json': {
-                example: { period: 'weekly', from: '2025-03-03', to: '2025-03-07', branchId: 'clxx...', sessionsCount: 5, salesTotal: 85000, expenseTotal: 3500, productionBatches: 10, supplierDeliveriesCount: 3, supplierDeliveryCost: 5000, netWeekly: 76500 },
+                example: { period: 'weekly', from: '2025-03-03', to: '2025-03-07', branchId: 'clxx...', sessionsCount: 5, salesTotal: 85000, expenseTotal: 3500, ownerExpenseTotal: 200, productionBatches: 10, supplierDeliveriesCount: 3, supplierDeliveryCost: 5000, netWeekly: 76500 },
               },
             },
           },
@@ -1264,7 +1315,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
       get: {
         tags: ['Analytics'],
         summary: 'Monthly analytics',
-        description: '**OWNER role only.** Includes payrollTotal and netMonthly.',
+        description: '**OWNER role only.** expenseTotal = all expenses; expenseCompanyTotal / expenseOwnerTotal breakdown; payrollTotal; netMonthly.',
         parameters: [
           { name: 'branchId', in: 'query', required: true, schema: { type: 'string' } },
           { name: 'year', in: 'query', schema: { type: 'integer', example: 2025 } },
@@ -1275,7 +1326,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
             description: 'Monthly aggregates',
             content: {
               'application/json': {
-                example: { period: 'monthly', year: 2025, month: 3, from: '2025-03-01', to: '2025-03-31', branchId: 'clxx...', sessionsCount: 22, salesTotal: 350000, expenseTotal: 15000, payrollTotal: 25000, productionBatches: 44, supplierDeliveriesCount: 12, supplierDeliveryCost: 40000, netMonthly: 270000 },
+                example: { period: 'monthly', year: 2025, month: 3, from: '2025-03-01', to: '2025-03-31', branchId: 'clxx...', sessionsCount: 22, salesTotal: 350000, expenseTotal: 15000, expenseCompanyTotal: 12000, expenseOwnerTotal: 3000, payrollTotal: 25000, productionBatches: 44, supplierDeliveriesCount: 12, supplierDeliveryCost: 40000, netMonthly: 270000 },
               },
             },
           },

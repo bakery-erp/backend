@@ -70,6 +70,12 @@ enum StockMovementType {
   PRODUCTION_USAGE
 }
 
+/// P&L / reporting grouping (separate from ProductCategory = catalog)
+enum FinancialCategoryType {
+  REVENUE
+  EXPENSE
+}
+
 model Branch {
   id        String   @id @default(cuid())
   name      String
@@ -120,23 +126,39 @@ model ProductCategory {
   products Product[]
 }
 
+model FinancialCategory {
+  id        String               @id @default(cuid())
+  name      String
+  type      FinancialCategoryType
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+  products  Product[]
+  expenses  Expense[]
+
+  @@unique([name, type])
+}
+
 model Product {
-  id          String   @id @default(cuid())
-  categoryId  String
-  category    ProductCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  name        String
-  flavor      String?
-  unitType    UnitType
-  basePrice   Decimal  @db.Decimal(12, 2)
-  buyPrice    Decimal? @db.Decimal(12, 2)
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  productionItems ProductionItem[]
-  saleItems   SaleItem[]
-  leftoverRecords LeftoverRecord[]
-  supplierDeliveries SupplierDelivery[]
-  conversionsFrom ProductConversion[] @relation("FromProduct")
-  conversionsTo   ProductConversion[] @relation("ToProduct")
+  id                    String             @id @default(cuid())
+  categoryId            String
+  category              ProductCategory    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  financialCategoryId   String?
+  financialCategory     FinancialCategory? @relation(fields: [financialCategoryId], references: [id], onDelete: SetNull)
+  name                  String
+  flavor                String?
+  unitType              UnitType
+  basePrice             Decimal            @db.Decimal(12, 2)
+  buyPrice              Decimal?           @db.Decimal(12, 2)
+  isActive              Boolean            @default(true)
+  createdAt             DateTime           @default(now())
+  productionItems       ProductionItem[]
+  saleItems             SaleItem[]
+  leftoverRecords       LeftoverRecord[]
+  supplierDeliveries    SupplierDelivery[]
+  conversionsFrom       ProductConversion[] @relation("FromProduct")
+  conversionsTo         ProductConversion[] @relation("ToProduct")
+
+  @@index([financialCategoryId])
 }
 
 model StockItem {
@@ -309,26 +331,30 @@ model SupplierDelivery {
   @@index([createdAt])
 }
 
+/// COMPANY = business / operating; OWNER = owner withdrawal (excluded from daily operating totals in analytics)
 enum ExpenseType {
-  OPERATIONAL  // Rent, utilities, supplies, etc.
-  PERSONAL     // Personal/other
+  COMPANY
+  OWNER
 }
 
 model Expense {
-  id          String      @id @default(cuid())
-  branchId    String
-  branch      Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  userId      String
-  user        User        @relation(fields: [userId], references: [id], onDelete: Restrict)
-  type        ExpenseType  @default(OPERATIONAL)
-  amount      Decimal     @db.Decimal(12, 2)
-  category    String      // RENT, SALARY, LUNCH, SUPPLIER, EKUB, UTILITIES, OTHER
-  description String?
-  date        DateTime    @db.Date
-  createdAt   DateTime    @default(now())
+  id                    String             @id @default(cuid())
+  branchId              String
+  branch                Branch             @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  userId                String
+  user                  User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  type                  ExpenseType        @default(COMPANY)
+  financialCategoryId   String?
+  financialCategory     FinancialCategory? @relation(fields: [financialCategoryId], references: [id], onDelete: SetNull)
+  amount                Decimal            @db.Decimal(12, 2)
+  category              String             // RENT, SALARY, LUNCH, SUPPLIER, EKUB, UTILITIES, OTHER (legacy label; prefer financialCategoryId)
+  description           String?
+  date                  DateTime           @db.Date
+  createdAt             DateTime           @default(now())
 
   @@index([branchId, date])
   @@index([userId])
+  @@index([financialCategoryId])
 }
 
 model Loan {
