@@ -40,11 +40,6 @@ npm run dev
 | `PORT` | No | Default `3001` |
 | `NODE_ENV` | No | `production` enables stricter JWT checks at startup |
 
-## Documentation in this repo
-
-- [`docs/BACKEND-20-STEPS.md`](docs/BACKEND-20-STEPS.md) — phased backend completion plan (commit-per-step).
-- [`docs/DESIGN-ROADMAP-FINANCIAL.md`](docs/DESIGN-ROADMAP-FINANCIAL.md) — financial rules and product design.
-
 ## Remote
 
 Pushes go to: `https://github.com/bakery-erp/backend.git` (configure `git remote` if needed).

@@ -29,3 +29,6 @@ coverage/
 # Prisma (keep schema & migrations; ignore local DB dumps if any)
 *.db
 *.db-journal
+
+# Design/planning docs stay out of this repo (README only); keep copies locally if needed
+docs/
