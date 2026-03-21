@@ -14,6 +14,8 @@ cp .env.example .env
 # Edit .env: DATABASE_URL, JWT_SECRET, PORT
 npm install
 npx prisma migrate deploy   # applies migrations (e.g. query indexes); or `npx prisma db push` for quick dev
+
+If you previously used **only** `db push` and have no `_prisma_migrations` table, either start using `migrate deploy` after a one-time baseline, or apply `prisma/migrations/*/migration.sql` manually for indexes.
 npm run dev
 ```
 
