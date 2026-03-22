@@ -26,8 +26,11 @@ const expenseInclude = {
 export const expensesRouter = Router();
 expensesRouter.use(authMiddleware);
 
-expensesRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res) => {
-  const branchId = (req.query.branchId as string) || req.user?.branchId;
+expensesRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER'), async (req: AuthRequest, res) => {
+  const admin = req.user!.role === 'OWNER' || req.user!.role === 'ADMIN';
+  const branchId = admin
+    ? ((req.query.branchId as string) || req.user?.branchId)
+    : req.user?.branchId;
   const from = req.query.from as string;
   const to = req.query.to as string;
   const category = req.query.category as string | undefined;
@@ -58,6 +61,10 @@ expensesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER'), asyn
     financialCategoryId?: string;
   };
   const bid = branchId || req.user?.branchId;
+  const admin = req.user!.role === 'OWNER' || req.user!.role === 'ADMIN';
+  if (!admin && bid && bid !== req.user?.branchId) {
+    return res.status(403).json({ error: 'Can only create expenses for your branch' });
+  }
   const expenseType = parseExpenseType(type);
   if (!bid || amount == null || !category?.trim()) return res.status(400).json({ error: 'branchId, amount, category required' });
   const fcErr = await validateExpenseFinancialCategory(financialCategoryId);
@@ -83,7 +90,7 @@ expensesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER'), asyn
   res.status(201).json(expense);
 });
 
-expensesRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+expensesRouter.get('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER'), async (req: AuthRequest, res) => {
   const expense = await prisma.expense.findUnique({
     where: { id: req.params.id },
     include: {
@@ -92,6 +99,10 @@ expensesRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
     },
   });
   if (!expense) return res.status(404).json({ error: 'Expense not found' });
+  const admin = req.user!.role === 'OWNER' || req.user!.role === 'ADMIN';
+  if (!admin && expense.branchId !== req.user?.branchId) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
   res.json(expense);
 });
 

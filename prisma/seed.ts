@@ -24,6 +24,26 @@ async function main() {
     },
   });
 
+  const roleUsers = [
+    { phone: '0910000001', fullName: 'Admin User', role: 'ADMIN' as const },
+    { phone: '0910000002', fullName: 'Cashier User', role: 'CASHIER' as const },
+    { phone: '0910000003', fullName: 'Baker User', role: 'BAKER' as const },
+    { phone: '0910000004', fullName: 'Sambusa Worker', role: 'SAMBUSA_WORKER' as const },
+  ];
+  for (const u of roleUsers) {
+    await prisma.user.upsert({
+      where: { phone: u.phone },
+      update: { role: u.role, branchId: branch.id },
+      create: {
+        fullName: u.fullName,
+        phone: u.phone,
+        passwordHash,
+        role: u.role,
+        branchId: branch.id,
+      },
+    });
+  }
+
   const categories = [
     { name: 'Bread (Machine)', type: 'PRODUCED' as const },
     { name: 'Sambusa / Spring / Fetira / Pizza / Sandwich', type: 'PRODUCED' as const },
@@ -84,7 +104,9 @@ async function main() {
     if (!exists) await prisma.stockItem.create({ data: s });
   }
 
-  console.log('Seed done. Login: 0912345678 / password123');
+  console.log(
+    'Seed done. Owner: 0912345678 / password123 | Staff: 0910000001 ADMIN, 0910000002 CASHIER, 0910000003 BAKER, 0910000004 SAMBUSA_WORKER / password123'
+  );
 }
 
 main()
