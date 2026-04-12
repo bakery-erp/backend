@@ -1236,6 +1236,23 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
         responses: { 200: { description: 'Updated penalty', content: { 'application/json': { example: { id: 'clxx...', userId: 'clyy...', amount: 100, reason: 'Late', date: '2025-03-01', isDeducted: true } } } } },
       },
     },
+    '/api/payroll/my': {
+      get: {
+        tags: ['Payroll'],
+        summary: 'Get logged-in user payroll records',
+        description: 'Web. Returns the payroll records for the currently authenticated user.',
+        responses: { 
+          200: { 
+            description: 'Array of payroll records', 
+            content: { 
+              'application/json': { 
+                example: [{ id: 'clxx...', userId: 'clyy...', user: { fullName: 'Ali' }, month: 3, year: 2025, baseSalary: 5000, finalAmount: 4800, paymentDate: '2025-03-31' }]
+              }
+            } 
+          } 
+        }
+      },
+    },
     '/api/payroll': {
       get: {
         tags: ['Payroll'],
