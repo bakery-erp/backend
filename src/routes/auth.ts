@@ -63,6 +63,10 @@ authRouter.post('/login', async (req, res) => {
   });
 });
 
+authRouter.post('/logout', authMiddleware, (req, res) => {
+  res.json({ message: 'Logged out successfully' });
+});
+
 authRouter.get('/me', authMiddleware, async (req: AuthRequest, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user!.id },
