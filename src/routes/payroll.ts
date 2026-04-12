@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { authMiddleware, requireRole } from '../middleware/auth.js';
 
+import { EthDateTime } from 'ethiopian-calendar-date-converter';
+
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
   if (typeof v === 'number') return v;
@@ -11,6 +13,19 @@ function decimalToNum(v: unknown): number {
 
 export const payrollRouter = Router();
 payrollRouter.use(authMiddleware);
+
+payrollRouter.get('/my', async (req: any, res) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+  const list = await prisma.payrollRecord.findMany({
+    where: { userId },
+    include: { user: { select: { id: true, fullName: true, phone: true, role: true } } },
+    orderBy: [{ year: 'desc' }, { month: 'desc' }],
+  });
+  res.json(list);
+});
+
 
 payrollRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req, res) => {
   const userId = req.query.userId as string | undefined;
@@ -75,15 +90,31 @@ payrollRouter.get('/calculate/:userId', requireRole('OWNER', 'ADMIN'), async (re
   });
   if (!user) return res.status(404).json({ error: 'User not found' });
   const baseSalary = user.salary != null ? Number(user.salary) : 0;
-  const startDate = user.startDate ? new Date(user.startDate) : null;
-  const monthStart = new Date(y, m - 1, 1);
-  const monthEnd = new Date(y, m, 0);
-  let proratedBase = baseSalary;
-  if (startDate && startDate > monthStart) {
-    const daysInMonth = monthEnd.getDate();
-    const daysWorked = Math.min(daysInMonth, Math.ceil((monthEnd.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)));
-    proratedBase = (baseSalary / daysInMonth) * daysWorked;
+  const startDate = user.startDate ? new Date(user.startDate) : new Date(user.createdAt);
+  const isLeapYear = y % 4 === 3;
+  const daysInMonth = m === 13 ? (isLeapYear ? 6 : 5) : 30;
+
+  // By default, assuming they worked the full month, they get the proportional daily fraction 
+  let proratedBase = (baseSalary / 30) * daysInMonth;
+  
+  if (startDate) {
+    const ethStart = EthDateTime.fromEuropeanDate(startDate);
+    const sYear = ethStart.year;
+    const sMonth = ethStart.month;
+    const sDay = ethStart.date;
+
+    // If payroll is for a month BEFORE they were hired, they get 0
+    if (sYear > y || (sYear === y && sMonth > m)) {
+      proratedBase = 0;
+    } 
+    // If payroll is for the EXACT month they were hired, calculate exact days worked
+    else if (sYear === y && sMonth === m) {
+      const daysWorked = daysInMonth - sDay + 1;
+      proratedBase = (baseSalary / 30) * Math.max(0, daysWorked);
+    }
   }
+  
+  proratedBase = Math.round(proratedBase * 100) / 100; // Round to 2 decimal places
   const openLoans = await prisma.loan.findMany({
     where: { userId, status: 'OPEN' },
   });
