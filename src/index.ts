@@ -59,9 +59,10 @@ app.use('/api/dashboard', dashboardRouter);
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
-  res.status(500).json({ error: err.message ?? 'Internal server error' });
+  const message = err instanceof Error ? err.message : 'Internal server error';
+  res.status(500).json({ error: message });
 });
 
 validateEnv();

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
+import { utcDayRangeInclusive } from '../lib/businessDate.js';
 import { authMiddleware, requireRole, type AuthRequest } from '../middleware/auth.js';
 
 function decimalToNum(v: unknown): number {
@@ -16,16 +17,23 @@ supplierDeliveriesRouter.get('/', async (req: AuthRequest, res) => {
   const supplierId = req.query.supplierId as string | undefined;
   const branchId = req.query.branchId as string | undefined;
   const isPaid = req.query.isPaid as string | undefined;
+  const dateYmd = (req.query.date as string | undefined)?.trim();
   const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
   const where: any = {};
   if (supplierId) where.supplierId = supplierId;
   if (branchId) where.supplier = { branchId };
   if (isPaid !== undefined) where.isPaid = isPaid === 'true';
+  if (dateYmd) {
+    const range = utcDayRangeInclusive(dateYmd);
+    if (range) {
+      where.createdAt = { gte: range.start, lte: range.end };
+    }
+  }
   const list = await prisma.supplierDelivery.findMany({
     where,
     include: { supplier: true, product: true, stockItem: true },
     orderBy: { createdAt: 'desc' },
-    take: limit,
+    take: dateYmd ? 500 : limit,
   });
   res.json(list);
 });

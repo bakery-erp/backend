@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
+import { businessDateFromYmdString } from '../lib/businessDate.js';
 import { authMiddleware, requireRole, type AuthRequest } from '../middleware/auth.js';
 
 export const analyticsRouter = Router();
@@ -17,6 +18,7 @@ function endOfDay(d: Date) {
   x.setHours(23, 59, 59, 999);
   return x;
 }
+
 function startOfWeek(d: Date) {
   const x = new Date(d);
   const day = x.getDay();
@@ -36,25 +38,28 @@ analyticsRouter.get('/daily', async (req: AuthRequest, res) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const date = (req.query.date as string) || new Date().toISOString().slice(0, 10);
   if (!branchId) return res.status(400).json({ error: 'branchId required' });
-  const d = new Date(date);
-  const dayStart = startOfDay(d);
-  const dayEnd = endOfDay(d);
+  const cal = businessDateFromYmdString(date);
+  if (!cal || Number.isNaN(cal.getTime())) {
+    return res.status(400).json({ error: 'Invalid date (use YYYY-MM-DD)' });
+  }
+  const dayStart = startOfDay(cal);
+  const dayEnd = endOfDay(cal);
 
   const sessions = await prisma.dailySession.findMany({
-    where: { branchId, date: { gte: dayStart, lte: dayEnd } },
+    where: { branchId, date: cal },
     include: { sales: true, leftoverRecords: true },
   });
   const salesSum = sessions.reduce((acc, s) => acc + s.sales.reduce((t, x) => t + Number(x.totalAmount), 0), 0);
   const expensesCompany = await prisma.expense.findMany({
-    where: { branchId, date: { gte: dayStart, lte: dayEnd }, type: 'COMPANY' },
+    where: { branchId, date: cal, type: 'COMPANY' },
   });
   const expensesOwner = await prisma.expense.findMany({
-    where: { branchId, date: { gte: dayStart, lte: dayEnd }, type: 'OWNER' },
+    where: { branchId, date: cal, type: 'OWNER' },
   });
   const expenseTotal = expensesCompany.reduce((sum, e) => sum + Number(e.amount), 0);
   const ownerExpenseTotal = expensesOwner.reduce((sum, e) => sum + Number(e.amount), 0);
   const batches = await prisma.productionBatch.count({
-    where: { branchId, date: { gte: dayStart, lte: dayEnd } },
+    where: { branchId, date: cal },
   });
   const deliveries = await prisma.supplierDelivery.findMany({
     where: { supplier: { branchId }, createdAt: { gte: dayStart, lte: dayEnd } },
@@ -62,10 +67,17 @@ analyticsRouter.get('/daily', async (req: AuthRequest, res) => {
   const deliveryCost = deliveries.reduce((s, d) => s + Number(d.unitBuyPrice) * d.quantityReceived, 0);
   const deliveryRevenue = deliveries.reduce((s, d) => s + Number(d.unitSellPrice) * (d.quantityReceived - d.returnedQuantity), 0);
 
+  const leftoverLines = sessions.reduce((acc, s) => acc + s.leftoverRecords.length, 0);
+  const closedSessions = sessions.filter((s) => s.status === 'CLOSED').length;
+  const openSessions = sessions.filter((s) => s.status === 'OPEN').length;
+
   res.json({
     date,
     branchId,
     sessions: sessions.length,
+    closedSessions,
+    openSessions,
+    leftoverLines,
     salesCount: sessions.reduce((acc, s) => acc + s.sales.length, 0),
     salesTotal: salesSum,
     expenseTotal,
@@ -74,7 +86,8 @@ analyticsRouter.get('/daily', async (req: AuthRequest, res) => {
     supplierDeliveries: deliveries.length,
     supplierDeliveryCost: deliveryCost,
     supplierDeliveryRevenue: deliveryRevenue,
-    netDaily: salesSum - expenseTotal - deliveryCost + (deliveryRevenue - deliveryCost),
+    // Daily operating net excludes owner withdrawals and subtracts supply cost once.
+    netDaily: salesSum - expenseTotal - deliveryCost,
   });
 });
 

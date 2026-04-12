@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
+import { businessDateFromYmdString, businessDateUtcNoon, parseYmd } from '../lib/businessDate.js';
 import { authMiddleware, requireRole, type AuthRequest } from '../middleware/auth.js';
 
 function decimalToNum(v: unknown): number {
@@ -19,13 +20,10 @@ productionBatchesRouter.get('/', async (req: AuthRequest, res) => {
   if (!branchId) return res.status(400).json({ error: 'branchId required' });
   const where: any = { branchId };
   if (status) where.status = status;
+  // Match finalize / day-close logic: filter by business `date` on the batch (not createdAt).
   if (date) {
-    const d = new Date(date);
-    const start = new Date(d);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(d);
-    end.setHours(23, 59, 59, 999);
-    where.createdAt = { gte: start, lte: end };
+    const p = parseYmd(date);
+    if (p) where.date = businessDateUtcNoon(p.y, p.mo, p.day);
   }
   const list = await prisma.productionBatch.findMany({
     where,
@@ -64,10 +62,10 @@ productionBatchesRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER', 'SAMBUS
   const bid = branchId || req.user?.branchId;
   if (!bid) return res.status(400).json({ error: 'branchId required' });
   if (!items?.length) return res.status(400).json({ error: 'items array required' });
-  let batchDate = new Date();
+  let batchDate = businessDateFromYmdString(new Date().toISOString().slice(0, 10)) ?? new Date();
   if (date) {
-    const [y, mo, day] = date.split('-').map(Number);
-    if (y && mo && day) batchDate = new Date(y, mo - 1, day);
+    const p = parseYmd(date);
+    if (p) batchDate = businessDateUtcNoon(p.y, p.mo, p.day);
   }
   const batch = await prisma.productionBatch.create({
     data: {

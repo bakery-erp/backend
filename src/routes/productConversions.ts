@@ -34,8 +34,14 @@ productConversionsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER'), async
   if (!bid || !fromProductId || !toProductId || fromQuantity == null || toQuantity == null) {
     return res.status(400).json({ error: 'branchId, fromProductId, toProductId, fromQuantity, toQuantity required' });
   }
+  if (fromProductId === toProductId) {
+    return res.status(400).json({ error: 'Source and result products must be different' });
+  }
   const fromQ = typeof fromQuantity === 'number' ? fromQuantity : parseInt(String(fromQuantity), 10);
   const toQ = typeof toQuantity === 'number' ? toQuantity : parseInt(String(toQuantity), 10);
+  if (!Number.isFinite(fromQ) || !Number.isFinite(toQ) || fromQ < 1 || toQ < 1 || !Number.isInteger(fromQ) || !Number.isInteger(toQ)) {
+    return res.status(400).json({ error: 'Quantities must be positive whole numbers (e.g. 1 and 10)' });
+  }
   const conversion = await prisma.productConversion.create({
     data: {
       branchId: bid,
