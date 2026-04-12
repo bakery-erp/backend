@@ -12,6 +12,19 @@ function decimalToNum(v: unknown): number {
 export const penaltiesRouter = Router();
 penaltiesRouter.use(authMiddleware);
 
+penaltiesRouter.get('/my', async (req: any, res) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+  const list = await prisma.penalty.findMany({
+    where: { userId },
+    include: { user: { select: { id: true, fullName: true, phone: true } } },
+    orderBy: { date: 'desc' },
+  });
+  res.json(list);
+});
+
+
 penaltiesRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req, res) => {
   const userId = req.query.userId as string | undefined;
   const isDeducted = req.query.isDeducted as string | undefined;

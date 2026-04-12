@@ -1114,6 +1114,18 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
         responses: { 200: { description: 'Updated expense' }, 404: { description: 'Expense not found' } },
       },
     },
+    '/api/loans/my': {
+      get: {
+        tags: ['Loans'],
+        summary: 'Get logged-in user loans',
+        description: 'Returns the loans for the currently authenticated user.',
+        responses: { 
+          200: { 
+            description: 'Array of loans', 
+          } 
+        }
+      },
+    },
     '/api/loans': {
       get: {
         tags: ['Loans'],
@@ -1192,6 +1204,18 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
           400: { description: 'Invalid amount or loan already paid' },
           404: { description: 'Loan not found' },
         },
+      },
+    },
+    '/api/penalties/my': {
+      get: {
+        tags: ['Penalties'],
+        summary: 'Get logged-in user penalties',
+        description: 'Returns the penalties for the currently authenticated user.',
+        responses: { 
+          200: { 
+            description: 'Array of penalties', 
+          } 
+        }
       },
     },
     '/api/penalties': {

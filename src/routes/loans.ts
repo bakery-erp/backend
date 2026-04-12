@@ -12,6 +12,19 @@ function decimalToNum(v: unknown): number {
 export const loansRouter = Router();
 loansRouter.use(authMiddleware);
 
+loansRouter.get('/my', async (req: any, res) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+  const list = await prisma.loan.findMany({
+    where: { userId },
+    include: { user: { select: { id: true, fullName: true, phone: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  res.json(list);
+});
+
+
 loansRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const type = req.query.type as string | undefined;
