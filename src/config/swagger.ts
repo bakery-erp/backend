@@ -195,19 +195,6 @@ Production API for Bakery ERP. Used by:
     }
   },
   
-  '/api/auth/logout': {
-    post: {
-      tags: ['Auth'],
-      summary: 'Logout current user',
-      security: [{ BearerAuth: [] }],
-      responses: {
-        200: {
-          description: 'Logged out successfully'
-        }
-      }
-    }
-  },
-    '/api/auth/logout': { post: { tags: ['Auth'], summary: 'Logout current user', security: [{ BearerAuth: [] }], responses: { 200: { description: 'Logged out successfully' } } } },
   '/api/auth/me': {
       get: {
         tags: ['Auth'],
