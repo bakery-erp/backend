@@ -29,6 +29,7 @@ import { dashboardRouter } from './routes/dashboard.js';
 const app = express();
 const PORT = process.env.PORT ?? 3001;
 
+app.use('/uploads', express.static('uploads'));
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 

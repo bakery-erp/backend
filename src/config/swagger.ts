@@ -68,6 +68,11 @@ Production API for Bakery ERP. Used by:
           role: { type: 'string', enum: ['OWNER', 'ADMIN', 'BAKER', 'CASHIER', 'SAMBUSA_WORKER'] },
           branchId: { type: 'string', nullable: true },
           branch: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } },
+          filesUrl: { type: 'string', nullable: true },
+          shift: { type: 'string', nullable: true },
+          salary: { type: 'number', nullable: true },
+          startDate: { type: 'string', format: 'date-time', nullable: true },
+          isActive: { type: 'boolean' },
         },
       },
       DailySession: {
@@ -147,6 +152,34 @@ Production API for Bakery ERP. Used by:
           401: { description: 'Invalid credentials' },
         },
       },
+    },
+    
+    '/api/auth/password': {
+      patch: {
+        tags: ['Auth'],
+        summary: 'Update logged-in user password',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['currentPassword', 'newPassword'],
+                properties: {
+                  currentPassword: { type: 'string', example: 'old123' },
+                  newPassword: { type: 'string', example: 'new123' }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          200: { description: 'Password updated successfully' },
+          400: { description: 'Missing fields' },
+          401: { description: 'Incorrect current password' },
+          404: { description: 'User not found' }
+        }
+      }
     },
     '/api/auth/me': {
       get: {
@@ -249,25 +282,25 @@ Production API for Bakery ERP. Used by:
         description: `Create user with phone (required), fullName, password, role. ${roles.web}`,
         requestBody: {
           content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['fullName', 'phone', 'password', 'role'],
-                properties: {
-                  fullName: { type: 'string' },
-                  phone: { type: 'string', example: '0911111111' },
-                  password: { type: 'string' },
-                  role: { type: 'string', enum: ['OWNER', 'ADMIN', 'BAKER', 'CASHIER', 'SAMBUSA_WORKER'] },
-                  branchId: { type: 'string', nullable: true },
-                  salary: { type: 'number', nullable: true },
-                  startDate: { type: 'string', format: 'date', nullable: true },
-                  lastPaidDate: { type: 'string', format: 'date', nullable: true },
-                  shift: { type: 'string', enum: ['DAY', 'NIGHT'], nullable: true },
-                  filesUrl: { type: 'string', nullable: true },
+            'multipart/form-data': {
+                schema: {
+                  type: 'object',
+                  required: ['fullName', 'phone', 'password', 'role'],
+                  properties: {
+                    fullName: { type: 'string' },
+                    phone: { type: 'string', example: '0911111111' },
+                    password: { type: 'string' },
+                    role: { type: 'string', enum: ['OWNER', 'ADMIN', 'BAKER', 'CASHIER', 'SAMBUSA_WORKER'] },
+                    branchId: { type: 'string', nullable: true },
+                    salary: { type: 'number', nullable: true },
+                    startDate: { type: 'string', format: 'date', nullable: true },
+                    lastPaidDate: { type: 'string', format: 'date', nullable: true },
+                    shift: { type: 'string', enum: ['DAY', 'NIGHT'], nullable: true },
+                    file: { type: 'string', format: 'binary', description: 'User file attachment' },
+                  },
                 },
+                example: { fullName: 'Ali', phone: '0911111111', password: 'secret123', role: 'CASHIER', branchId: 'clxx...', salary: 5000, startDate: '2025-01-01' },
               },
-              example: { fullName: 'Ali', phone: '0911111111', password: 'secret123', role: 'CASHIER', branchId: 'clxx...', salary: 5000, startDate: '2025-01-01' },
-            },
           },
         },
         responses: { 201: { description: 'Created user', content: { 'application/json': { example: { id: 'clxx...', fullName: 'Ali', phone: '0911111111', role: 'CASHIER', branchId: 'clyy...', branch: null } } } } },
@@ -286,10 +319,10 @@ Production API for Bakery ERP. Used by:
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
           content: {
-            'application/json': {
-              schema: { type: 'object', properties: { fullName: { type: 'string' }, phone: { type: 'string' }, password: { type: 'string' }, role: { type: 'string' }, branchId: { type: 'string', nullable: true }, isActive: { type: 'boolean' }, salary: { type: 'number' }, startDate: { type: 'string', format: 'date' }, lastPaidDate: { type: 'string', format: 'date' }, shift: { type: 'string' }, filesUrl: { type: 'string' } } },
-              example: { fullName: 'Ali Updated', salary: 5500 },
-            },
+            'multipart/form-data': {
+                schema: { type: 'object', properties: { fullName: { type: 'string' }, phone: { type: 'string' }, password: { type: 'string' }, role: { type: 'string' }, branchId: { type: 'string', nullable: true }, isActive: { type: 'boolean' }, salary: { type: 'number' }, startDate: { type: 'string', format: 'date' }, lastPaidDate: { type: 'string', format: 'date' }, shift: { type: 'string' }, file: { type: 'string', format: 'binary', description: 'User file attachment' } } },
+                example: { fullName: 'Ali Updated', salary: 5500 },
+              },
           },
         },
         responses: { 200: { description: 'Updated user', content: { 'application/json': { example: { id: 'clxx...', fullName: 'Ali Updated', phone: '0911111111', role: 'CASHIER', branchId: 'clyy...', branch: null, salary: 5500 } } } } },

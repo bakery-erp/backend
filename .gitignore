@@ -31,4 +31,5 @@ coverage/
 *.db-journal
 
 # Design/planning docs stay out of this repo (README only); keep copies locally if needed
+docs/uploads/
 docs/

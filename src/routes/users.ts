@@ -1,10 +1,24 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
+import multer from 'multer';
+import path from 'path';
 import { prisma } from '../lib/prisma.js';
 import { authMiddleware, requireRole, type AuthRequest } from '../middleware/auth.js';
 
 export const usersRouter = Router();
 usersRouter.use(authMiddleware);
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+const upload = multer({ storage });
 
 const userSelect = { id: true, fullName: true, phone: true, role: true, branchId: true, isActive: true, createdAt: true, salary: true, startDate: true, lastPaidDate: true, shift: true, filesUrl: true } as const;
 
@@ -35,8 +49,8 @@ function toDecimal(v: unknown): number | null {
   return null;
 }
 
-usersRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res) => {
-  const { fullName, phone, password, role, branchId, salary, startDate, lastPaidDate, shift, filesUrl } = req.body as {
+usersRouter.post('/', requireRole('OWNER', 'ADMIN'), upload.single('file'), async (req, res) => {
+  const { fullName, phone, password, role, branchId, salary, startDate, lastPaidDate, shift } = req.body as {
     fullName: string;
     phone: string;
     password: string;
@@ -46,8 +60,13 @@ usersRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res) => {
     startDate?: string;
     lastPaidDate?: string;
     shift?: string;
-    filesUrl?: string;
   };
+  
+  let filesUrl = req.body.filesUrl as string | undefined;
+  if (req.file) {
+    filesUrl = `/uploads/${req.file.filename}`;
+  }
+
   const phoneTrim = phone?.trim();
   if (!fullName?.trim() || !phoneTrim || !password) {
     return res.status(400).json({ error: 'fullName, phone, password required' });
@@ -74,8 +93,14 @@ usersRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res) => {
   res.status(201).json(user);
 });
 
-usersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
-  const { fullName, phone, password, role, branchId, isActive, salary, startDate, lastPaidDate, shift, filesUrl } = req.body as Record<string, unknown>;
+usersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), upload.single('file'), async (req, res) => {
+  const { fullName, phone, password, role, branchId, isActive, salary, startDate, lastPaidDate, shift } = req.body as Record<string, unknown>;
+  
+  let filesUrl = req.body.filesUrl as string | undefined;
+  if (req.file) {
+    filesUrl = `/uploads/${req.file.filename}`;
+  }
+
   const data: Record<string, unknown> = {};
   if (typeof fullName === 'string') data.fullName = fullName.trim();
   if (typeof phone === 'string') data.phone = phone?.trim() || null;

@@ -8,6 +8,11 @@ export type AuthUserDto = {
   role: Role;
   branchId: string | null;
   branch: { id: string; name: string } | null;
+  filesUrl?: string | null;
+  shift?: string | null;
+  salary?: any;
+  startDate?: Date | null;
+  isActive?: boolean;
 };
 
 type UserWithBranch = {
@@ -17,6 +22,11 @@ type UserWithBranch = {
   role: Role;
   branchId: string | null;
   branch: Pick<Branch, 'id' | 'name'> | null;
+  filesUrl?: string | null;
+  shift?: string | null;
+  salary?: any;
+  startDate?: Date | null;
+  isActive?: boolean;
 };
 
 export function toAuthUserDto(user: UserWithBranch): AuthUserDto {
@@ -27,5 +37,10 @@ export function toAuthUserDto(user: UserWithBranch): AuthUserDto {
     role: user.role,
     branchId: user.branchId,
     branch: user.branch ? { id: user.branch.id, name: user.branch.name } : null,
+    filesUrl: user.filesUrl,
+    shift: user.shift,
+    salary: user.salary,
+    startDate: user.startDate,
+    isActive: user.isActive,
   };
 }
