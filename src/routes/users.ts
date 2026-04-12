@@ -20,6 +20,10 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+usersRouter.get('/roles', requireRole('OWNER', 'ADMIN'), (req, res) => {
+  res.json(['OWNER', 'ADMIN', 'BAKER', 'CASHIER', 'SAMBUSA_WORKER']);
+});
+
 const userSelect = { id: true, fullName: true, phone: true, role: true, branchId: true, isActive: true, createdAt: true, salary: true, startDate: true, lastPaidDate: true, shift: true, filesUrl: true } as const;
 
 usersRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res) => {
