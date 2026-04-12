@@ -27,11 +27,7 @@ Production API for Bakery ERP. Used by:
 **Sales**: Sales are not entered manually. Cashier reports leftovers per product; system computes sold = produced - leftover and registers one Sale per session when the day is finalized via \`POST /daily-sessions/:id/finalize\`.
     `.trim(),
   },
-  servers: [
-    { url: 'http://localhost:3001', description: 'Development' },
-    { url: '/api', description: 'Relative (e.g. same host)' },
-  ],
-  tags: [
+    tags: [
     { name: 'Auth', description: 'Login and current user' },
     { name: 'Branches', description: 'Branch management (Web)' },
     { name: 'Users', description: 'User management (Web). All users are staff; salary, startDate, shift, etc. on User' },
