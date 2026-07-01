@@ -27,7 +27,7 @@ import { analyticsRouter } from './routes/analytics.js';
 import { dashboardRouter } from './routes/dashboard.js';
 
 const app = express();
-const PORT = process.env.PORT ?? 3001;
+const PORT = process.env.PORT ?? 3003;
 
 app.use('/uploads', express.static('uploads'));
 app.use(cors({ origin: true, credentials: true }));

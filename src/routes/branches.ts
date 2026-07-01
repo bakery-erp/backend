@@ -7,6 +7,16 @@ branchesRouter.use(authMiddleware);
 
 branchesRouter.get('/', requireRole('OWNER', 'ADMIN'), async (_req, res) => {
   const list = await prisma.branch.findMany({ orderBy: { name: 'asc' } });
+  
+  // Ensure the main branch always appears first
+  list.sort((a, b) => {
+    const aIsMain = a.name.toLowerCase().includes('main');
+    const bIsMain = b.name.toLowerCase().includes('main');
+    if (aIsMain && !bIsMain) return -1;
+    if (!aIsMain && bIsMain) return 1;
+    return 0; // Fallback to their alphabetical order
+  });
+
   res.json(list);
 });
 
