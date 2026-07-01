@@ -120,10 +120,15 @@ model User {
 }
 
 model ProductCategory {
-  id   String @id @default(cuid())
-  name String
-  type CategoryType
+  id        String           @id @default(cuid())
+  name      String
+  type      CategoryType
+  parentId  String?
+  parent    ProductCategory? @relation("ProductCategoryChildren", fields: [parentId], references: [id], onDelete: SetNull)
+  children  ProductCategory[] @relation("ProductCategoryChildren")
   products Product[]
+
+  @@index([parentId])
 }
 
 model FinancialCategory {
@@ -227,7 +232,6 @@ model ProductionMaterialUsage {
   batch       ProductionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
   stockItemId String
   stockItem   StockItem       @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
-  quantityUsed Decimal        @db.Decimal(12, 3)
   createdAt   DateTime       @default(now())
 }
 
@@ -252,6 +256,7 @@ model DailySession {
   branch       Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
   date         DateTime      @db.Date   // Calendar day; opens at 00:00, ends after 24h; can register for any day (incl. past)
   status       SessionStatus @default(OPEN)
+  cashLeftoverAmount Decimal? @db.Decimal(12, 2)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   sales        Sale[]
@@ -269,8 +274,6 @@ model Sale {
   paymentMethod PaymentMethod @default(CASH)
   createdAt     DateTime  @default(now())
   items         SaleItem[]
-
-  @@index([sessionId])
   @@index([userId])
   @@index([createdAt])
 }
@@ -368,6 +371,7 @@ model Loan {
   totalAmount      Decimal    @db.Decimal(12, 2)
   remainingBalance Decimal    @db.Decimal(12, 2)
   status           LoanStatus @default(OPEN)
+  date             DateTime   @db.Date   @default(dbgenerated("(CURDATE())"))
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
   payments         LoanPayment[]

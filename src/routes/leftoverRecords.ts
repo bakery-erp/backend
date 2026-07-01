@@ -144,3 +144,24 @@ leftoverRecordsRouter.put(
     res.json(list);
   })
 );
+
+leftoverRecordsRouter.delete(
+  '/session/:sessionId/product/:productId',
+  requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER'),
+  asyncHandler(async (req, res) => {
+    const { sessionId, productId } = req.params;
+    const session = await prisma.dailySession.findUnique({ where: { id: sessionId } });
+    if (!session) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    if (session.status !== 'OPEN') {
+      res.status(400).json({ error: 'Session is closed; cannot delete leftovers' });
+      return;
+    }
+    await prisma.leftoverRecord.delete({
+      where: { sessionId_productId: { sessionId, productId } },
+    });
+    res.status(204).send();
+  })
+);

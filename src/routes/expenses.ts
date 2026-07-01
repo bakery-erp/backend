@@ -145,3 +145,8 @@ expensesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => 
   });
   res.json(expense);
 });
+
+expensesRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+  await prisma.expense.delete({ where: { id: req.params.id } });
+  res.status(204).send();
+});

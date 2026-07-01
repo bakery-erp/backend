@@ -22,6 +22,19 @@ productConversionsRouter.get('/', async (req: AuthRequest, res) => {
   res.json(list);
 });
 
+productConversionsRouter.get('/:id', async (req, res) => {
+  const conversion = await prisma.productConversion.findUnique({
+    where: { id: req.params.id },
+    include: {
+      fromProduct: { select: { id: true, name: true, flavor: true } },
+      toProduct: { select: { id: true, name: true, flavor: true } },
+      user: { select: { id: true, fullName: true } },
+    },
+  });
+  if (!conversion) return res.status(404).json({ error: 'Conversion not found' });
+  res.json(conversion);
+});
+
 productConversionsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER'), async (req: AuthRequest, res) => {
   const { branchId, fromProductId, toProductId, fromQuantity, toQuantity } = req.body as {
     branchId?: string;
@@ -58,4 +71,9 @@ productConversionsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER'), async
     },
   });
   res.status(201).json(conversion);
+});
+
+productConversionsRouter.delete('/:id', requireRole('OWNER', 'ADMIN', 'BAKER'), async (req, res) => {
+  await prisma.productConversion.delete({ where: { id: req.params.id } });
+  res.status(204).send();
 });

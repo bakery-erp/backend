@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { authMiddleware, requireRole, type AuthRequest } from '../middleware/auth.js';
+import { businessDateFromYmdString } from '../lib/businessDate.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -29,10 +30,17 @@ loansRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const type = req.query.type as string | undefined;
   const status = req.query.status as string | undefined;
+  const from = req.query.from as string | undefined;
+  const to = req.query.to as string | undefined;
   if (!branchId) return res.status(400).json({ error: 'branchId required' });
   const where: any = { branchId };
   if (type) where.type = type;
   if (status) where.status = status;
+  if (from || to) {
+    where.date = {};
+    if (from) where.date.gte = businessDateFromYmdString(from);
+    if (to) where.date.lte = businessDateFromYmdString(to);
+  }
   const list = await prisma.loan.findMany({
     where,
     include: { user: { select: { id: true, fullName: true, phone: true, role: true } }, payments: true },
@@ -51,12 +59,13 @@ loansRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
 });
 
 loansRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res) => {
-  const { branchId, type, entityId, userId, totalAmount } = req.body as {
+  const { branchId, type, entityId, userId, totalAmount, date } = req.body as {
     branchId?: string;
     type: string;
     entityId?: string;
     userId?: string;
     totalAmount: number | string;
+    date?: string;
   };
   const bid = branchId || req.user?.branchId;
   if (!bid || !type || totalAmount == null) return res.status(400).json({ error: 'branchId, type, totalAmount required' });
@@ -71,6 +80,7 @@ loansRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, re
       userId: type === 'EMPLOYEE' ? userId ?? undefined : null,
       totalAmount: amount,
       remainingBalance: amount,
+      date: date ? businessDateFromYmdString(date) ?? undefined : undefined,
       status: 'OPEN',
     },
     include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
@@ -99,4 +109,10 @@ loansRouter.post('/:id/pay', requireRole('OWNER', 'ADMIN'), async (req, res) => 
     include: { payments: true, user: { select: { id: true, fullName: true, phone: true } } },
   });
   res.json(updated);
+});
+
+loansRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+  await prisma.loanPayment.deleteMany({ where: { loanId: req.params.id } });
+  await prisma.loan.delete({ where: { id: req.params.id } });
+  res.status(204).send();
 });

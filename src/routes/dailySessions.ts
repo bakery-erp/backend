@@ -122,9 +122,15 @@ dailySessionsRouter.post(
 );
 
 dailySessionsRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req, res) => {
-  const { status } = req.body as { status?: string };
+  const { status, cashLeftoverAmount } = req.body as { status?: string; cashLeftoverAmount?: number | string | null };
   const data: any = {};
   if (status) data.status = status;
+  if (cashLeftoverAmount !== undefined) {
+    data.cashLeftoverAmount =
+      cashLeftoverAmount === null || cashLeftoverAmount === ''
+        ? null
+        : decimalToNum(cashLeftoverAmount);
+  }
   const session = await prisma.dailySession.update({
     where: { id: req.params.id },
     data,
@@ -138,6 +144,7 @@ dailySessionsRouter.post(
   requireRole('OWNER', 'ADMIN', 'CASHIER'),
   asyncHandler(async (req: AuthRequest, res) => {
   const sessionId = req.params.id;
+  const cashLeftoverAmountRaw = (req.body as { cashLeftoverAmount?: number | string | null }).cashLeftoverAmount;
   const { leftoverRecords } = req.body as {
     leftoverRecords: { productId: string; quantityRemaining: number | string }[];
   };
@@ -157,6 +164,10 @@ dailySessionsRouter.post(
     res.status(400).json({ error: 'leftoverRecords array required' });
     return;
   }
+  const cashLeftoverAmount =
+    cashLeftoverAmountRaw === undefined || cashLeftoverAmountRaw === null || cashLeftoverAmountRaw === ''
+      ? null
+      : decimalToNum(cashLeftoverAmountRaw);
 
   // Use the session's calendar date as stored in DB (avoid setHours() — it shifts the day in some timezones and skips production batches).
   const sessionBusinessDate = session.date;
@@ -311,7 +322,10 @@ dailySessionsRouter.post(
   // 7) Close session
   await prisma.dailySession.update({
     where: { id: sessionId },
-    data: { status: 'CLOSED' },
+    data: {
+      status: 'CLOSED',
+      ...(cashLeftoverAmount !== null && { cashLeftoverAmount }),
+    },
   });
 
   const updated = await prisma.dailySession.findUnique({
@@ -337,6 +351,7 @@ dailySessionsRouter.post(
       purchaseLineItems,
       derivedLineItems: saleItems.length,
       totalBrr,
+      cashLeftoverAmount,
     },
   });
   })

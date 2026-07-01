@@ -50,3 +50,12 @@ suppliersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) =>
   });
   res.json(supplier);
 });
+
+suppliersRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+  const deliveryCount = await prisma.supplierDelivery.count({ where: { supplierId: req.params.id } });
+  if (deliveryCount > 0) {
+    return res.status(400).json({ error: 'Cannot delete a supplier that still has deliveries' });
+  }
+  await prisma.supplier.delete({ where: { id: req.params.id } });
+  res.status(204).send();
+});

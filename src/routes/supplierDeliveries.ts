@@ -100,3 +100,33 @@ supplierDeliveriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req
   });
   res.json(delivery);
 });
+
+supplierDeliveriesRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+  const delivery = await prisma.supplierDelivery.findUnique({
+    where: { id: req.params.id },
+  });
+  if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
+
+  if (delivery.stockItemId) {
+    const item = await prisma.stockItem.findUnique({ where: { id: delivery.stockItemId } });
+    if (item) {
+      const netQty = Math.max(0, delivery.quantityReceived - delivery.returnedQuantity);
+      await prisma.stockItem.update({
+        where: { id: delivery.stockItemId },
+        data: { currentQuantity: Number(item.currentQuantity) - netQty },
+      });
+      await prisma.stockMovement.create({
+        data: {
+          stockItemId: delivery.stockItemId,
+          userId: (req as AuthRequest).user!.id,
+          quantity: netQty,
+          type: 'OUT',
+          reason: `Revert supplier delivery ${delivery.id}`,
+        },
+      });
+    }
+  }
+
+  await prisma.supplierDelivery.delete({ where: { id: req.params.id } });
+  res.status(204).send();
+});
