@@ -10,6 +10,7 @@ financialReportsRouter.use(requireRole('OWNER', 'ADMIN'));
 type Period = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'semester' | 'yearly';
 
 type DayTotals = {
+  openingLeftoverQuantity: number;
   salesTotal: number;
   cashLeftoverTotal: number;
   companyExpenseTotal: number;
@@ -115,6 +116,7 @@ function resolvePeriodRange(period: Period, req: AuthRequest) {
 function sumTotals(rows: DayTotals[]): DayTotals {
   return rows.reduce<DayTotals>(
     (acc, row) => ({
+      openingLeftoverQuantity: acc.openingLeftoverQuantity + row.openingLeftoverQuantity,
       salesTotal: acc.salesTotal + row.salesTotal,
       cashLeftoverTotal: acc.cashLeftoverTotal + row.cashLeftoverTotal,
       companyExpenseTotal: acc.companyExpenseTotal + row.companyExpenseTotal,
@@ -125,6 +127,7 @@ function sumTotals(rows: DayTotals[]): DayTotals {
       netIncome: acc.netIncome + row.netIncome,
     }),
     {
+      openingLeftoverQuantity: 0,
       salesTotal: 0,
       cashLeftoverTotal: 0,
       companyExpenseTotal: 0,
@@ -188,10 +191,21 @@ async function loadRangeReport(branchId: string, fromDate: Date, toDate: Date) {
     return pivot >= fromDate && pivot <= toDate;
   });
 
+  const previousClosedBeforeRange = await prisma.dailySession.findFirst({
+    where: {
+      branchId,
+      status: 'CLOSED',
+      date: { lt: fromDate },
+    },
+    include: { leftoverRecords: { include: { product: { select: { id: true, name: true, flavor: true, unitType: true } } } } },
+    orderBy: { date: 'desc' },
+  });
+
   const dayMap = new Map<string, DayTotals>();
   const ensure = (ymd: string) => {
     if (!dayMap.has(ymd)) {
       dayMap.set(ymd, {
+        openingLeftoverQuantity: 0,
         salesTotal: 0,
         cashLeftoverTotal: 0,
         companyExpenseTotal: 0,
@@ -205,9 +219,36 @@ async function loadRangeReport(branchId: string, fromDate: Date, toDate: Date) {
     return dayMap.get(ymd)!;
   };
 
-  for (const session of sessions) {
+  const carryRows = (previousClosedBeforeRange?.leftoverRecords ?? []).map((row) => ({
+    productId: row.productId,
+    quantityRemaining: row.quantityRemaining,
+    product: row.product,
+  }));
+
+  const sessionsWithOpening = sessions.map((session) => {
+    const openingLeftoverRecords = carryRows.map((row) => ({
+      product: row.product,
+      quantityRemaining: row.quantityRemaining,
+    }));
+    const openingLeftoverQuantity = openingLeftoverRecords.reduce((sum, row) => sum + row.quantityRemaining, 0);
+    if (session.status === 'CLOSED') {
+      carryRows.splice(0, carryRows.length, ...session.leftoverRecords.map((row) => ({
+        productId: row.productId,
+        quantityRemaining: row.quantityRemaining,
+        product: row.product,
+      })));
+    }
+    return {
+      ...session,
+      openingLeftoverRecords,
+      openingLeftoverQuantity,
+    };
+  });
+
+  for (const session of sessionsWithOpening) {
     const ymd = dateToYmdUtc(session.date);
     const bucket = ensure(ymd);
+    bucket.openingLeftoverQuantity += session.openingLeftoverQuantity;
     const salesTotal = session.sales.reduce((sum, sale) => sum + toNumber(sale.totalAmount), 0);
     const cashLeftoverTotal = toNumber(session.cashLeftoverAmount);
     bucket.salesTotal += salesTotal;
@@ -248,7 +289,7 @@ async function loadRangeReport(branchId: string, fromDate: Date, toDate: Date) {
 
   const totals = sumTotals(dailyBreakdown);
   return {
-    sessions,
+    sessions: sessionsWithOpening,
     productionBatches,
     expenses,
     loans,
