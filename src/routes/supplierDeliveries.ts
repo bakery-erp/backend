@@ -31,7 +31,7 @@ supplierDeliveriesRouter.get('/', async (req: AuthRequest, res) => {
   }
   const list = await prisma.supplierDelivery.findMany({
     where,
-    include: { supplier: true, product: true, stockItem: true },
+    include: { supplier: true, product: true },
     orderBy: { createdAt: 'desc' },
     take: dateYmd ? 500 : limit,
   });
@@ -41,14 +41,14 @@ supplierDeliveriesRouter.get('/', async (req: AuthRequest, res) => {
 supplierDeliveriesRouter.get('/:id', async (req, res) => {
   const delivery = await prisma.supplierDelivery.findUnique({
     where: { id: req.params.id },
-    include: { supplier: true, product: true, stockItem: true },
+    include: { supplier: true, product: true },
   });
   if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
   res.json(delivery);
 });
 
 supplierDeliveriesRouter.post('/', requireRole('OWNER', 'ADMIN', 'SAMBUSA_WORKER'), async (req: AuthRequest, res) => {
-  const { supplierId, productId, stockItemId, quantityReceived, unitBuyPrice, unitSellPrice, isPaid, returnedQuantity } = req.body as Record<string, unknown>;
+  const { supplierId, productId, quantityReceived, unitBuyPrice, unitSellPrice, isPaid, returnedQuantity } = req.body as Record<string, unknown>;
   if (!supplierId || !productId || quantityReceived == null || unitBuyPrice == null || unitSellPrice == null) {
     return res.status(400).json({ error: 'supplierId, productId, quantityReceived, unitBuyPrice, unitSellPrice required' });
   }
@@ -57,34 +57,14 @@ supplierDeliveriesRouter.post('/', requireRole('OWNER', 'ADMIN', 'SAMBUSA_WORKER
     data: {
       supplierId: supplierId as string,
       productId: productId as string,
-      stockItemId: (stockItemId as string) || null,
       quantityReceived: qty,
       unitBuyPrice: decimalToNum(unitBuyPrice),
       unitSellPrice: decimalToNum(unitSellPrice),
       isPaid: Boolean(isPaid),
       returnedQuantity: returnedQuantity != null ? parseInt(String(returnedQuantity), 10) : 0,
     },
-    include: { supplier: true, product: true, stockItem: true },
+    include: { supplier: true, product: true },
   });
-  if (stockItemId && typeof stockItemId === 'string') {
-    const item = await prisma.stockItem.findUnique({ where: { id: stockItemId } });
-    if (item) {
-      const netQty = qty - (delivery.returnedQuantity ?? 0);
-      await prisma.stockItem.update({
-        where: { id: stockItemId },
-        data: { currentQuantity: Number(item.currentQuantity) + netQty },
-      });
-      await prisma.stockMovement.create({
-        data: {
-          stockItemId,
-          userId: req.user!.id,
-          quantity: netQty,
-          type: 'IN',
-          reason: `Supplier delivery ${delivery.id}`,
-        },
-      });
-    }
-  }
   res.status(201).json(delivery);
 });
 
@@ -106,26 +86,6 @@ supplierDeliveriesRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (re
     where: { id: req.params.id },
   });
   if (!delivery) return res.status(404).json({ error: 'Delivery not found' });
-
-  if (delivery.stockItemId) {
-    const item = await prisma.stockItem.findUnique({ where: { id: delivery.stockItemId } });
-    if (item) {
-      const netQty = Math.max(0, delivery.quantityReceived - delivery.returnedQuantity);
-      await prisma.stockItem.update({
-        where: { id: delivery.stockItemId },
-        data: { currentQuantity: Number(item.currentQuantity) - netQty },
-      });
-      await prisma.stockMovement.create({
-        data: {
-          stockItemId: delivery.stockItemId,
-          userId: (req as AuthRequest).user!.id,
-          quantity: netQty,
-          type: 'OUT',
-          reason: `Revert supplier delivery ${delivery.id}`,
-        },
-      });
-    }
-  }
 
   await prisma.supplierDelivery.delete({ where: { id: req.params.id } });
   res.status(204).send();
