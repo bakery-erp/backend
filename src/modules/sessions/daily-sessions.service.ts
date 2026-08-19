@@ -1,0 +1,506 @@
+import { prisma } from '../../lib/prisma.js';
+import { Prisma } from '@prisma/client';
+import { businessDateUtcNoon, dateToYmdUtc, parseYmd, utcDayRangeInclusive } from '../../lib/businessDate.js';
+import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
+
+function decimalToNum(v: unknown): number {
+  if (v == null) return 0;
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string') return parseFloat(v);
+  return 0;
+}
+
+export class DailySessionsService {
+  async getDailySessions(branchId?: string | null, from?: string, to?: string, status?: string): ServiceResult {
+    if (!branchId) {
+      return { error: 'branchId required', status: 400 };
+    }
+    const where: any = { branchId };
+    if (status) where.status = status;
+    if (from || to) {
+      where.date = {};
+      if (from) where.date.gte = new Date(from);
+      if (to) where.date.lte = new Date(to);
+    }
+    const list = await prisma.dailySession.findMany({
+      where,
+      include: {
+        _count: { select: { sales: true, leftoverRecords: true } },
+      },
+      orderBy: { date: 'desc' },
+    });
+    return { data: list };
+  }
+
+  async getDailySessionById(id: string): ServiceResult {
+    const session = await prisma.dailySession.findUnique({
+      where: { id },
+      include: {
+        branch: true,
+        sales: { include: { user: true, items: { include: { product: true } } } },
+        leftoverRecords: { include: { product: true } },
+      },
+    });
+    if (!session) {
+      return { error: 'Session not found', status: 404 };
+    }
+    return { data: session };
+  }
+
+  async createDailySession(body: any, userBranchId?: string | null): ServiceResult {
+    const { branchId, date } = body;
+    let bid = branchId || userBranchId;
+    if (!bid) {
+      const defaultBranch = await prisma.branch.findFirst({ where: { isActive: true } });
+      bid = defaultBranch?.id || null;
+    }
+
+    if (!bid || !date) {
+      return { error: 'branchId and date required', status: 400 };
+    }
+
+    // Enforce constraint: No 2 active sessions (OPEN or PAUSED) at the same time
+    const existingActiveSession = await prisma.dailySession.findFirst({
+      where: {
+        branchId: bid,
+        status: { in: ['OPEN', 'PAUSED'] },
+      },
+    });
+
+    if (existingActiveSession) {
+      return {
+        error: `An active daily session is currently ${existingActiveSession.status}. There cannot be 2 sessions at the same time for a branch.`,
+        status: 400,
+      };
+    }
+
+    const parts = parseYmd(date);
+    if (!parts) {
+      return { error: 'Invalid date format (YYYY-MM-DD)', status: 400 };
+    }
+
+    const { y, mo, day } = parts;
+    const d = businessDateUtcNoon(y, mo, day);
+
+    const existing = await prisma.dailySession.findFirst({
+      where: {
+        branchId: bid,
+        date: d,
+      },
+    });
+
+    if (existing) {
+      return { error: 'Session already exists for this branch and date', status: 400 };
+    }
+
+    try {
+      const session = await prisma.dailySession.create({
+        data: { branchId: bid, date: d, status: 'OPEN' },
+      });
+
+      // Seed opening leftovers from the most recent closed session
+      const previousClosed = await prisma.dailySession.findFirst({
+        where: {
+          branchId: bid,
+          status: 'CLOSED',
+          date: { lt: d },
+        },
+        include: { leftoverRecords: true },
+        orderBy: { date: 'desc' },
+      });
+
+      const carryRows = (previousClosed?.leftoverRecords ?? [])
+        .filter((r) => r.quantityRemaining > 0)
+        .map((r) => ({
+          sessionId: session.id,
+          productId: r.productId,
+          quantityRemaining: r.quantityRemaining,
+        }));
+
+      if (carryRows.length > 0) {
+        await prisma.leftoverRecord.createMany({
+          data: carryRows,
+          skipDuplicates: true,
+        });
+      }
+
+      return { data: session };
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        return { error: 'Session already exists for this branch and date', status: 400 };
+      }
+      throw e;
+    }
+  }
+
+  async updateDailySession(id: string, body: any): ServiceResult {
+    const { status, cashLeftoverAmount } = body;
+    const data: any = {};
+    if (status) data.status = status;
+    if (cashLeftoverAmount !== undefined) {
+      data.cashLeftoverAmount =
+        cashLeftoverAmount === null || cashLeftoverAmount === ''
+          ? null
+          : decimalToNum(cashLeftoverAmount);
+    }
+    const session = await prisma.dailySession.update({
+      where: { id },
+      data,
+    });
+    return { data: session };
+  }
+
+  async finalizeDailySession(sessionId: string, body: any, userId: string): ServiceResult {
+    const cashLeftoverAmountRaw = body.cashLeftoverAmount;
+    const { leftoverRecords } = body;
+
+    const session = await prisma.dailySession.findUnique({
+      where: { id: sessionId },
+      include: { leftoverRecords: true },
+    });
+
+    if (!session) {
+      return { error: 'Session not found', status: 404 };
+    }
+    if (session.status === 'CLOSED') {
+      return { error: 'Session already closed', status: 400 };
+    }
+    if (!Array.isArray(leftoverRecords)) {
+      return { error: 'leftoverRecords array required', status: 400 };
+    }
+
+    const cashLeftoverAmount =
+      cashLeftoverAmountRaw === undefined || cashLeftoverAmountRaw === null || cashLeftoverAmountRaw === ''
+        ? null
+        : decimalToNum(cashLeftoverAmountRaw);
+
+    const sessionBusinessDate = session.date;
+
+    // Upsert leftover records (including damaged quantities)
+    for (const row of leftoverRecords) {
+      const pid = typeof row.productId === 'string' ? row.productId.trim() : '';
+      if (!pid) continue;
+      const rawRem = row.quantityRemaining;
+      const qRem = typeof rawRem === 'number' ? rawRem : parseInt(String(rawRem ?? '0'), 10);
+      const quantityRemaining = Number.isFinite(qRem) ? Math.max(0, Math.floor(qRem)) : 0;
+
+      const rawDam = row.damagedQuantity;
+      const qDam = typeof rawDam === 'number' ? rawDam : parseInt(String(rawDam ?? '0'), 10);
+      const damagedQuantity = Number.isFinite(qDam) ? Math.max(0, Math.floor(qDam)) : 0;
+
+      const damageReason = typeof row.damageReason === 'string' ? row.damageReason.trim() : null;
+
+      await prisma.leftoverRecord.upsert({
+        where: {
+          sessionId_productId: { sessionId, productId: pid },
+        },
+        create: {
+          sessionId,
+          productId: pid,
+          quantityRemaining,
+          damagedQuantity,
+          damageReason,
+        },
+        update: { quantityRemaining, damagedQuantity, damageReason },
+      });
+    }
+
+    // Opening leftovers from previous closed day
+    const previousClosed = await prisma.dailySession.findFirst({
+      where: {
+        branchId: session.branchId,
+        status: 'CLOSED',
+        date: { lt: sessionBusinessDate },
+      },
+      include: { leftoverRecords: true },
+      orderBy: { date: 'desc' },
+    });
+
+    const openingByProduct: Record<string, number> = {};
+    for (const row of previousClosed?.leftoverRecords ?? []) {
+      openingByProduct[row.productId] = (openingByProduct[row.productId] ?? 0) + row.quantityRemaining;
+    }
+
+    // Production totals for this session's calendar date
+    const batches = await prisma.productionBatch.findMany({
+      where: {
+        branchId: session.branchId,
+        date: sessionBusinessDate,
+      },
+      include: { items: { include: { product: true } } },
+    });
+
+    const producedByProduct: Record<string, number> = {};
+    for (const batch of batches) {
+      for (const item of batch.items) {
+        producedByProduct[item.productId] = (producedByProduct[item.productId] ?? 0) + item.quantityProduced;
+      }
+    }
+
+    // Supplier purchases received this calendar day
+    const sessionYmd = dateToYmdUtc(sessionBusinessDate);
+    const dayRange = utcDayRangeInclusive(sessionYmd);
+    const boughtByProduct: Record<string, number> = {};
+
+    if (dayRange) {
+      const dayDeliveries = await prisma.supplierDelivery.findMany({
+        where: {
+          supplier: { branchId: session.branchId },
+          createdAt: { gte: dayRange.start, lte: dayRange.end },
+        },
+      });
+
+      for (const d of dayDeliveries) {
+        const net = Math.max(0, d.quantityReceived - (d.returnedQuantity ?? 0));
+        if (net <= 0) continue;
+        boughtByProduct[d.productId] = (boughtByProduct[d.productId] ?? 0) + net;
+      }
+    }
+
+    // Product conversions recorded during this session's calendar day
+    const convertedInByProduct: Record<string, number> = {};
+    const convertedOutByProduct: Record<string, number> = {};
+
+    if (dayRange) {
+      const dayConversions = await prisma.productConversion.findMany({
+        where: {
+          branchId: session.branchId,
+          createdAt: { gte: dayRange.start, lte: dayRange.end },
+        },
+      });
+
+      for (const c of dayConversions) {
+        convertedOutByProduct[c.fromProductId] = (convertedOutByProduct[c.fromProductId] ?? 0) + c.fromQuantity;
+        convertedInByProduct[c.toProductId] = (convertedInByProduct[c.toProductId] ?? 0) + c.toQuantity;
+      }
+    }
+
+    // Keep rows for products that have opening stock, today's production, purchases, or conversions
+    const eligibleForLeftovers = new Set([
+      ...Object.keys(openingByProduct),
+      ...Object.keys(producedByProduct),
+      ...Object.keys(boughtByProduct),
+      ...Object.keys(convertedInByProduct),
+      ...Object.keys(convertedOutByProduct),
+    ]);
+
+    if (eligibleForLeftovers.size === 0) {
+      await prisma.leftoverRecord.deleteMany({ where: { sessionId } });
+    } else {
+      await prisma.leftoverRecord.deleteMany({
+        where: { sessionId, productId: { notIn: Array.from(eligibleForLeftovers) } },
+      });
+    }
+
+    // Leftover totals after upsert + cleanup
+    const leftovers = await prisma.leftoverRecord.findMany({
+      where: { sessionId },
+      include: { product: true },
+    });
+
+    const leftoverByProduct: Record<string, number> = {};
+    const damagedByProduct: Record<string, number> = {};
+    for (const r of leftovers) {
+      leftoverByProduct[r.productId] = r.quantityRemaining;
+      damagedByProduct[r.productId] = r.damagedQuantity ?? 0;
+    }
+
+    // Sold = (opening + produced + bought + convertedIn - convertedOut) - leftover - damaged (per product)
+    const productIds = new Set([
+      ...Object.keys(openingByProduct),
+      ...Object.keys(producedByProduct),
+      ...Object.keys(boughtByProduct),
+      ...Object.keys(convertedInByProduct),
+      ...Object.keys(convertedOutByProduct),
+      ...Object.keys(leftoverByProduct),
+    ]);
+
+    const saleItems: { productId: string; quantity: number; unitPrice: number; subtotal: number }[] = [];
+    let totalAmount = 0;
+    const idList = Array.from(productIds);
+
+    const products =
+      idList.length > 0
+        ? await prisma.product.findMany({
+            where: { id: { in: idList } },
+          })
+        : [];
+
+    const productMap = new Map(products.map((p) => [p.id, p]));
+
+    for (const pid of productIds) {
+      const opening = openingByProduct[pid] ?? 0;
+      const produced = producedByProduct[pid] ?? 0;
+      const bought = boughtByProduct[pid] ?? 0;
+      const convertedIn = convertedInByProduct[pid] ?? 0;
+      const convertedOut = convertedOutByProduct[pid] ?? 0;
+      const available = opening + produced + bought + convertedIn - convertedOut;
+      const leftover = leftoverByProduct[pid] ?? 0;
+      const damaged = damagedByProduct[pid] ?? 0;
+      const sold = Math.max(0, available - leftover - damaged);
+
+      if (sold <= 0) continue;
+
+      const product = productMap.get(pid);
+      const unitPrice = product ? Number(product.basePrice) : 0;
+      const subtotal = unitPrice * sold;
+      totalAmount += subtotal;
+
+      saleItems.push({ productId: pid, quantity: sold, unitPrice, subtotal });
+    }
+
+    // Delete existing derived sale, then create one Sale with items
+    await prisma.saleItem.deleteMany({ where: { sale: { sessionId } } });
+    await prisma.sale.deleteMany({ where: { sessionId } });
+
+    if (saleItems.length > 0) {
+      await prisma.sale.create({
+        data: {
+          sessionId,
+          userId,
+          totalAmount: new Prisma.Decimal(Math.round(totalAmount * 100) / 100),
+          paymentMethod: 'CASH',
+          items: {
+            create: saleItems.map((i) => ({
+              productId: i.productId,
+              quantity: i.quantity,
+              unitPrice: new Prisma.Decimal(i.unitPrice.toFixed(2)),
+              subtotal: new Prisma.Decimal(i.subtotal.toFixed(2)),
+            })),
+          },
+        },
+      });
+    }
+
+    // Close session
+    await prisma.dailySession.update({
+      where: { id: sessionId },
+      data: {
+        status: 'CLOSED',
+        ...(cashLeftoverAmount !== null && { cashLeftoverAmount }),
+      },
+    });
+
+    const updated = await prisma.dailySession.findUnique({
+      where: { id: sessionId },
+      include: {
+        sales: { include: { items: { include: { product: true } } } },
+        leftoverRecords: { include: { product: true } },
+      },
+    });
+
+    if (!updated) {
+      return { error: 'Session reload failed after close', status: 500 };
+    }
+
+    const totalBrr = Math.round(totalAmount * 100) / 100;
+    const openingLineItems = Object.values(openingByProduct).filter((q) => q > 0).length;
+    const purchaseLineItems = Object.values(boughtByProduct).filter((q) => q > 0).length;
+
+    const dayExpenses = await prisma.expense.findMany({
+      where: {
+        branchId: session.branchId,
+        date: sessionBusinessDate,
+        type: 'COMPANY',
+      },
+    });
+    const totalCompanyExpense = dayExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+    const openingFloat = Number(session.openingCashFloat ?? 0);
+    const expectedCash = Math.round((openingFloat + totalBrr - totalCompanyExpense) * 100) / 100;
+
+    return {
+      data: {
+        ...updated,
+        _closeSummary: {
+          productionBatchCount: batches.length,
+          openingLineItems,
+          purchaseLineItems,
+          derivedLineItems: saleItems.length,
+          totalBrr,
+          openingCashFloat: openingFloat,
+          totalCompanyExpense,
+          expectedCash,
+          cashLeftoverAmount,
+        },
+      },
+    };
+  }
+
+  async getActiveSession(branchId?: string | null): ServiceResult {
+    if (!branchId) {
+      return { error: 'branchId required', status: 400 };
+    }
+    const session = await prisma.dailySession.findFirst({
+      where: {
+        branchId,
+        status: 'OPEN',
+      },
+      include: {
+        leftoverRecords: { include: { product: true } },
+        _count: { select: { sales: true } },
+      },
+      orderBy: { date: 'desc' },
+    });
+    return { data: session };
+  }
+
+  async pauseDailySession(id: string): ServiceResult {
+    const session = await prisma.dailySession.findUnique({ where: { id } });
+    if (!session) {
+      return { error: 'Session not found', status: 404 };
+    }
+    if (session.status === 'CLOSED') {
+      return { error: 'Cannot pause a closed session', status: 400 };
+    }
+    if (session.status === 'PAUSED') {
+      return { error: 'Session is already paused', status: 400 };
+    }
+    const updated = await prisma.dailySession.update({
+      where: { id },
+      data: { status: 'PAUSED' },
+    });
+    return { data: updated };
+  }
+
+  async reopenDailySession(id: string): ServiceResult {
+    const session = await prisma.dailySession.findUnique({ where: { id } });
+    if (!session) {
+      return { error: 'Session not found', status: 404 };
+    }
+    if (session.status === 'OPEN') {
+      return { error: 'Session is already open', status: 400 };
+    }
+
+    const existingActive = await prisma.dailySession.findFirst({
+      where: {
+        branchId: session.branchId,
+        status: { in: ['OPEN', 'PAUSED'] },
+        id: { not: id },
+      },
+    });
+
+    if (existingActive) {
+      return {
+        error: `Another daily session is currently ${existingActive.status} for this branch. There cannot be 2 active sessions at the same time.`,
+        status: 400,
+      };
+    }
+
+    const updated = await prisma.dailySession.update({
+      where: { id },
+      data: { status: 'OPEN' },
+    });
+    return { data: updated };
+  }
+
+  async deleteDailySession(id: string): ServiceResult {
+    try {
+      await prisma.dailySession.delete({
+        where: { id },
+      });
+      return { data: { message: 'Daily session deleted successfully' } };
+    } catch (e) {
+      return { error: 'Failed to delete session (it may have linked sales or leftover records)', status: 400 };
+    }
+  }
+}
