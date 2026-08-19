@@ -1,0 +1,62 @@
+import { Router, Response } from 'express';
+import multer from 'multer';
+import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/auth.js';
+import { UsersService } from './users.service.js';
+
+export const usersRouter = Router();
+const usersService = new UsersService();
+
+usersRouter.use(authMiddleware);
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '.' + file.originalname.split('.').pop());
+  }
+});
+const upload = multer({ storage });
+
+usersRouter.get('/roles', requireRole('OWNER', 'ADMIN'), (_req, res) => {
+  res.json(['OWNER', 'ADMIN', 'BAKER', 'CASHIER', 'SAMBUSA_WORKER']);
+});
+
+usersRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
+  let branchId = req.query.branchId as string | undefined;
+  if (req.user?.role !== 'OWNER') {
+    branchId = req.user?.branchId || undefined;
+  }
+  const result = await usersService.getUsers(branchId);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
+usersRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+  const result = await usersService.getUserById(req.params.id);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
+usersRouter.post('/', requireRole('OWNER', 'ADMIN'), upload.single('file'), async (req: AuthRequest, res: Response) => {
+  const fileUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
+  const result = await usersService.createUser(req.body, fileUrl);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.status(201).json(result.data);
+});
+
+usersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), upload.single('file'), async (req: AuthRequest, res: Response) => {
+  const fileUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
+  const result = await usersService.updateUser(req.params.id, req.body, fileUrl);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
