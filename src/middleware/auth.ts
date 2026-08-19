@@ -2,7 +2,16 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma.js';
 
-const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret';
+export function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('FATAL: JWT_SECRET environment variable is missing in production');
+    }
+    return 'dev-secret';
+  }
+  return secret;
+}
 
 export interface JwtPayload {
   userId: string;
@@ -11,6 +20,7 @@ export interface JwtPayload {
 
 export interface AuthRequest extends Request {
   user?: { id: string; role: string; branchId: string | null };
+  tenantId?: string;
 }
 
 export async function authMiddleware(req: AuthRequest, res: Response, next: NextFunction) {
@@ -20,7 +30,7 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
   }
   const token = authHeader.slice(7);
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as JwtPayload;
+    const payload = jwt.verify(token, getJwtSecret()) as JwtPayload;
     const user = await prisma.user.findUnique({
       where: { id: payload.userId },
       select: { id: true, phone: true, role: true, branchId: true, isActive: true },
