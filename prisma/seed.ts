@@ -4,10 +4,22 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
+  let company = await prisma.company.findFirst({ where: { name: 'Koket Bakery Group' } });
+  if (!company) {
+    company = await prisma.company.create({
+      data: {
+        name: 'Koket Bakery Group',
+        email: 'info@koketbakery.com',
+        phone: '0912345678',
+        address: 'Addis Ababa',
+      },
+    });
+  }
+
   let branch = await prisma.branch.findFirst({ where: { name: 'Main Branch' } });
   if (!branch) {
     branch = await prisma.branch.create({
-      data: { name: 'Main Branch', address: 'Addis Ababa' },
+      data: { name: 'Main Branch', address: 'Addis Ababa', companyId: company.id },
     });
   }
 
