@@ -72,7 +72,54 @@ export class ProductsService {
       },
       orderBy: [{ category: { name: 'asc' } }, { name: 'asc' }],
     });
-    return { data: list };
+
+    // Compute house stock dynamically from production, sales, conversions, and damages
+    const [producedAgg, conversionsToAgg, conversionsFromAgg, salesAgg, damagedAgg] = await Promise.all([
+      prisma.productionItem.groupBy({
+        by: ['productId'],
+        _sum: { quantityProduced: true },
+        where: { batch: { status: 'COMPLETED' } },
+      }),
+      prisma.productConversion.groupBy({
+        by: ['toProductId'],
+        _sum: { toQuantity: true },
+      }),
+      prisma.productConversion.groupBy({
+        by: ['fromProductId'],
+        _sum: { fromQuantity: true },
+      }),
+      prisma.saleItem.groupBy({
+        by: ['productId'],
+        _sum: { quantity: true },
+      }),
+      prisma.leftoverRecord.groupBy({
+        by: ['productId'],
+        _sum: { damagedQuantity: true },
+      }),
+    ]);
+
+    const producedMap = new Map(producedAgg.map(a => [a.productId, a._sum.quantityProduced || 0]));
+    const convToMap = new Map(conversionsToAgg.map(a => [a.toProductId, a._sum.toQuantity || 0]));
+    const convFromMap = new Map(conversionsFromAgg.map(a => [a.fromProductId, a._sum.fromQuantity || 0]));
+    const salesMap = new Map(salesAgg.map(a => [a.productId, a._sum.quantity || 0]));
+    const damagedMap = new Map(damagedAgg.map(a => [a.productId, a._sum.damagedQuantity || 0]));
+
+    const enrichedList = list.map((p) => {
+      const totalProduced = (producedMap.get(p.id) || 0) + (convToMap.get(p.id) || 0);
+      const totalSold = salesMap.get(p.id) || 0;
+      const totalConvertedOut = convFromMap.get(p.id) || 0;
+      const totalDamaged = damagedMap.get(p.id) || 0;
+      const currentHouseStock = Math.max(0, totalProduced - totalSold - totalConvertedOut - totalDamaged);
+
+      return {
+        ...p,
+        currentHouseStock,
+        totalProduced,
+        totalSold,
+      };
+    });
+
+    return { data: enrichedList };
   }
 
   async getProductById(id: string): ServiceResult {
@@ -94,7 +141,7 @@ export class ProductsService {
   }
 
   async createProduct(body: Record<string, unknown>): ServiceResult {
-    const { categoryId, name, flavor, unitType, basePrice, buyPrice, financialCategoryId } = body;
+    const { categoryId, name, flavor, unitType, basePrice, buyPrice, imageUrl, financialCategoryId } = body;
     
     if (!categoryId || !name || !unitType || basePrice == null) {
       return { error: 'categoryId, name, unitType, basePrice required', status: 400 };
@@ -117,6 +164,7 @@ export class ProductsService {
         unitType: unitType as any,
         basePrice: decimalToNum(basePrice) ?? 0,
         buyPrice: buyPrice != null ? decimalToNum(buyPrice) ?? null : null,
+        imageUrl: imageUrl ? String(imageUrl).trim() : null,
       },
       include: { category: true, financialCategory: true },
     });
@@ -124,7 +172,7 @@ export class ProductsService {
   }
 
   async updateProduct(id: string, body: Record<string, unknown>): ServiceResult {
-    const { categoryId, name, flavor, unitType, basePrice, buyPrice, isActive, financialCategoryId } = body;
+    const { categoryId, name, flavor, unitType, basePrice, buyPrice, imageUrl, isActive, financialCategoryId } = body;
     
     if (financialCategoryId !== undefined) {
       const fcErr = await this.validateProductFinancialCategory(
@@ -142,6 +190,7 @@ export class ProductsService {
     if (unitType != null) data.unitType = unitType;
     if (basePrice != null) data.basePrice = decimalToNum(basePrice);
     if (buyPrice !== undefined) data.buyPrice = buyPrice != null ? decimalToNum(buyPrice) : null;
+    if (imageUrl !== undefined) data.imageUrl = imageUrl ? String(imageUrl).trim() : null;
     if (typeof isActive === 'boolean') data.isActive = isActive;
     if (financialCategoryId !== undefined) {
       data.financialCategoryId =

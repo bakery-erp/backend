@@ -178,6 +178,7 @@ model Product {
   unitType              UnitType
   basePrice             Decimal            @db.Decimal(12, 2)
   buyPrice              Decimal?           @db.Decimal(12, 2)
+  imageUrl              String?
   isActive              Boolean            @default(true)
   createdAt             DateTime           @default(now())
   productionItems       ProductionItem[]
