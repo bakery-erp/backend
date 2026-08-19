@@ -1,3 +1,9 @@
-export { analyticsRouter } from '../../routes/analytics.js';
-export { dashboardRouter } from '../../routes/dashboard.js';
-export { financialReportsRouter } from '../../routes/financialReports.js';
+export { analyticsRouter } from './analytics.controller.js';
+export { dashboardRouter } from './dashboard.controller.js';
+export { financialReportsRouter } from './financial-reports.controller.js';
+export { AnalyticsService } from './analytics.service.js';
+export { DashboardService } from './dashboard.service.js';
+export { FinancialReportsService } from './financial-reports.service.js';
+export { AnalyticsRepository } from './analytics.repository.js';
+export { DashboardRepository } from './dashboard.repository.js';
+export { FinancialReportsRepository } from './financial-reports.repository.js';
