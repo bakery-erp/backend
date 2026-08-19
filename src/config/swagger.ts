@@ -381,6 +381,19 @@ Production API for Bakery ERP. Used by:
         },
       },
     },
+    '/api/daily-sessions/active': {
+      get: {
+        tags: ['Daily sessions'],
+        summary: 'Get active open session for branch',
+        parameters: [{ name: 'branchId', in: 'query', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: {
+            description: 'Active open session or null',
+            content: { 'application/json': { example: { id: 'clxx...', branchId: 'clyy...', date: '2025-03-07', status: 'OPEN' } } },
+          },
+        },
+      },
+    },
     '/api/daily-sessions/{id}': {
       get: {
         tags: ['Daily sessions'],
@@ -418,6 +431,12 @@ Production API for Bakery ERP. Used by:
           },
         },
         responses: { 200: { description: 'Updated session', content: { 'application/json': { example: { id: 'clxx...', branchId: 'clyy...', date: '2025-03-07', status: 'CLOSED' } } } } },
+      },
+      delete: {
+        tags: ['Daily sessions'],
+        summary: 'Delete session',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'Deleted session' }, 400: { description: 'Failed to delete session' } },
       },
     },
     '/api/daily-sessions/{id}/finalize': {
@@ -621,6 +640,12 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
         },
         responses: { 200: { description: 'Updated batch', content: { 'application/json': { example: { id: 'clxx...', status: 'COMPLETED' } } } } },
       },
+      delete: {
+        tags: ['Production batches'],
+        summary: 'Delete production batch',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'Deleted production batch' }, 400: { description: 'Failed to delete' } },
+      },
     },
     '/api/leftover-records/session/{sessionId}': {
       put: {
@@ -743,6 +768,12 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
         requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { name: { type: 'string' }, type: { type: 'string' } } }, example: { name: 'Bread & Pastry' } } } },
         responses: { 200: { description: 'Updated category' } },
       },
+      delete: {
+        tags: ['Product categories'],
+        summary: 'Delete category',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 204: { description: 'Deleted' }, 400: { description: 'Failed to delete (has products or children)' } },
+      },
     },
     '/api/financial-categories': {
       get: {
@@ -798,18 +829,25 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
       get: {
         tags: ['Products'],
         summary: 'List products',
-        parameters: [{ name: 'categoryId', in: 'query', schema: { type: 'string' } }],
+        description: 'Supports filtering by categoryId, subcategory tree, search text, category type, and active status.',
+        parameters: [
+          { name: 'categoryId', in: 'query', schema: { type: 'string' }, description: 'Filter by category or subcategory ID' },
+          { name: 'includeSubcategories', in: 'query', schema: { type: 'boolean' }, description: 'Include products from all descendant subcategories' },
+          { name: 'search', in: 'query', schema: { type: 'string' }, description: 'Search by product name or flavor' },
+          { name: 'type', in: 'query', schema: { type: 'string', enum: ['PRODUCED', 'RESELL'] }, description: 'Filter by category type' },
+          { name: 'isActive', in: 'query', schema: { type: 'boolean' }, description: 'Filter by active status (true/false)' },
+        ],
         responses: {
           200: {
-            description: 'Array of products',
-            content: { 'application/json': { example: [{ id: 'clxx...', categoryId: 'clyy...', name: 'Injera', flavor: null, unitType: 'PIECE', basePrice: 25, buyPrice: null }] } },
+            description: 'Array of products with category, subcategory, and usage counts',
+            content: { 'application/json': { example: [{ id: 'clxx...', name: 'Injera', unitType: 'PIECE', basePrice: 25, isActive: true, category: { id: 'clyy...', name: 'Breads', type: 'PRODUCED', parent: null }, _count: { saleItems: 10, productionItems: 5 } }] } },
           },
         },
       },
       post: {
         tags: ['Products'],
         summary: 'Create product',
-        description: `Web only. Required: categoryId, name, unitType, basePrice. unitType: PIECE | KG | LITER. Optional financialCategoryId must reference a REVENUE financial category.`,
+        description: 'Web only. Required: categoryId, name, unitType, basePrice. unitType: PIECE | KG | LITER. Optional financialCategoryId must reference a REVENUE financial category.',
         requestBody: {
           required: true,
           content: {
@@ -823,7 +861,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
             },
           },
         },
-        responses: { 201: { description: 'Created product', content: { 'application/json': { example: { id: 'clxx...', categoryId: 'clyy...', name: 'Injera', unitType: 'PIECE', basePrice: 25 } } } } },
+        responses: { 201: { description: 'Created product' } },
       },
     },
     '/api/products/{id}': {
@@ -831,25 +869,38 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
         tags: ['Products'],
         summary: 'Get product by ID',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { 200: { description: 'Product', content: { 'application/json': { example: { id: 'clxx...', categoryId: 'clyy...', name: 'Injera', flavor: null, unitType: 'PIECE', basePrice: 25, buyPrice: null } } } } },
+        responses: { 200: { description: 'Product with full category info' }, 404: { description: 'Not found' } },
       },
       patch: {
         tags: ['Products'],
         summary: 'Update product',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { name: {}, flavor: {}, basePrice: {}, buyPrice: {} } }, example: { basePrice: 30 } } } },
+        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { name: {}, flavor: {}, basePrice: {}, buyPrice: {}, isActive: { type: 'boolean' }, categoryId: {} } }, example: { basePrice: 30, isActive: false } } } },
         responses: { 200: { description: 'Updated product' } },
+      },
+      delete: {
+        tags: ['Products'],
+        summary: 'Delete or deactivate product',
+        description: 'Hard-deletes if no sales/production history. Soft-deactivates (isActive=false) if the product has existing records.',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'Deleted or deactivated', content: { 'application/json': { example: { message: 'Product deactivated (has existing records; hard delete blocked)', deactivated: true } } } }, 404: { description: 'Not found' } },
       },
     },
     '/api/stock-items': {
       get: {
         tags: ['Stock items'],
         summary: 'List stock items',
-        parameters: [{ name: 'branchId', in: 'query', required: true, schema: { type: 'string' } }],
+        description: 'Returns all raw materials for a branch. Supports search by name, filter by unit type, and `lowStockOnly=true` to see reorder alerts in one call.',
+        parameters: [
+          { name: 'branchId', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'search', in: 'query', schema: { type: 'string' }, description: 'Search by item name (e.g. "flour")' },
+          { name: 'unitType', in: 'query', schema: { type: 'string', enum: ['PIECE', 'KG', 'LITER'] }, description: 'Filter by unit type' },
+          { name: 'lowStockOnly', in: 'query', schema: { type: 'boolean' }, description: 'If true, returns only items at or below minStockLevel' },
+        ],
         responses: {
           200: {
-            description: 'Array of stock items',
-            content: { 'application/json': { example: [{ id: 'clxx...', branchId: 'clyy...', name: 'Flour', unitType: 'KG', currentQuantity: 100, minStockLevel: 10 }] } },
+            description: 'Array of stock items with movement count',
+            content: { 'application/json': { example: [{ id: 'clxx...', name: 'Flour', unitType: 'KG', currentQuantity: 100, minStockLevel: 10, _count: { movements: 15 } }] } },
           },
         },
       },
@@ -868,6 +919,19 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
         responses: { 201: { description: 'Created stock item', content: { 'application/json': { example: { id: 'clxx...', branchId: 'clyy...', name: 'Flour', unitType: 'KG', currentQuantity: 0, minStockLevel: 10 } } } } },
       },
     },
+    '/api/stock-items/alerts/low-stock': {
+      get: {
+        tags: ['Stock items'],
+        summary: 'Get low stock alerts (items where currentQuantity <= minStockLevel)',
+        parameters: [{ name: 'branchId', in: 'query', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: {
+            description: 'Array of low stock items',
+            content: { 'application/json': { example: [{ id: 'clxx...', branchId: 'clyy...', name: 'Flour', unitType: 'KG', currentQuantity: 5, minStockLevel: 10 }] } },
+          },
+        },
+      },
+    },
     '/api/stock-items/{id}': {
       get: {
         tags: ['Stock items'],
@@ -882,45 +946,97 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
         requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { name: {}, currentQuantity: {}, minStockLevel: {} } }, example: { currentQuantity: 150 } } } },
         responses: { 200: { description: 'Updated stock item' } },
       },
+      delete: {
+        tags: ['Stock items'],
+        summary: 'Delete stock item',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'Deleted stock item' }, 400: { description: 'Failed to delete (referenced elsewhere)' } },
+      },
     },
     '/api/stock-movements': {
       get: {
         tags: ['Stock movements'],
-        summary: 'List stock movements',
-        parameters: [{ name: 'branchId', in: 'query', schema: { type: 'string' } }, { name: 'stockItemId', in: 'query', schema: { type: 'string' } }],
+        summary: 'List stock movements (ledger)',
+        description: 'Filterable by branch, stock item, movement type, and date range.',
+        parameters: [
+          { name: 'branchId', in: 'query', schema: { type: 'string' } },
+          { name: 'stockItemId', in: 'query', schema: { type: 'string' } },
+          { name: 'type', in: 'query', schema: { type: 'string', enum: ['IN', 'OUT', 'ADJUSTMENT', 'PRODUCTION_USAGE'] } },
+          { name: 'from', in: 'query', schema: { type: 'string', example: '2026-07-01' } },
+          { name: 'to', in: 'query', schema: { type: 'string', example: '2026-07-31' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 200 } },
+        ],
         responses: {
           200: {
-            description: 'Array of stock movements',
-            content: { 'application/json': { example: [{ id: 'clxx...', stockItemId: 'clyy...', quantity: 50, type: 'IN', reason: 'Delivery', createdAt: '2025-03-07T10:00:00.000Z', stockItem: { name: 'Flour' }, user: { fullName: 'Admin' } }] } },
+            description: 'Array of stock movements with item and user info',
+            content: { 'application/json': { example: [{ id: 'clxx...', stockItemId: 'clyy...', quantity: 50, type: 'IN', reason: 'Delivery', createdAt: '2026-07-07T10:00:00Z', stockItem: { name: 'Flour', unitType: 'KG', currentQuantity: 150 }, user: { fullName: 'Admin', role: 'ADMIN' } }] } },
           },
         },
       },
       post: {
         tags: ['Stock movements'],
-        summary: 'Create movement',
-        description: 'Type: IN | OUT | ADJUSTMENT | PRODUCTION_USAGE (production usage is also created automatically when recording batch material usage).',
+        summary: 'Record manual stock movement',
+        description: 'Type IN/OUT/ADJUSTMENT. For ADJUSTMENT, provide `adjustTo` (absolute target quantity). PRODUCTION_USAGE is created automatically by the production batch engine — do not use manually.',
         requestBody: {
           required: true,
           content: {
             'application/json': {
-              schema: { type: 'object', required: ['stockItemId', 'quantity', 'type'], properties: { stockItemId: { type: 'string' }, quantity: { type: 'number' }, type: { enum: ['IN', 'OUT', 'ADJUSTMENT', 'PRODUCTION_USAGE'] }, reason: { type: 'string' } } },
-              example: { stockItemId: 'clxx...', quantity: 50, type: 'IN', reason: 'Delivery received' },
+              schema: {
+                type: 'object',
+                required: ['stockItemId', 'quantity', 'type'],
+                properties: {
+                  stockItemId: { type: 'string' },
+                  quantity: { type: 'number', description: 'Amount to add (IN) or remove (OUT). For ADJUSTMENT, use adjustTo instead.' },
+                  type: { type: 'string', enum: ['IN', 'OUT', 'ADJUSTMENT'] },
+                  adjustTo: { type: 'number', description: 'For ADJUSTMENT: set currentQuantity to this absolute value' },
+                  reason: { type: 'string' },
+                },
+              },
+              example: { stockItemId: 'clxx...', quantity: 50, type: 'IN', reason: 'Delivery received from supplier' },
             },
           },
         },
-        responses: { 201: { description: 'Created movement', content: { 'application/json': { example: { id: 'clxx...', stockItemId: 'clyy...', quantity: 50, type: 'IN', reason: 'Delivery received' } } } } },
+        responses: {
+          201: { description: 'Movement created; stockItem.currentQuantity is updated' },
+          400: { description: 'Insufficient stock or validation error' },
+        },
+      },
+    },
+    '/api/stock-movements/summary': {
+      get: {
+        tags: ['Stock movements'],
+        summary: 'Inventory health summary for a branch',
+        description: 'Returns totals: totalItems, outOfStock, lowStock, healthy — used for the web dashboard inventory widget.',
+        parameters: [{ name: 'branchId', in: 'query', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: {
+            description: 'Inventory summary',
+            content: { 'application/json': { example: { branchId: 'clyy...', totalItems: 12, outOfStock: 1, lowStock: 3, healthy: 8, items: [] } } },
+          },
+        },
+      },
+    },
+    '/api/stock-movements/{stockItemId}/history': {
+      get: {
+        tags: ['Stock movements'],
+        summary: 'Full movement history for a single stock item',
+        description: 'Returns the item details plus all movements with totalIn and totalOut aggregates.',
+        parameters: [
+          { name: 'stockItemId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 100, maximum: 500 } },
+        ],
+        responses: {
+          200: { description: 'Item + movements + aggregates', content: { 'application/json': { example: { stockItem: { id: 'clxx...', name: 'Flour', currentQuantity: 150, unitType: 'KG' }, movements: [], totalIn: 300, totalOut: 150 } } } },
+          404: { description: 'Stock item not found' },
+        },
       },
     },
     '/api/stock-movements/{id}': {
       get: {
         tags: ['Stock movements'],
-        summary: 'Get stock movement by ID',
-        description: 'Single movement with stockItem and user (audit trail).',
+        summary: 'Get single movement by ID',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: {
-          200: { description: 'Stock movement', content: { 'application/json': { example: { id: 'clxx...', stockItemId: 'clyy...', quantity: 50, type: 'IN', reason: 'Delivery', stockItem: { name: 'Flour' }, user: { fullName: 'Admin' } } } } },
-          404: { description: 'Stock movement not found' },
-        },
+        responses: { 200: { description: 'Movement with audit info' }, 404: { description: 'Not found' } },
       },
     },
     '/api/product-conversions': {
@@ -1416,6 +1532,43 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
           },
           403: { description: 'Forbidden — OWNER role required' },
         },
+      },
+    },
+    '/api/reports/range': {
+      get: {
+        tags: ['Reporting'],
+        summary: 'P&L range summary report',
+        parameters: [
+          { name: 'branchId', in: 'query', schema: { type: 'string' } },
+          { name: 'from', in: 'query', schema: { type: 'string', example: '2026-07-01' } },
+          { name: 'to', in: 'query', schema: { type: 'string', example: '2026-07-31' } },
+          { name: 'date', in: 'query', schema: { type: 'string', example: '2026-07-24' } },
+        ],
+        responses: { 200: { description: 'Range P&L summary' } },
+      },
+    },
+    '/api/reports/gained-details': {
+      get: {
+        tags: ['Reporting'],
+        summary: 'Drill-down gained (sales) details for date range',
+        parameters: [
+          { name: 'branchId', in: 'query', schema: { type: 'string' } },
+          { name: 'from', in: 'query', schema: { type: 'string', example: '2026-07-01' } },
+          { name: 'to', in: 'query', schema: { type: 'string', example: '2026-07-31' } },
+        ],
+        responses: { 200: { description: 'Itemized sales breakdown' } },
+      },
+    },
+    '/api/reports/expensed-details': {
+      get: {
+        tags: ['Reporting'],
+        summary: 'Drill-down expensed details for date range',
+        parameters: [
+          { name: 'branchId', in: 'query', schema: { type: 'string' } },
+          { name: 'from', in: 'query', schema: { type: 'string', example: '2026-07-01' } },
+          { name: 'to', in: 'query', schema: { type: 'string', example: '2026-07-31' } },
+        ],
+        responses: { 200: { description: 'Itemized expense, supplier, and float breakdown' } },
       },
     },
     '/api/dashboard': {

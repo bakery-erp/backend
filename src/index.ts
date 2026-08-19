@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { validateEnv } from './lib/env.js';
 import { app } from './app.js';
-const PORT = process.env.PORT ?? 3003;
+const PORT = process.env.PORT ?? 3001;
 
 validateEnv();
 

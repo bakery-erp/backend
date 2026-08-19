@@ -2,21 +2,24 @@ import express from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './config/swagger.js';
-import { authRouter } from './modules/auth/index.js';
+import { authRouter } from './modules/auth/auth.controller.js';
 import { branchesRouter, usersRouter } from './modules/admin/index.js';
-import { productCategoriesRouter, productsRouter } from './modules/catalog/index.js';
-import { stockItemsRouter, stockMovementsRouter } from './modules/inventory/index.js';
-import { productionBatchesRouter, productConversionsRouter } from './modules/production/index.js';
+import { productCategoriesRouter } from './modules/catalog/product-categories.controller.js';
+import { productsRouter } from './modules/catalog/products.controller.js';
+import { stockItemsRouter } from './modules/inventory/stock-items.controller.js';
+import { stockMovementsRouter } from './modules/inventory/stock-movements.controller.js';
+import { productionBatchesRouter } from './modules/production/production-batches.controller.js';
+import { productConversionsRouter } from './modules/production/product-conversions.controller.js';
 import { dailySessionsRouter, leftoverRecordsRouter, salesRouter } from './modules/sessions/index.js';
 import { suppliersRouter, supplierDeliveriesRouter } from './modules/procurement/index.js';
-import { expensesRouter, financialCategoriesRouter, loansRouter, penaltiesRouter, payrollRouter } from './modules/finance/index.js';
+import { financialCategoriesRouter, expensesRouter, loansRouter, penaltiesRouter, payrollRouter } from './modules/finance/index.js';
 import { analyticsRouter, dashboardRouter, financialReportsRouter } from './modules/reporting/index.js';
-
 export const app = express();
 
 app.use('/uploads', express.static('uploads'));
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
+
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.get('/api-docs.json', (_req, res) => res.json(swaggerSpec));
