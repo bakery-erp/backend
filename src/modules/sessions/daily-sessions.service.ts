@@ -38,6 +38,7 @@ export class DailySessionsService {
       include: {
         branch: true,
         sales: { include: { user: true, items: { include: { product: true } } } },
+        expenses: { include: { financialCategory: true, user: true } },
         leftoverRecords: { include: { product: true } },
       },
     });
@@ -150,9 +151,98 @@ export class DailySessionsService {
     return { data: session };
   }
 
+  async submitCloseRequest(sessionId: string, body: any, userId: string): ServiceResult {
+    const { actualCashAmount, actualCbeAmount, actualTelebirrAmount, notes, leftoverRecords, expenses } = body;
+
+    const session = await prisma.dailySession.findUnique({
+      where: { id: sessionId },
+      include: { leftoverRecords: true },
+    });
+
+    if (!session) {
+      return { error: 'Session not found', status: 404 };
+    }
+    if (session.status === 'CLOSED') {
+      return { error: 'Session is already closed', status: 400 };
+    }
+
+    // 1. Upsert Leftover records
+    if (Array.isArray(leftoverRecords)) {
+      for (const row of leftoverRecords) {
+        const pid = typeof row.productId === 'string' ? row.productId.trim() : '';
+        if (!pid) continue;
+        const qRem = typeof row.quantityRemaining === 'number' ? row.quantityRemaining : parseInt(String(row.quantityRemaining ?? '0'), 10);
+        const qDam = typeof row.damagedQuantity === 'number' ? row.damagedQuantity : parseInt(String(row.damagedQuantity ?? '0'), 10);
+
+        await prisma.leftoverRecord.upsert({
+          where: { sessionId_productId: { sessionId, productId: pid } },
+          create: {
+            sessionId,
+            productId: pid,
+            quantityRemaining: Math.max(0, qRem || 0),
+            damagedQuantity: Math.max(0, qDam || 0),
+            damageReason: row.damageReason ? String(row.damageReason).trim() : null,
+          },
+          update: {
+            quantityRemaining: Math.max(0, qRem || 0),
+            damagedQuantity: Math.max(0, qDam || 0),
+            damageReason: row.damageReason ? String(row.damageReason).trim() : null,
+          },
+        });
+      }
+    }
+
+    // 2. Handle Expenses (create new or update existing)
+    if (Array.isArray(expenses)) {
+      for (const exp of expenses) {
+        if (exp.id) {
+          await prisma.expense.update({
+            where: { id: exp.id },
+            data: {
+              amount: decimalToNum(exp.amount),
+              category: exp.category || 'MISC',
+              description: exp.description || null,
+            },
+          });
+        } else if (exp.amount && Number(exp.amount) > 0) {
+          await prisma.expense.create({
+            data: {
+              branchId: session.branchId,
+              userId,
+              sessionId,
+              date: session.date,
+              amount: decimalToNum(exp.amount),
+              category: exp.category || 'MISC',
+              description: exp.description || null,
+              type: 'COMPANY',
+            },
+          });
+        }
+      }
+    }
+
+    // 3. Set status to CLOSE_PENDING with cash breakdown
+    const updated = await prisma.dailySession.update({
+      where: { id: sessionId },
+      data: {
+        status: 'CLOSE_PENDING',
+        actualCashAmount: actualCashAmount != null ? decimalToNum(actualCashAmount) : undefined,
+        actualCbeAmount: actualCbeAmount != null ? decimalToNum(actualCbeAmount) : undefined,
+        actualTelebirrAmount: actualTelebirrAmount != null ? decimalToNum(actualTelebirrAmount) : undefined,
+        notes: notes ? String(notes) : undefined,
+      },
+      include: {
+        expenses: true,
+        leftoverRecords: { include: { product: true } },
+      },
+    });
+
+    return { data: updated };
+  }
+
   async finalizeDailySession(sessionId: string, body: any, userId: string): ServiceResult {
     const cashLeftoverAmountRaw = body.cashLeftoverAmount;
-    const { leftoverRecords } = body;
+    const { leftoverRecords, actualCashAmount, actualCbeAmount, actualTelebirrAmount, notes, expenses } = body;
 
     const session = await prisma.dailySession.findUnique({
       where: { id: sessionId },
@@ -165,8 +255,34 @@ export class DailySessionsService {
     if (session.status === 'CLOSED') {
       return { error: 'Session already closed', status: 400 };
     }
-    if (!Array.isArray(leftoverRecords)) {
-      return { error: 'leftoverRecords array required', status: 400 };
+
+    // Process expenses if provided
+    if (Array.isArray(expenses)) {
+      for (const exp of expenses) {
+        if (exp.id) {
+          await prisma.expense.update({
+            where: { id: exp.id },
+            data: {
+              amount: decimalToNum(exp.amount),
+              category: exp.category || 'MISC',
+              description: exp.description || null,
+            },
+          });
+        } else if (exp.amount && Number(exp.amount) > 0) {
+          await prisma.expense.create({
+            data: {
+              branchId: session.branchId,
+              userId,
+              sessionId,
+              date: session.date,
+              amount: decimalToNum(exp.amount),
+              category: exp.category || 'MISC',
+              description: exp.description || null,
+              type: 'COMPANY',
+            },
+          });
+        }
+      }
     }
 
     const cashLeftoverAmount =

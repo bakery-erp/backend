@@ -42,12 +42,16 @@ enum BatchStatus {
 enum SessionStatus {
   OPEN
   PAUSED
+  CLOSE_PENDING
   CLOSED
 }
 
 enum PaymentMethod {
   CASH
+  CBE
+  TELEBIRR
   MOBILE_BANKING
+  OTHER
 }
 
 enum SupplierType {
@@ -289,9 +293,14 @@ model DailySession {
   status       SessionStatus @default(OPEN)
   openingCashFloat   Decimal? @db.Decimal(12, 2)
   cashLeftoverAmount Decimal? @db.Decimal(12, 2)
+  actualCashAmount   Decimal? @db.Decimal(12, 2)
+  actualCbeAmount    Decimal? @db.Decimal(12, 2)
+  actualTelebirrAmount Decimal? @db.Decimal(12, 2)
+  notes              String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   sales        Sale[]
+  expenses     Expense[]
   leftoverRecords LeftoverRecord[]
   productionBatches ProductionBatch[]
   @@unique([branchId, date])
@@ -382,6 +391,8 @@ model Expense {
   type                  ExpenseType        @default(COMPANY)
   financialCategoryId   String?
   financialCategory     FinancialCategory? @relation(fields: [financialCategoryId], references: [id], onDelete: SetNull)
+  sessionId             String?
+  session               DailySession?      @relation(fields: [sessionId], references: [id], onDelete: SetNull)
   amount                Decimal            @db.Decimal(12, 2)
   category              String             // RENT, SALARY, LUNCH, SUPPLIER, EKUB, UTILITIES, OTHER (legacy label; prefer financialCategoryId)
   description           String?
@@ -391,6 +402,7 @@ model Expense {
   @@index([branchId, date])
   @@index([userId])
   @@index([financialCategoryId])
+  @@index([sessionId])
 }
 
 model Loan {
