@@ -489,19 +489,16 @@ export class ProductionBatchesService {
         const delWhere: any = {};
         if (supplierId) {
           delWhere.supplierId = supplierId;
-        } else if (branchId) {
+        }
+        if (branchId) {
           delWhere.supplier = { branchId };
         }
         if (productId) delWhere.productId = productId;
         if (startDate && endDate) {
-          const pStart = parseYmd(startDate);
-          const pEnd = parseYmd(endDate);
-          if (pStart && pEnd) {
-            delWhere.createdAt = {
-              gte: new Date(`${startDate}T00:00:00.000Z`),
-              lte: new Date(`${endDate}T23:59:59.999Z`),
-            };
-          }
+          delWhere.createdAt = {
+            gte: new Date(`${startDate}T00:00:00.000`),
+            lte: new Date(`${endDate}T23:59:59.999`),
+          };
         }
 
         const deliveries = await prisma.supplierDelivery.findMany({
