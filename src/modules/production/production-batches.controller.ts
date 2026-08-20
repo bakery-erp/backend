@@ -23,6 +23,7 @@ productionBatchesRouter.get('/daily-product-history/all', async (req: AuthReques
   const startDate = req.query.startDate as string | undefined;
   const endDate = req.query.endDate as string | undefined;
   const type = req.query.type as string | undefined;
+  const supplierId = req.query.supplierId as string | undefined;
   const productId = req.query.productId as string | undefined;
   const search = req.query.search as string | undefined;
 
@@ -31,10 +32,20 @@ productionBatchesRouter.get('/daily-product-history/all', async (req: AuthReques
     startDate,
     endDate,
     type,
+    supplierId,
     productId,
     search,
   });
 
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
+productionBatchesRouter.patch('/items/:itemId/return', async (req: AuthRequest, res: Response) => {
+  const { returnedQuantity } = req.body;
+  const result = await productionBatchesService.updateProductionItemReturn(req.params.itemId, returnedQuantity);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

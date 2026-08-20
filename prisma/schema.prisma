@@ -254,6 +254,7 @@ model ProductionItem {
   productId         String
   product           Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
   quantityProduced  Int
+  returnedQuantity  Int             @default(0)
   createdAt         DateTime        @default(now())
 }
 

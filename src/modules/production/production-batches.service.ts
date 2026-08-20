@@ -458,8 +458,13 @@ export class ProductionBatchesService {
         });
 
         for (const item of items) {
+          const returnedQty = item.returnedQuantity || 0;
+          const netQty = Math.max(0, item.quantityProduced - returnedQty);
+          const subtotal = Number(item.product.basePrice) * netQty;
+
           records.push({
             id: `prod_${item.id}`,
+            rawId: item.id,
             date: item.batch.date,
             createdAt: item.createdAt,
             type: 'PRODUCED',
@@ -468,7 +473,9 @@ export class ProductionBatchesService {
             unitType: item.product.unitType,
             basePrice: Number(item.product.basePrice),
             quantity: item.quantityProduced,
-            subtotal: Number(item.product.basePrice) * item.quantityProduced,
+            returnedQuantity: returnedQty,
+            netQuantity: netQty,
+            subtotal,
             sourceName: item.batch.user?.fullName || 'Bakery Staff',
             sessionId: item.batch.sessionId || null,
             branchName: item.batch.branch?.name || '',
@@ -480,8 +487,11 @@ export class ProductionBatchesService {
       // 2. Fetch Supplier Deliveries (Resell Products)
       if (typeFilter === 'ALL' || typeFilter === 'RESELL') {
         const delWhere: any = {};
-        if (branchId) delWhere.supplier = { branchId };
-        if (supplierId) delWhere.supplierId = supplierId;
+        if (supplierId) {
+          delWhere.supplierId = supplierId;
+        } else if (branchId) {
+          delWhere.supplier = { branchId };
+        }
         if (productId) delWhere.productId = productId;
         if (startDate && endDate) {
           const pStart = parseYmd(startDate);
@@ -505,8 +515,13 @@ export class ProductionBatchesService {
         });
 
         for (const del of deliveries) {
+          const returnedQty = del.returnedQuantity || 0;
+          const netQty = Math.max(0, del.quantityReceived - returnedQty);
+          const subtotal = Number(del.unitSellPrice) * netQty;
+
           records.push({
             id: `resell_${del.id}`,
+            rawId: del.id,
             date: del.createdAt,
             createdAt: del.createdAt,
             type: 'RESELL',
@@ -516,7 +531,9 @@ export class ProductionBatchesService {
             basePrice: Number(del.unitSellPrice),
             unitBuyPrice: Number(del.unitBuyPrice),
             quantity: del.quantityReceived,
-            subtotal: Number(del.unitSellPrice) * del.quantityReceived,
+            returnedQuantity: returnedQty,
+            netQuantity: netQty,
+            subtotal,
             sourceName: del.supplier?.name || 'External Supplier',
             sessionId: del.sessionId || null,
             branchName: '',
@@ -540,11 +557,11 @@ export class ProductionBatchesService {
 
       const totalProducedQuantity = filteredRecords
         .filter((r) => r.type === 'PRODUCED')
-        .reduce((sum, r) => sum + r.quantity, 0);
+        .reduce((sum, r) => sum + r.netQuantity, 0);
 
       const totalResellQuantity = filteredRecords
         .filter((r) => r.type === 'RESELL')
-        .reduce((sum, r) => sum + r.quantity, 0);
+        .reduce((sum, r) => sum + r.netQuantity, 0);
 
       const totalValuation = filteredRecords.reduce((sum, r) => sum + r.subtotal, 0);
 
@@ -561,6 +578,18 @@ export class ProductionBatchesService {
       };
     } catch (err: any) {
       return { error: err.message || 'Failed to fetch daily product history', status: 500 };
+    }
+  }
+
+  async updateProductionItemReturn(itemId: string, returnedQuantity: number): ServiceResult {
+    try {
+      const item = await prisma.productionItem.update({
+        where: { id: itemId },
+        data: { returnedQuantity: Math.max(0, parseInt(String(returnedQuantity), 10) || 0) },
+      });
+      return { data: item };
+    } catch (e: any) {
+      return { error: e.message || 'Failed to update item returns', status: 500 };
     }
   }
 }
