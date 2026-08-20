@@ -43,6 +43,7 @@ productionBatchesRouter.get('/daily-product-history/all', async (req: AuthReques
     const startDate = req.query.startDate as string | undefined;
     const endDate = req.query.endDate as string | undefined;
     const typeFilter = ((req.query.type as string) || 'ALL').toUpperCase();
+    const supplierId = req.query.supplierId as string | undefined;
     const productId = req.query.productId as string | undefined;
     const search = ((req.query.search as string) || '').trim().toLowerCase();
 
@@ -60,8 +61,8 @@ productionBatchesRouter.get('/daily-product-history/all', async (req: AuthReques
 
     const records: any[] = [];
 
-    // 1. Fetch Production Items (Bakery Produced Products)
-    if (typeFilter === 'ALL' || typeFilter === 'PRODUCED') {
+    // 1. Fetch Production Items (Bakery Produced Products) - Only if not filtering specifically by supplier
+    if ((typeFilter === 'ALL' || typeFilter === 'PRODUCED') && !supplierId) {
       const batchWhere: any = {};
       if (branchId) batchWhere.branchId = branchId;
       if (Object.keys(dateWhere).length > 0) batchWhere.date = dateWhere;
@@ -108,6 +109,7 @@ productionBatchesRouter.get('/daily-product-history/all', async (req: AuthReques
     if (typeFilter === 'ALL' || typeFilter === 'RESELL') {
       const delWhere: any = {};
       if (branchId) delWhere.supplier = { branchId };
+      if (supplierId) delWhere.supplierId = supplierId;
       if (productId) delWhere.productId = productId;
       if (startDate && endDate) {
         const pStart = parseYmd(startDate);

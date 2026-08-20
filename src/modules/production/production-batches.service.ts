@@ -410,11 +410,12 @@ export class ProductionBatchesService {
     startDate?: string;
     endDate?: string;
     type?: string;
+    supplierId?: string;
     productId?: string;
     search?: string;
   }): ServiceResult {
     try {
-      const { branchId, startDate, endDate, productId } = params;
+      const { branchId, startDate, endDate, supplierId, productId } = params;
       const typeFilter = ((params.type as string) || 'ALL').toUpperCase();
       const search = ((params.search as string) || '').trim().toLowerCase();
 
@@ -432,8 +433,8 @@ export class ProductionBatchesService {
 
       const records: any[] = [];
 
-      // 1. Fetch Production Items (Bakery Produced Products)
-      if (typeFilter === 'ALL' || typeFilter === 'PRODUCED') {
+      // 1. Fetch Production Items (Bakery Produced Products) - skip if supplier specified
+      if ((typeFilter === 'ALL' || typeFilter === 'PRODUCED') && !supplierId) {
         const batchWhere: any = {};
         if (branchId) batchWhere.branchId = branchId;
         if (Object.keys(dateWhere).length > 0) batchWhere.date = dateWhere;
@@ -480,6 +481,7 @@ export class ProductionBatchesService {
       if (typeFilter === 'ALL' || typeFilter === 'RESELL') {
         const delWhere: any = {};
         if (branchId) delWhere.supplier = { branchId };
+        if (supplierId) delWhere.supplierId = supplierId;
         if (productId) delWhere.productId = productId;
         if (startDate && endDate) {
           const pStart = parseYmd(startDate);
