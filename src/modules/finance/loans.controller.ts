@@ -52,6 +52,14 @@ loansRouter.post('/:id/pay', requireRole('OWNER', 'ADMIN'), async (req, res: Res
   res.json(result.data);
 });
 
+loansRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+  const result = await loansService.updateLoan(req.params.id, req.body);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
 loansRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
   const result = await loansService.deleteLoan(req.params.id);
   if (result.error) {

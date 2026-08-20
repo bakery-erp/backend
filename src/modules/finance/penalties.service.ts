@@ -52,11 +52,22 @@ export class PenaltiesService {
     return { data: penalty };
   }
 
-  async updatePenalty(id: string, body: { isDeducted?: boolean }): ServiceResult {
-    const { isDeducted } = body;
+  async updatePenalty(id: string, body: any): ServiceResult {
+    const { isDeducted, amount, reason, date, userId } = body;
+    const data: any = {};
+    if (isDeducted !== undefined) data.isDeducted = Boolean(isDeducted);
+    if (amount !== undefined) data.amount = decimalToNum(amount);
+    if (reason !== undefined) data.reason = String(reason).trim();
+    if (date !== undefined) {
+      const d = new Date(date);
+      d.setHours(0, 0, 0, 0);
+      data.date = d;
+    }
+    if (userId !== undefined) data.userId = userId;
+
     const penalty = await prisma.penalty.update({
       where: { id },
-      data: isDeducted !== undefined ? { isDeducted } : {},
+      data,
       include: { user: { select: { id: true, fullName: true, phone: true } } },
     });
     return { data: penalty };

@@ -147,26 +147,33 @@ payrollRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
 });
 
 payrollRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
-  const { paymentDate, bonus, loanDeductions, penaltyDeductions } = req.body as {
+  const { paymentDate, bonus, loanDeductions, penaltyDeductions, baseSalary, finalAmount } = req.body as {
     paymentDate?: string | null;
     bonus?: number | string;
     loanDeductions?: number | string;
     penaltyDeductions?: number | string;
+    baseSalary?: number | string;
+    finalAmount?: number | string;
   };
   const existing = await prisma.payrollRecord.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Payroll record not found' });
   const data: any = {};
   if (paymentDate !== undefined) data.paymentDate = paymentDate ? new Date(paymentDate) : null;
+  if (baseSalary != null) data.baseSalary = decimalToNum(baseSalary);
   if (bonus != null) data.bonus = decimalToNum(bonus);
   if (loanDeductions != null) data.loanDeductions = decimalToNum(loanDeductions);
   if (penaltyDeductions != null) data.penaltyDeductions = decimalToNum(penaltyDeductions);
-  if (bonus != null || loanDeductions != null || penaltyDeductions != null) {
-    const base = Number(existing.baseSalary);
+
+  if (finalAmount != null) {
+    data.finalAmount = decimalToNum(finalAmount);
+  } else if (baseSalary != null || bonus != null || loanDeductions != null || penaltyDeductions != null) {
+    const base = data.baseSalary ?? Number(existing.baseSalary);
     const loanD = data.loanDeductions ?? Number(existing.loanDeductions);
     const penaltyD = data.penaltyDeductions ?? Number(existing.penaltyDeductions);
     const bonusNum = data.bonus ?? Number(existing.bonus);
     data.finalAmount = base - loanD - penaltyD + bonusNum;
   }
+
   const record = await prisma.payrollRecord.update({
     where: { id: req.params.id },
     data,

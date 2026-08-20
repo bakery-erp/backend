@@ -55,7 +55,7 @@ export class PayrollService {
     const loanD = decimalToNum(loanDeductions);
     const penaltyD = decimalToNum(penaltyDeductions);
     const bonusNum = decimalToNum(bonus);
-    const finalAmount = base - loanD - penaltyD + bonusNum;
+    const finalAmount = body.finalAmount != null ? decimalToNum(body.finalAmount) : (base - loanD - penaltyD + bonusNum);
 
     try {
       const record = await prisma.$transaction(async (tx) => {
@@ -184,7 +184,7 @@ export class PayrollService {
   }
 
   async updatePayroll(id: string, body: any): ServiceResult {
-    const { paymentDate, bonus, loanDeductions, penaltyDeductions } = body;
+    const { paymentDate, bonus, loanDeductions, penaltyDeductions, baseSalary, finalAmount } = body;
     const existing = await prisma.payrollRecord.findUnique({ where: { id } });
     if (!existing) {
       return { error: 'Payroll record not found', status: 404 };
@@ -192,12 +192,15 @@ export class PayrollService {
 
     const data: any = {};
     if (paymentDate !== undefined) data.paymentDate = paymentDate ? new Date(paymentDate) : null;
+    if (baseSalary != null) data.baseSalary = decimalToNum(baseSalary);
     if (bonus != null) data.bonus = decimalToNum(bonus);
     if (loanDeductions != null) data.loanDeductions = decimalToNum(loanDeductions);
     if (penaltyDeductions != null) data.penaltyDeductions = decimalToNum(penaltyDeductions);
 
-    if (bonus != null || loanDeductions != null || penaltyDeductions != null) {
-      const base = Number(existing.baseSalary);
+    if (finalAmount != null) {
+      data.finalAmount = decimalToNum(finalAmount);
+    } else if (baseSalary != null || bonus != null || loanDeductions != null || penaltyDeductions != null) {
+      const base = data.baseSalary ?? Number(existing.baseSalary);
       const loanD = data.loanDeductions ?? Number(existing.loanDeductions);
       const penaltyD = data.penaltyDeductions ?? Number(existing.penaltyDeductions);
       const bonusNum = data.bonus ?? Number(existing.bonus);

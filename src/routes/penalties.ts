@@ -62,10 +62,27 @@ penaltiesRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res) => {
 });
 
 penaltiesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
-  const { isDeducted } = req.body as { isDeducted?: boolean };
+  const { isDeducted, amount, reason, date, userId } = req.body as {
+    isDeducted?: boolean;
+    amount?: number | string;
+    reason?: string;
+    date?: string;
+    userId?: string;
+  };
+  const data: any = {};
+  if (isDeducted !== undefined) data.isDeducted = Boolean(isDeducted);
+  if (amount !== undefined) data.amount = decimalToNum(amount);
+  if (reason !== undefined) data.reason = String(reason).trim();
+  if (date !== undefined) {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    data.date = d;
+  }
+  if (userId !== undefined) data.userId = userId;
+
   const penalty = await prisma.penalty.update({
     where: { id: req.params.id },
-    data: isDeducted !== undefined ? { isDeducted } : {},
+    data,
     include: { user: { select: { id: true, fullName: true, phone: true } } },
   });
   res.json(penalty);

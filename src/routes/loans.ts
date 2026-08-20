@@ -111,6 +111,33 @@ loansRouter.post('/:id/pay', requireRole('OWNER', 'ADMIN'), async (req, res) => 
   res.json(updated);
 });
 
+loansRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+  const { totalAmount, remainingBalance, status, date } = req.body as {
+    totalAmount?: number | string;
+    remainingBalance?: number | string;
+    status?: string;
+    date?: string;
+  };
+  const loan = await prisma.loan.findUnique({ where: { id: req.params.id } });
+  if (!loan) return res.status(404).json({ error: 'Loan not found' });
+  const data: any = {};
+  if (totalAmount !== undefined) data.totalAmount = decimalToNum(totalAmount);
+  if (remainingBalance !== undefined) {
+    const rem = decimalToNum(remainingBalance);
+    data.remainingBalance = rem;
+    if (status === undefined) data.status = rem <= 0 ? 'PAID' : 'OPEN';
+  }
+  if (status !== undefined) data.status = status;
+  if (date !== undefined) data.date = date ? new Date(date) : loan.date;
+
+  const updated = await prisma.loan.update({
+    where: { id: req.params.id },
+    data,
+    include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
+  });
+  res.json(updated);
+});
+
 loansRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
   await prisma.loanPayment.deleteMany({ where: { loanId: req.params.id } });
   await prisma.loan.delete({ where: { id: req.params.id } });

@@ -120,4 +120,31 @@ export class LoansService {
     await prisma.loan.delete({ where: { id } });
     return { data: undefined };
   }
+
+  async updateLoan(id: string, body: any): ServiceResult {
+    const { totalAmount, remainingBalance, status, date } = body;
+    const loan = await prisma.loan.findUnique({ where: { id } });
+    if (!loan) {
+      return { error: 'Loan not found', status: 404 };
+    }
+
+    const data: any = {};
+    if (totalAmount !== undefined) data.totalAmount = decimalToNum(totalAmount);
+    if (remainingBalance !== undefined) {
+      const rem = decimalToNum(remainingBalance);
+      data.remainingBalance = rem;
+      if (status === undefined) {
+        data.status = rem <= 0 ? 'PAID' : 'OPEN';
+      }
+    }
+    if (status !== undefined) data.status = status;
+    if (date !== undefined) data.date = date ? new Date(date) : loan.date;
+
+    const updated = await prisma.loan.update({
+      where: { id },
+      data,
+      include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
+    });
+    return { data: updated };
+  }
 }
