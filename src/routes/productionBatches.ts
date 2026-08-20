@@ -130,3 +130,154 @@ productionBatchesRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'SA
   });
   res.json(batch);
 });
+
+productionBatchesRouter.get('/daily-product-history/all', async (req: AuthRequest, res) => {
+  try {
+    const branchId = (req.query.branchId as string) || req.user?.branchId;
+    const startDate = req.query.startDate as string | undefined;
+    const endDate = req.query.endDate as string | undefined;
+    const typeFilter = ((req.query.type as string) || 'ALL').toUpperCase();
+    const productId = req.query.productId as string | undefined;
+    const search = ((req.query.search as string) || '').trim().toLowerCase();
+
+    let dateWhere: any = {};
+    if (startDate && endDate) {
+      const pStart = parseYmd(startDate);
+      const pEnd = parseYmd(endDate);
+      if (pStart && pEnd) {
+        dateWhere = {
+          gte: businessDateUtcNoon(pStart.y, pStart.mo, pStart.day),
+          lte: businessDateUtcNoon(pEnd.y, pEnd.mo, pEnd.day),
+        };
+      }
+    }
+
+    const records: any[] = [];
+
+    // 1. Fetch Production Items (Bakery Produced Products)
+    if (typeFilter === 'ALL' || typeFilter === 'PRODUCED') {
+      const batchWhere: any = {};
+      if (branchId) batchWhere.branchId = branchId;
+      if (Object.keys(dateWhere).length > 0) batchWhere.date = dateWhere;
+
+      const items = await prisma.productionItem.findMany({
+        where: {
+          batch: batchWhere,
+          ...(productId && { productId }),
+        },
+        include: {
+          product: true,
+          batch: {
+            include: {
+              branch: true,
+              user: { select: { id: true, fullName: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 500,
+      });
+
+      for (const item of items) {
+        records.push({
+          id: `prod_${item.id}`,
+          date: item.batch.date,
+          createdAt: item.createdAt,
+          type: 'PRODUCED',
+          productId: item.productId,
+          productName: item.product.name,
+          unitType: item.product.unitType,
+          basePrice: Number(item.product.basePrice),
+          quantity: item.quantityProduced,
+          subtotal: Number(item.product.basePrice) * item.quantityProduced,
+          sourceName: item.batch.user?.fullName || 'Bakery Staff',
+          sessionId: item.batch.sessionId || null,
+          branchName: item.batch.branch?.name || '',
+          notes: item.batch.shift ? `Shift: ${item.batch.shift}` : 'Daily Batch',
+        });
+      }
+    }
+
+    // 2. Fetch Supplier Deliveries (Resell Products)
+    if (typeFilter === 'ALL' || typeFilter === 'RESELL') {
+      const delWhere: any = {};
+      if (branchId) delWhere.supplier = { branchId };
+      if (productId) delWhere.productId = productId;
+      if (startDate && endDate) {
+        const pStart = parseYmd(startDate);
+        const pEnd = parseYmd(endDate);
+        if (pStart && pEnd) {
+          delWhere.createdAt = {
+            gte: new Date(`${startDate}T00:00:00.000Z`),
+            lte: new Date(`${endDate}T23:59:59.999Z`),
+          };
+        }
+      }
+
+      const deliveries = await prisma.supplierDelivery.findMany({
+        where: delWhere,
+        include: {
+          product: true,
+          supplier: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 500,
+      });
+
+      for (const del of deliveries) {
+        records.push({
+          id: `resell_${del.id}`,
+          date: del.createdAt,
+          createdAt: del.createdAt,
+          type: 'RESELL',
+          productId: del.productId,
+          productName: del.product.name,
+          unitType: del.product.unitType,
+          basePrice: Number(del.unitSellPrice),
+          unitBuyPrice: Number(del.unitBuyPrice),
+          quantity: del.quantityReceived,
+          subtotal: Number(del.unitSellPrice) * del.quantityReceived,
+          sourceName: del.supplier?.name || 'External Supplier',
+          sessionId: del.sessionId || null,
+          branchName: '',
+          notes: del.isPaid ? 'Paid Cash' : 'Supplier Credit',
+        });
+      }
+    }
+
+    // Sort combined records by date descending
+    records.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    // Filter by search query if provided
+    const filteredRecords = search
+      ? records.filter(
+          (r) =>
+            r.productName.toLowerCase().includes(search) ||
+            r.sourceName.toLowerCase().includes(search) ||
+            r.type.toLowerCase().includes(search)
+        )
+      : records;
+
+    const totalProducedQuantity = filteredRecords
+      .filter((r) => r.type === 'PRODUCED')
+      .reduce((sum, r) => sum + r.quantity, 0);
+
+    const totalResellQuantity = filteredRecords
+      .filter((r) => r.type === 'RESELL')
+      .reduce((sum, r) => sum + r.quantity, 0);
+
+    const totalValuation = filteredRecords.reduce((sum, r) => sum + r.subtotal, 0);
+
+    res.json({
+      records: filteredRecords,
+      summary: {
+        totalProducedQuantity,
+        totalResellQuantity,
+        totalValuation,
+        count: filteredRecords.length,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to fetch daily product history' });
+  }
+});
