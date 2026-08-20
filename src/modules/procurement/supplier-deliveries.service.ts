@@ -43,21 +43,15 @@ export class SupplierDeliveriesService {
   }
 
   async createSupplierDelivery(body: Record<string, unknown>, userId: string): ServiceResult {
-    const { supplierId, productId, quantityReceived, unitBuyPrice, unitSellPrice, isPaid, returnedQuantity, sessionId } = body;
+    const { supplierId, isPaid, sessionId, items } = body;
     
-    if (!supplierId || !productId || quantityReceived == null || unitBuyPrice == null) {
-      return { error: 'supplierId, productId, quantityReceived, unitBuyPrice required', status: 400 };
+    if (!supplierId) {
+      return { error: 'supplierId is required', status: 400 };
     }
 
     let targetSessionId = typeof sessionId === 'string' ? sessionId : undefined;
 
-    let sellPrice = unitSellPrice != null ? decimalToNum(unitSellPrice) : 0;
-    if (!sellPrice && productId) {
-      const p = await prisma.product.findUnique({ where: { id: productId as string } });
-      if (p) sellPrice = Number(p.basePrice);
-    }
-
-    // If targetSessionId not passed, search for open active session for supplier branch
+    // Search for active session if targetSessionId not provided
     if (!targetSessionId && supplierId) {
       const supp = await prisma.supplier.findUnique({ where: { id: supplierId as string } });
       if (supp?.branchId) {
@@ -66,6 +60,54 @@ export class SupplierDeliveriesService {
         });
         if (activeSess) targetSessionId = activeSess.id;
       }
+    }
+
+    // Handle Multi-Item creation
+    if (Array.isArray(items) && items.length > 0) {
+      const createdDeliveries = await prisma.$transaction(async (tx) => {
+        const results = [];
+        for (const item of items) {
+          const { productId, quantityReceived, unitBuyPrice, unitSellPrice, returnedQuantity } = item;
+          if (!productId || quantityReceived == null) continue;
+
+          let sellPrice = unitSellPrice != null ? decimalToNum(unitSellPrice) : 0;
+          if (!sellPrice && productId) {
+            const p = await tx.product.findUnique({ where: { id: productId } });
+            if (p) sellPrice = Number(p.basePrice);
+          }
+
+          const qty = typeof quantityReceived === 'number' ? quantityReceived : parseInt(String(quantityReceived), 10);
+          const del = await tx.supplierDelivery.create({
+            data: {
+              supplierId: supplierId as string,
+              productId: productId as string,
+              sessionId: targetSessionId || null,
+              quantityReceived: qty,
+              unitBuyPrice: decimalToNum(unitBuyPrice || 0),
+              unitSellPrice: sellPrice,
+              isPaid: Boolean(isPaid),
+              returnedQuantity: returnedQuantity != null ? parseInt(String(returnedQuantity), 10) : 0,
+            },
+            include: { supplier: true, product: true },
+          });
+          results.push(del);
+        }
+        return results;
+      });
+
+      return { data: createdDeliveries };
+    }
+
+    // Single item fallback
+    const { productId, quantityReceived, unitBuyPrice, unitSellPrice, returnedQuantity } = body;
+    if (!productId || quantityReceived == null || unitBuyPrice == null) {
+      return { error: 'supplierId, productId, quantityReceived, unitBuyPrice required', status: 400 };
+    }
+
+    let sellPrice = unitSellPrice != null ? decimalToNum(unitSellPrice) : 0;
+    if (!sellPrice && productId) {
+      const p = await prisma.product.findUnique({ where: { id: productId as string } });
+      if (p) sellPrice = Number(p.basePrice);
     }
 
     const qty = typeof quantityReceived === 'number' ? quantityReceived : parseInt(String(quantityReceived), 10);
