@@ -40,16 +40,55 @@ export class DailySessionsService {
         sales: { include: { user: true, items: { include: { product: true } } } },
         expenses: { include: { financialCategory: true, user: true } },
         leftoverRecords: { include: { product: true } },
+        supplierDeliveries: { include: { supplier: true, product: true } },
       },
     });
     if (!session) {
       return { error: 'Session not found', status: 404 };
     }
-    return { data: session };
+
+    // Aggregate production totals per product for this session/date
+    const batches = await prisma.productionBatch.findMany({
+      where: {
+        branchId: session.branchId,
+        OR: [
+          { sessionId: id },
+          { date: session.date },
+        ],
+      },
+      include: {
+        items: { include: { product: true } },
+        user: true,
+      },
+    });
+
+    const prodMap: Record<string, { productId: string; productName: string; unitType: string; totalProduced: number }> = {};
+    for (const b of batches) {
+      for (const item of b.items) {
+        if (!prodMap[item.productId]) {
+          prodMap[item.productId] = {
+            productId: item.productId,
+            productName: item.product.name,
+            unitType: item.product.unitType,
+            totalProduced: 0,
+          };
+        }
+        prodMap[item.productId].totalProduced += item.quantityProduced;
+      }
+    }
+    const productionSummary = Object.values(prodMap);
+
+    return {
+      data: {
+        ...session,
+        productionBatches: batches,
+        productionSummary,
+      },
+    };
   }
 
   async createDailySession(body: any, userBranchId?: string | null): ServiceResult {
-    const { branchId, date } = body;
+    const { branchId, date, label } = body;
     let bid = branchId || userBranchId;
     if (!bid) {
       const defaultBranch = await prisma.branch.findFirst({ where: { isActive: true } });
@@ -94,9 +133,11 @@ export class DailySessionsService {
       return { error: 'Session already exists for this branch and date', status: 400 };
     }
 
+    const sessionLabel = label?.trim() || `Session - ${dateToYmdUtc(d)}`;
+
     try {
       const session = await prisma.dailySession.create({
-        data: { branchId: bid, date: d, status: 'OPEN' },
+        data: { branchId: bid, date: d, status: 'OPEN', label: sessionLabel },
       });
 
       // Seed opening leftovers from the most recent closed session
@@ -152,7 +193,7 @@ export class DailySessionsService {
   }
 
   async submitCloseRequest(sessionId: string, body: any, userId: string): ServiceResult {
-    const { actualCashAmount, actualCbeAmount, actualTelebirrAmount, notes, leftoverRecords, expenses } = body;
+    const { actualCashAmount, actualCbeAmount, actualTelebirrAmount, notes, label, leftoverRecords, expenses } = body;
 
     const session = await prisma.dailySession.findUnique({
       where: { id: sessionId },
@@ -221,7 +262,7 @@ export class DailySessionsService {
       }
     }
 
-    // 3. Set status to CLOSE_PENDING with cash breakdown
+    // 3. Set status to CLOSE_PENDING with cash breakdown & optional label
     const updated = await prisma.dailySession.update({
       where: { id: sessionId },
       data: {
@@ -230,6 +271,7 @@ export class DailySessionsService {
         actualCbeAmount: actualCbeAmount != null ? decimalToNum(actualCbeAmount) : undefined,
         actualTelebirrAmount: actualTelebirrAmount != null ? decimalToNum(actualTelebirrAmount) : undefined,
         notes: notes ? String(notes) : undefined,
+        label: label ? String(label).trim() : undefined,
       },
       include: {
         expenses: true,
@@ -242,7 +284,7 @@ export class DailySessionsService {
 
   async finalizeDailySession(sessionId: string, body: any, userId: string): ServiceResult {
     const cashLeftoverAmountRaw = body.cashLeftoverAmount;
-    const { leftoverRecords, actualCashAmount, actualCbeAmount, actualTelebirrAmount, notes, expenses } = body;
+    const { leftoverRecords, actualCashAmount, actualCbeAmount, actualTelebirrAmount, notes, label, expenses } = body;
 
     const session = await prisma.dailySession.findUnique({
       where: { id: sessionId },
@@ -494,6 +536,11 @@ export class DailySessionsService {
       data: {
         status: 'CLOSED',
         ...(cashLeftoverAmount !== null && { cashLeftoverAmount }),
+        ...(actualCashAmount != null && { actualCashAmount: decimalToNum(actualCashAmount) }),
+        ...(actualCbeAmount != null && { actualCbeAmount: decimalToNum(actualCbeAmount) }),
+        ...(actualTelebirrAmount != null && { actualTelebirrAmount: decimalToNum(actualTelebirrAmount) }),
+        ...(notes && { notes: String(notes) }),
+        ...(label && { label: String(label).trim() }),
       },
     });
 

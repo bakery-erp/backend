@@ -10,10 +10,11 @@ function decimalToNum(v: unknown): number {
 }
 
 export class SupplierDeliveriesService {
-  async getSupplierDeliveries(supplierId?: string, branchId?: string, isPaid?: string, dateYmd?: string, limit: number = 50): ServiceResult {
+  async getSupplierDeliveries(supplierId?: string, branchId?: string, isPaid?: string, dateYmd?: string, sessionId?: string, limit: number = 50): ServiceResult {
     const where: any = {};
     if (supplierId) where.supplierId = supplierId;
     if (branchId) where.supplier = { branchId };
+    if (sessionId) where.sessionId = sessionId;
     if (isPaid !== undefined) where.isPaid = isPaid === 'true';
     if (dateYmd) {
       const range = utcDayRangeInclusive(dateYmd);
@@ -42,11 +43,13 @@ export class SupplierDeliveriesService {
   }
 
   async createSupplierDelivery(body: Record<string, unknown>, userId: string): ServiceResult {
-    const { supplierId, productId, quantityReceived, unitBuyPrice, unitSellPrice, isPaid, returnedQuantity } = body;
+    const { supplierId, productId, quantityReceived, unitBuyPrice, unitSellPrice, isPaid, returnedQuantity, sessionId } = body;
     
     if (!supplierId || !productId || quantityReceived == null || unitBuyPrice == null) {
       return { error: 'supplierId, productId, quantityReceived, unitBuyPrice required', status: 400 };
     }
+
+    let targetSessionId = typeof sessionId === 'string' ? sessionId : undefined;
 
     let sellPrice = unitSellPrice != null ? decimalToNum(unitSellPrice) : 0;
     if (!sellPrice && productId) {
@@ -54,11 +57,23 @@ export class SupplierDeliveriesService {
       if (p) sellPrice = Number(p.basePrice);
     }
 
+    // If targetSessionId not passed, search for open active session for supplier branch
+    if (!targetSessionId && supplierId) {
+      const supp = await prisma.supplier.findUnique({ where: { id: supplierId as string } });
+      if (supp?.branchId) {
+        const activeSess = await prisma.dailySession.findFirst({
+          where: { branchId: supp.branchId, status: { in: ['OPEN', 'PAUSED'] } },
+        });
+        if (activeSess) targetSessionId = activeSess.id;
+      }
+    }
+
     const qty = typeof quantityReceived === 'number' ? quantityReceived : parseInt(String(quantityReceived), 10);
     const delivery = await prisma.supplierDelivery.create({
       data: {
         supplierId: supplierId as string,
         productId: productId as string,
+        sessionId: targetSessionId || null,
         quantityReceived: qty,
         unitBuyPrice: decimalToNum(unitBuyPrice),
         unitSellPrice: sellPrice,

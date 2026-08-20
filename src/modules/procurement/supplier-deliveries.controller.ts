@@ -10,10 +10,11 @@ supplierDeliveriesRouter.use(authMiddleware);
 supplierDeliveriesRouter.get('/', async (req: AuthRequest, res: Response) => {
   const supplierId = req.query.supplierId as string | undefined;
   const branchId = req.query.branchId as string | undefined;
+  const sessionId = req.query.sessionId as string | undefined;
   const isPaid = req.query.isPaid as string | undefined;
   const dateYmd = (req.query.date as string | undefined)?.trim();
   const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
-  const result = await supplierDeliveriesService.getSupplierDeliveries(supplierId, branchId, isPaid, dateYmd, limit);
+  const result = await supplierDeliveriesService.getSupplierDeliveries(supplierId, branchId, isPaid, dateYmd, sessionId, limit);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
