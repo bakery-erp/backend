@@ -146,24 +146,6 @@ export class ProductionBatchesService {
     const isAutoApproved = creator?.role === 'OWNER' || creator?.role === 'ADMIN';
     const initialStatus = isAutoApproved ? 'COMPLETED' : 'PENDING_APPROVAL';
 
-    // Enforce rule: No 2 production tasks running/pending at the same time for the same worker
-    if (!isAutoApproved) {
-      const activePendingTask = await prisma.productionBatch.findFirst({
-        where: {
-          branchId: bid,
-          userId,
-          status: { in: ['PENDING_APPROVAL', 'STARTED'] },
-        },
-      });
-
-      if (activePendingTask) {
-        return {
-          error: 'You already have an active production task pending approval. There cannot be 2 tasks at the same time.',
-          status: 400,
-        };
-      }
-    }
-
     // Pre-fetch product names for human readable stock movement reason
     const itemProductIds = items.map((i: any) => i.productId);
     const itemProducts = await prisma.product.findMany({
@@ -190,11 +172,11 @@ export class ProductionBatchesService {
           },
           materialUsages: materialUsages?.length
             ? {
-                create: materialUsages.map((m: any) => ({
-                  stockItemId: m.stockItemId,
-                  quantityUsed: decimalToNum(m.quantityUsed),
-                })),
-              }
+              create: materialUsages.map((m: any) => ({
+                stockItemId: m.stockItemId,
+                quantityUsed: decimalToNum(m.quantityUsed),
+              })),
+            }
             : undefined,
         },
         include: {
@@ -323,18 +305,63 @@ export class ProductionBatchesService {
     return { data: updated };
   }
 
-  async updateProductionBatch(id: string, body: { status?: string }): ServiceResult {
-    const { status } = body;
-    const batch = await prisma.productionBatch.update({
-      where: { id },
-      data: status ? { status: status as any } : {},
-      include: {
-        user: { select: { id: true, fullName: true } },
-        items: { include: { product: true } },
-        materialUsages: { include: { stockItem: true } },
-      },
+  async updateProductionBatch(id: string, body: any): ServiceResult {
+    const { date, shift, status, items, materialUsages } = body;
+    const existing = await prisma.productionBatch.findUnique({ where: { id } });
+    if (!existing) {
+      return { error: 'Production batch not found', status: 404 };
+    }
+
+    let batchDate: Date | undefined = undefined;
+    if (date) {
+      const p = parseYmd(date);
+      if (p) batchDate = businessDateUtcNoon(p.y, p.mo, p.day);
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      if (items && Array.isArray(items)) {
+        await tx.productionItem.deleteMany({ where: { batchId: id } });
+      }
+      if (materialUsages && Array.isArray(materialUsages)) {
+        await tx.productionMaterialUsage.deleteMany({ where: { batchId: id } });
+      }
+
+      return await tx.productionBatch.update({
+        where: { id },
+        data: {
+          ...(batchDate ? { date: batchDate } : {}),
+          ...(shift ? { shift: shift as any } : {}),
+          ...(status ? { status: status as any } : {}),
+          ...(items && Array.isArray(items)
+            ? {
+              items: {
+                create: items.map((i: any) => ({
+                  productId: i.productId,
+                  quantityProduced: typeof i.quantityProduced === 'number' ? i.quantityProduced : parseInt(String(i.quantityProduced), 10),
+                })),
+              },
+            }
+            : {}),
+          ...(materialUsages && Array.isArray(materialUsages)
+            ? {
+              materialUsages: {
+                create: materialUsages.map((m: any) => ({
+                  stockItemId: m.stockItemId,
+                  quantityUsed: decimalToNum(m.quantityUsed),
+                })),
+              },
+            }
+            : {}),
+        },
+        include: {
+          user: { select: { id: true, fullName: true } },
+          items: { include: { product: true } },
+          materialUsages: { include: { stockItem: true } },
+        },
+      });
     });
-    return { data: batch };
+
+    return { data: updated };
   }
 
   async deleteProductionBatch(id: string): ServiceResult {

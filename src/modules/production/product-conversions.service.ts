@@ -49,7 +49,12 @@ export class ProductConversionsService {
   }
 
   async createProductConversion(body: any, userId: string, userBranchId?: string | null): ServiceResult {
-    const { branchId, fromProductId, toProductId, fromQuantity, toQuantity } = body || {};
+    const fromProductId = body?.fromProductId || body?.sourceProductId;
+    const toProductId = body?.toProductId || body?.targetProductId;
+    const fromQuantity = body?.fromQuantity ?? body?.sourceQuantity;
+    const toQuantity = body?.toQuantity ?? body?.targetQuantity;
+    const { branchId } = body || {};
+
     let bid = branchId || userBranchId;
     if (!bid) {
       const defaultBranch = await prisma.branch.findFirst({ where: { isActive: true } });
@@ -57,9 +62,9 @@ export class ProductConversionsService {
     }
 
     if (!bid || !fromProductId || !toProductId || fromQuantity == null || toQuantity == null) {
-      return { 
-        error: 'branchId, fromProductId, toProductId, fromQuantity, toQuantity required', 
-        status: 400 
+      return {
+        error: 'branchId, fromProductId, toProductId, fromQuantity, toQuantity required',
+        status: 400
       };
     }
 
@@ -103,6 +108,46 @@ export class ProductConversionsService {
       },
     });
     return { data: conversion };
+  }
+
+  async updateProductConversion(id: string, body: any): ServiceResult {
+    const existing = await prisma.productConversion.findUnique({ where: { id } });
+    if (!existing) {
+      return { error: 'Product conversion not found', status: 404 };
+    }
+
+    const fromProductId = body?.fromProductId || body?.sourceProductId || existing.fromProductId;
+    const toProductId = body?.toProductId || body?.targetProductId || existing.toProductId;
+    const fromQuantityRaw = body?.fromQuantity ?? body?.sourceQuantity ?? existing.fromQuantity;
+    const toQuantityRaw = body?.toQuantity ?? body?.targetQuantity ?? existing.toQuantity;
+
+    if (fromProductId === toProductId) {
+      return { error: 'Source and target products must be different', status: 400 };
+    }
+
+    const fromQ = typeof fromQuantityRaw === 'number' ? fromQuantityRaw : parseInt(String(fromQuantityRaw), 10);
+    const toQ = typeof toQuantityRaw === 'number' ? toQuantityRaw : parseInt(String(toQuantityRaw), 10);
+
+    if (!Number.isFinite(fromQ) || !Number.isFinite(toQ) || fromQ < 1 || toQ < 1 || !Number.isInteger(fromQ) || !Number.isInteger(toQ)) {
+      return { error: 'Quantities must be positive whole numbers', status: 400 };
+    }
+
+    const updated = await prisma.productConversion.update({
+      where: { id },
+      data: {
+        fromProductId,
+        toProductId,
+        fromQuantity: fromQ,
+        toQuantity: toQ,
+      },
+      include: {
+        fromProduct: { select: { id: true, name: true, flavor: true, unitType: true } },
+        toProduct: { select: { id: true, name: true, flavor: true, unitType: true } },
+        user: { select: { id: true, fullName: true, role: true } },
+      },
+    });
+
+    return { data: updated };
   }
 
   async deleteProductConversion(id: string): ServiceResult {
