@@ -20,7 +20,18 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 usersRouter.get('/roles', requireRole('OWNER', 'ADMIN'), (_req, res) => {
-  res.json(['OWNER', 'ADMIN', 'BAKER', 'CASHIER', 'SAMBUSA_WORKER']);
+  res.json(['OWNER', 'ADMIN', 'BAKER', 'CASHIER', 'SAMBUSA_WORKER', 'EMPLOYEE']);
+});
+
+usersRouter.get('/me/dashboard', async (req: AuthRequest, res: Response) => {
+  if (!req.user?.id) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const result = await usersService.getEmployeeDashboard(req.user.id);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
 });
 
 usersRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {

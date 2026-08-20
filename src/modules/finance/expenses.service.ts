@@ -17,6 +17,21 @@ async function validateExpenseFinancialCategory(financialCategoryId: string | nu
   return null;
 }
 
+function parseLocalDate(dateInput?: string | Date | null): Date {
+  if (!dateInput) {
+    const now = new Date();
+    return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0));
+  }
+  if (typeof dateInput === 'string' && dateInput.includes('-')) {
+    const parts = dateInput.slice(0, 10).split('-').map(Number);
+    if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+      return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
+    }
+  }
+  const d = new Date(dateInput);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0));
+}
+
 const expenseInclude = {
   user: { select: { id: true, fullName: true } as const },
   financialCategory: { select: { id: true, name: true, type: true } },
@@ -107,8 +122,7 @@ export class ExpensesService {
       }
     }
 
-    const d = date ? new Date(date) : new Date();
-    d.setHours(0, 0, 0, 0);
+    const d = parseLocalDate(date);
 
     const expense = await prisma.expense.create({
       data: {
@@ -141,9 +155,7 @@ export class ExpensesService {
     if (category !== undefined) data.category = category?.trim() ?? null;
     if (description !== undefined) data.description = description?.trim() || null;
     if (date) {
-      const d = new Date(date);
-      d.setHours(0, 0, 0, 0);
-      data.date = d;
+      data.date = parseLocalDate(date);
     }
     if (financialCategoryId !== undefined) {
       const fcErr = await validateExpenseFinancialCategory(

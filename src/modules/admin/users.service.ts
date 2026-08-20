@@ -49,6 +49,41 @@ export class UsersService {
     return { data: user };
   }
 
+  async getEmployeeDashboard(userId: string): ServiceResult {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { ...userSelect, branch: { select: { id: true, name: true } } },
+    });
+    if (!user) {
+      return { error: 'User not found', status: 404 };
+    }
+
+    const [payrollRecords, loans, penalties] = await Promise.all([
+      prisma.payrollRecord.findMany({
+        where: { userId },
+        orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      }),
+      prisma.loan.findMany({
+        where: { userId },
+        include: { payments: { orderBy: { createdAt: 'desc' } } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.penalty.findMany({
+        where: { userId },
+        orderBy: { date: 'desc' },
+      }),
+    ]);
+
+    return {
+      data: {
+        user,
+        payrollRecords,
+        loans,
+        penalties,
+      },
+    };
+  }
+
   async createUser(body: any, fileUrl?: string): ServiceResult {
     const {
       fullName,

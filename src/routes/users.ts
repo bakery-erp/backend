@@ -21,7 +21,44 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 usersRouter.get('/roles', requireRole('OWNER', 'ADMIN'), (req, res) => {
-  res.json(['OWNER', 'ADMIN', 'BAKER', 'CASHIER', 'SAMBUSA_WORKER']);
+  res.json(['OWNER', 'ADMIN', 'BAKER', 'CASHIER', 'SAMBUSA_WORKER', 'EMPLOYEE']);
+});
+
+usersRouter.get('/me/dashboard', async (req: AuthRequest, res) => {
+  if (!req.user?.id) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const userId = req.user.id;
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { ...userSelect, branch: { select: { id: true, name: true } } },
+  });
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  const [payrollRecords, loans, penalties] = await Promise.all([
+    prisma.payrollRecord.findMany({
+      where: { userId },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+    }),
+    prisma.loan.findMany({
+      where: { userId },
+      include: { payments: { orderBy: { createdAt: 'desc' } } },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.penalty.findMany({
+      where: { userId },
+      orderBy: { date: 'desc' },
+    }),
+  ]);
+
+  res.json({
+    user,
+    payrollRecords,
+    loans,
+    penalties,
+  });
 });
 
 const userSelect = { id: true, fullName: true, phone: true, role: true, branchId: true, isActive: true, createdAt: true, salary: true, startDate: true, lastPaidDate: true, shift: true, filesUrl: true } as const;
