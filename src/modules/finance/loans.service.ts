@@ -23,11 +23,15 @@ export class LoansService {
   }
 
   async getLoans(branchId?: string | null, type?: string, status?: string, from?: string, to?: string): ServiceResult {
-    if (!branchId) {
-      return { error: 'branchId required', status: 400 };
+    const where: any = {};
+    if (branchId) where.branchId = branchId;
+    if (type) {
+      if (type === 'EMPLOYEE' || type === 'STAFF') {
+        where.type = { in: ['EMPLOYEE', 'STAFF_LOAN', 'SALARY_ADVANCE'] };
+      } else {
+        where.type = type;
+      }
     }
-    const where: any = { branchId };
-    if (type) where.type = type;
     if (status) where.status = status;
     if (from || to) {
       where.date = {};
@@ -55,10 +59,18 @@ export class LoansService {
 
   async createLoan(body: any, userBranchId?: string | null): ServiceResult {
     const { branchId, type, entityId, userId, totalAmount, date } = body;
-    const bid = branchId || userBranchId;
+    let bid = branchId || userBranchId;
+    if (!bid && userId) {
+      const u = await prisma.user.findUnique({ where: { id: userId }, select: { branchId: true } });
+      if (u?.branchId) bid = u.branchId;
+    }
+    if (!bid) {
+      const firstBranch = await prisma.branch.findFirst();
+      if (firstBranch) bid = firstBranch.id;
+    }
 
-    if (!bid || !type || totalAmount == null) {
-      return { error: 'branchId, type, totalAmount required', status: 400 };
+    if (!type || totalAmount == null) {
+      return { error: 'type and totalAmount required', status: 400 };
     }
     if ((type === 'EMPLOYEE' || type === 'SALARY_ADVANCE' || type === 'STAFF_LOAN') && !userId) {
       return { error: 'userId required for employee loan or salary advance', status: 400 };
@@ -70,7 +82,7 @@ export class LoansService {
     const amount = decimalToNum(totalAmount);
     const loan = await prisma.loan.create({
       data: {
-        branchId: bid,
+        branchId: bid!,
         type: type as any,
         entityId: type === 'CUSTOMER' ? entityId ?? '' : null,
         userId: type !== 'CUSTOMER' ? userId ?? undefined : null,

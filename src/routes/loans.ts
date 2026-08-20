@@ -32,9 +32,15 @@ loansRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res
   const status = req.query.status as string | undefined;
   const from = req.query.from as string | undefined;
   const to = req.query.to as string | undefined;
-  if (!branchId) return res.status(400).json({ error: 'branchId required' });
-  const where: any = { branchId };
-  if (type) where.type = type;
+  const where: any = {};
+  if (branchId) where.branchId = branchId;
+  if (type) {
+    if (type === 'EMPLOYEE' || type === 'STAFF') {
+      where.type = { in: ['EMPLOYEE', 'STAFF_LOAN', 'SALARY_ADVANCE'] };
+    } else {
+      where.type = type;
+    }
+  }
   if (status) where.status = status;
   if (from || to) {
     where.date = {};
