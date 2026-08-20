@@ -67,14 +67,44 @@ export class ExpensesService {
       return { error: 'Can only create expenses for your branch', status: 403 };
     }
 
-    const expenseType = parseExpenseType(type);
     if (!bid || amount == null || !category?.trim()) {
-      return { error: 'branchId, amount, category required', status: 400 };
+      return { error: 'branchId, amount, and category required', status: 400 };
+    }
+
+    // Mandatory Open Daily Session Check
+    const activeSession = await prisma.dailySession.findFirst({
+      where: { branchId: bid, status: 'OPEN' },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!activeSession) {
+      return {
+        error: 'No active open daily session found for this branch. Expenses can only be recorded during an active open session.',
+        status: 400,
+      };
+    }
+
+    // Role-based Expense Type Enforcement (Cashiers/Non-admins only get COMPANY)
+    let expenseType = parseExpenseType(type);
+    if (!admin) {
+      expenseType = 'COMPANY';
     }
 
     const fcErr = await validateExpenseFinancialCategory(financialCategoryId);
     if (fcErr) {
       return { error: fcErr, status: 400 };
+    }
+
+    let finalCategory = category.trim();
+    const fCatId = financialCategoryId != null && String(financialCategoryId).trim() !== ''
+      ? String(financialCategoryId)
+      : null;
+
+    if (fCatId) {
+      const fc = await prisma.financialCategory.findUnique({ where: { id: fCatId } });
+      if (fc) {
+        finalCategory = fc.name;
+      }
     }
 
     const d = date ? new Date(date) : new Date();
@@ -85,12 +115,10 @@ export class ExpensesService {
         branchId: bid,
         userId,
         type: expenseType,
-        financialCategoryId:
-          financialCategoryId != null && String(financialCategoryId).trim() !== ''
-            ? String(financialCategoryId)
-            : null,
+        financialCategoryId: fCatId,
+        sessionId: activeSession.id,
         amount: decimalToNum(amount),
-        category: category.trim(),
+        category: finalCategory,
         description: description?.trim() || null,
         date: d,
       },
