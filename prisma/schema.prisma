@@ -69,8 +69,16 @@ enum LoanType {
 }
 
 enum LoanStatus {
+  PENDING_APPROVAL
   OPEN
   PAID
+  REJECTED
+}
+
+enum ApprovalStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
 }
 
 enum StockMovementType {
@@ -441,14 +449,15 @@ model LoanPayment {
 }
 
 model Penalty {
-  id         String   @id @default(cuid())
-  userId     String   // User (staff) the penalty applies to
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  amount     Decimal  @db.Decimal(12, 2)
+  id         String         @id @default(cuid())
+  userId     String         // User (staff) the penalty applies to
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount     Decimal        @db.Decimal(12, 2)
   reason     String
-  date       DateTime @db.Date
-  isDeducted Boolean  @default(false)
-  createdAt  DateTime @default(now())
+  date       DateTime       @db.Date
+  status     ApprovalStatus @default(PENDING_APPROVAL)
+  isDeducted Boolean        @default(false)
+  createdAt  DateTime       @default(now())
 
   @@index([userId])
 }

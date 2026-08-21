@@ -177,4 +177,32 @@ export class UsersService {
 
     return { data: user };
   }
+
+  async changePassword(userId: string, currentPass: string, newPass: string): ServiceResult {
+    if (!currentPass || !newPass) {
+      return { error: 'Current password and new password are required', status: 400 };
+    }
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return { error: 'User not found', status: 404 };
+
+    const valid = await bcrypt.compare(currentPass, user.passwordHash);
+    if (!valid) return { error: 'Incorrect current password', status: 400 };
+
+    const newHash = await bcrypt.hash(newPass, 10);
+    await prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: newHash },
+    });
+    return { data: { message: 'Password changed successfully' } };
+  }
+
+  async updateProfilePicture(userId: string, fileUrl: string): ServiceResult {
+    if (!fileUrl) return { error: 'File is required', status: 400 };
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: { filesUrl: fileUrl },
+      select: { ...userSelect, branch: { select: { name: true } } },
+    });
+    return { data: user };
+  }
 }

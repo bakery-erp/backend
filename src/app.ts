@@ -14,9 +14,16 @@ import { dailySessionsRouter, leftoverRecordsRouter, salesRouter } from './modul
 import { suppliersRouter, supplierDeliveriesRouter } from './modules/procurement/index.js';
 import { financialCategoriesRouter, expensesRouter, loansRouter, penaltiesRouter, payrollRouter } from './modules/finance/index.js';
 import { analyticsRouter, dashboardRouter, financialReportsRouter } from './modules/reporting/index.js';
+import path from 'path';
+import fs from 'fs';
+
 export const app = express();
 
-app.use('/uploads', express.static('uploads'));
+const uploadsDir = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+app.use('/uploads', express.static(uploadsDir));
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 

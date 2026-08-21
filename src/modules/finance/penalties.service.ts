@@ -72,4 +72,30 @@ export class PenaltiesService {
     });
     return { data: penalty };
   }
+
+  async approvePenalty(id: string, userId: string): ServiceResult {
+    const penalty = await prisma.penalty.findUnique({ where: { id } });
+    if (!penalty) return { error: 'Penalty not found', status: 404 };
+    if (penalty.userId !== userId) return { error: 'Unauthorized to approve this penalty', status: 403 };
+
+    const updated = await prisma.penalty.update({
+      where: { id },
+      data: { status: 'APPROVED' },
+      include: { user: { select: { id: true, fullName: true, phone: true } } },
+    });
+    return { data: updated };
+  }
+
+  async rejectPenalty(id: string, userId: string): ServiceResult {
+    const penalty = await prisma.penalty.findUnique({ where: { id } });
+    if (!penalty) return { error: 'Penalty not found', status: 404 };
+    if (penalty.userId !== userId) return { error: 'Unauthorized to reject this penalty', status: 403 };
+
+    const updated = await prisma.penalty.update({
+      where: { id },
+      data: { status: 'REJECTED' },
+      include: { user: { select: { id: true, fullName: true, phone: true } } },
+    });
+    return { data: updated };
+  }
 }

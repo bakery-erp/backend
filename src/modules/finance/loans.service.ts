@@ -72,24 +72,29 @@ export class LoansService {
     if (!type || totalAmount == null) {
       return { error: 'type and totalAmount required', status: 400 };
     }
-    if ((type === 'EMPLOYEE' || type === 'SALARY_ADVANCE' || type === 'STAFF_LOAN') && !userId) {
-      return { error: 'userId required for employee loan or salary advance', status: 400 };
+    const isCustomerLoan = type === 'CUSTOMER' || type === 'CUSTOMER_CREDIT';
+    const finalType = isCustomerLoan ? 'CUSTOMER' : 'EMPLOYEE';
+    const customerIdentifier = entityId || (body.customerName ? `${body.customerName}${body.customerPhone ? ' (' + body.customerPhone + ')' : ''}${body.notes ? ' - ' + body.notes : ''}` : undefined);
+
+    if (isCustomerLoan && !customerIdentifier?.trim()) {
+      return { error: 'Customer name / entityId required for customer credit', status: 400 };
     }
-    if (type === 'CUSTOMER' && !entityId) {
-      return { error: 'entityId (customer name/phone) required for CUSTOMER loan', status: 400 };
+    if (!isCustomerLoan && !userId) {
+      return { error: 'userId required for employee loan or salary advance', status: 400 };
     }
 
     const amount = decimalToNum(totalAmount);
+    const initialStatus = isCustomerLoan ? 'OPEN' : 'PENDING_APPROVAL';
     const loan = await prisma.loan.create({
       data: {
         branchId: bid!,
-        type: type as any,
-        entityId: type === 'CUSTOMER' ? entityId ?? '' : null,
-        userId: type !== 'CUSTOMER' ? userId ?? undefined : null,
+        type: finalType as any,
+        entityId: isCustomerLoan ? customerIdentifier.trim() : null,
+        userId: !isCustomerLoan ? userId ?? undefined : null,
         totalAmount: amount,
         remainingBalance: amount,
         date: date ? businessDateFromYmdString(date) ?? undefined : undefined,
-        status: 'OPEN',
+        status: initialStatus,
       },
       include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
     });
@@ -131,6 +136,32 @@ export class LoansService {
     await prisma.loanPayment.deleteMany({ where: { loanId: id } });
     await prisma.loan.delete({ where: { id } });
     return { data: undefined };
+  }
+
+  async approveLoan(id: string, userId: string): ServiceResult {
+    const loan = await prisma.loan.findUnique({ where: { id } });
+    if (!loan) return { error: 'Loan not found', status: 404 };
+    if (loan.userId !== userId) return { error: 'Unauthorized to approve this loan', status: 403 };
+
+    const updated = await prisma.loan.update({
+      where: { id },
+      data: { status: 'OPEN' },
+      include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
+    });
+    return { data: updated };
+  }
+
+  async rejectLoan(id: string, userId: string): ServiceResult {
+    const loan = await prisma.loan.findUnique({ where: { id } });
+    if (!loan) return { error: 'Loan not found', status: 404 };
+    if (loan.userId !== userId) return { error: 'Unauthorized to reject this loan', status: 403 };
+
+    const updated = await prisma.loan.update({
+      where: { id },
+      data: { status: 'REJECTED' },
+      include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
+    });
+    return { data: updated };
   }
 
   async updateLoan(id: string, body: any): ServiceResult {

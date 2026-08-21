@@ -163,7 +163,7 @@ export class PayrollService {
     });
     const totalLoanBalance = openLoans.reduce((s, l) => s + Number(l.remainingBalance), 0);
     const undeductedPenalties = await prisma.penalty.findMany({
-      where: { userId, isDeducted: false },
+      where: { userId, isDeducted: false, status: 'APPROVED' },
     });
     const penaltyDeductions = undeductedPenalties.reduce((s, p) => s + Number(p.amount), 0);
 
