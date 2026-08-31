@@ -86,59 +86,21 @@ export class ProductionBatchesService {
       }
     }
 
-    // Find or automatically create/open an active DailySession for this branch & batchDate
-    let activeSession = await prisma.dailySession.findFirst({
+    // Check active session status for branch
+    const activeSession = await prisma.dailySession.findFirst({
       where: {
         branchId: bid,
-        status: 'OPEN',
+        status: { in: ['OPEN', 'PAUSED', 'CLOSE_PENDING', 'CLOSED'] },
       },
+      orderBy: { date: 'desc' },
     });
 
-    if (!activeSession) {
-      activeSession = await prisma.dailySession.findFirst({
-        where: {
-          branchId: bid,
-          date: batchDate,
-        },
-      });
-    }
-
-    if (activeSession && activeSession.status === 'CLOSED') {
+    if (!activeSession || activeSession.status !== 'OPEN') {
+      const statusLabel = activeSession ? activeSession.status : 'CLOSED';
       return {
-        error: 'The business session for this date is CLOSED. Production cannot be added to a closed session.',
+        error: `Daily session is currently ${statusLabel}. Production cannot be logged when a session is paused or closed.`,
         status: 400,
       };
-    }
-
-    if (activeSession && activeSession.status === 'PAUSED') {
-      return {
-        error: 'The business session is currently PAUSED. Production cannot be added to a paused session.',
-        status: 400,
-      };
-    }
-
-    if (!activeSession) {
-      // Auto-open a new daily session for this branch & date
-      try {
-        activeSession = await prisma.dailySession.create({
-          data: {
-            branchId: bid,
-            date: batchDate,
-            status: 'OPEN',
-          },
-        });
-      } catch (err: any) {
-        // Fallback if session was created concurrently
-        activeSession = await prisma.dailySession.findFirst({
-          where: { branchId: bid, date: batchDate },
-        });
-        if (activeSession && activeSession.status === 'CLOSED') {
-          return {
-            error: 'The business session for this date is CLOSED. Production cannot be added to a closed session.',
-            status: 400,
-          };
-        }
-      }
     }
 
     // Check creator role for automatic approval vs pending approval

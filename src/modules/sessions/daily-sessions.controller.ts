@@ -19,7 +19,7 @@ dailySessionsRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (re
   res.json(result.data);
 });
 
-dailySessionsRouter.get('/active', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res: Response) => {
+dailySessionsRouter.get('/active', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER', 'SAMBUSA_WORKER', 'EMPLOYEE'), async (req: AuthRequest, res: Response) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const result = await dailySessionsService.getActiveSession(branchId);
   if (result.error) {

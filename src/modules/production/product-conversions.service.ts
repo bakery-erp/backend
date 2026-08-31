@@ -72,6 +72,23 @@ export class ProductConversionsService {
       return { error: 'Source and target products must be different', status: 400 };
     }
 
+    // Check active session status for branch
+    const activeSession = await prisma.dailySession.findFirst({
+      where: {
+        branchId: bid,
+        status: { in: ['OPEN', 'PAUSED', 'CLOSE_PENDING', 'CLOSED'] },
+      },
+      orderBy: { date: 'desc' },
+    });
+
+    if (!activeSession || activeSession.status !== 'OPEN') {
+      const statusLabel = activeSession ? activeSession.status : 'CLOSED';
+      return {
+        error: `Daily session is currently ${statusLabel}. Product conversions are disabled when a session is paused or closed.`,
+        status: 400,
+      };
+    }
+
     const fromQ = typeof fromQuantity === 'number' ? fromQuantity : parseInt(String(fromQuantity), 10);
     const toQ = typeof toQuantity === 'number' ? toQuantity : parseInt(String(toQuantity), 10);
 
