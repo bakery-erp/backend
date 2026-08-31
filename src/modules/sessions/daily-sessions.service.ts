@@ -130,7 +130,14 @@ export class DailySessionsService {
     });
 
     if (existing) {
-      return { error: 'Session already exists for this branch and date', status: 400 };
+      if (existing.status !== 'OPEN') {
+        const reopened = await prisma.dailySession.update({
+          where: { id: existing.id },
+          data: { status: 'OPEN', ...(label ? { label: label.trim() } : {}) },
+        });
+        return { data: reopened };
+      }
+      return { data: existing };
     }
 
     const sessionLabel = label?.trim() || `Session - ${dateToYmdUtc(d)}`;
@@ -169,27 +176,120 @@ export class DailySessionsService {
       return { data: session };
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        const existingRec = await prisma.dailySession.findFirst({ where: { branchId: bid, date: d } });
+        if (existingRec) {
+          const reopened = await prisma.dailySession.update({
+            where: { id: existingRec.id },
+            data: { status: 'OPEN' },
+          });
+          return { data: reopened };
+        }
         return { error: 'Session already exists for this branch and date', status: 400 };
       }
       throw e;
     }
   }
 
-  async updateDailySession(id: string, body: any): ServiceResult {
-    const { status, cashLeftoverAmount } = body;
+  async updateDailySession(id: string, body: any, userId?: string): ServiceResult {
+    const {
+      status,
+      cashLeftoverAmount,
+      actualCashAmount,
+      actualCbeAmount,
+      actualTelebirrAmount,
+      notes,
+      label,
+      leftoverRecords,
+      expenses,
+    } = body;
+
+    const existingSession = await prisma.dailySession.findUnique({ where: { id } });
+    if (!existingSession) {
+      return { error: 'Session not found', status: 404 };
+    }
+
     const data: any = {};
     if (status) data.status = status;
+    if (label !== undefined) data.label = label ? String(label).trim() : null;
+    if (notes !== undefined) data.notes = notes ? String(notes).trim() : null;
     if (cashLeftoverAmount !== undefined) {
-      data.cashLeftoverAmount =
-        cashLeftoverAmount === null || cashLeftoverAmount === ''
-          ? null
-          : decimalToNum(cashLeftoverAmount);
+      data.cashLeftoverAmount = cashLeftoverAmount === null || cashLeftoverAmount === '' ? null : decimalToNum(cashLeftoverAmount);
     }
-    const session = await prisma.dailySession.update({
+    if (actualCashAmount !== undefined) {
+      data.actualCashAmount = actualCashAmount === null || actualCashAmount === '' ? null : decimalToNum(actualCashAmount);
+    }
+    if (actualCbeAmount !== undefined) {
+      data.actualCbeAmount = actualCbeAmount === null || actualCbeAmount === '' ? null : decimalToNum(actualCbeAmount);
+    }
+    if (actualTelebirrAmount !== undefined) {
+      data.actualTelebirrAmount = actualTelebirrAmount === null || actualTelebirrAmount === '' ? null : decimalToNum(actualTelebirrAmount);
+    }
+
+    // 1. Save expenses if provided
+    if (Array.isArray(expenses)) {
+      for (const exp of expenses) {
+        if (exp.id) {
+          await prisma.expense.update({
+            where: { id: exp.id },
+            data: {
+              amount: decimalToNum(exp.amount),
+              category: exp.category || 'MISC',
+              description: exp.description || null,
+            },
+          });
+        } else if (exp.amount && Number(exp.amount) > 0) {
+          await prisma.expense.create({
+            data: {
+              branchId: existingSession.branchId,
+              userId: userId || existingSession.id,
+              sessionId: id,
+              date: existingSession.date,
+              amount: decimalToNum(exp.amount),
+              category: exp.category || 'MISC',
+              description: exp.description || null,
+              type: 'COMPANY',
+            },
+          });
+        }
+      }
+    }
+
+    // 2. Upsert Leftover records if provided
+    if (Array.isArray(leftoverRecords)) {
+      for (const row of leftoverRecords) {
+        const pid = typeof row.productId === 'string' ? row.productId.trim() : '';
+        if (!pid) continue;
+        const qRem = typeof row.quantityRemaining === 'number' ? row.quantityRemaining : parseInt(String(row.quantityRemaining ?? '0'), 10);
+        const qDam = typeof row.damagedQuantity === 'number' ? row.damagedQuantity : parseInt(String(row.damagedQuantity ?? '0'), 10);
+
+        await prisma.leftoverRecord.upsert({
+          where: { sessionId_productId: { sessionId: id, productId: pid } },
+          create: {
+            sessionId: id,
+            productId: pid,
+            quantityRemaining: Math.max(0, qRem || 0),
+            damagedQuantity: Math.max(0, qDam || 0),
+            damageReason: row.damageReason ? String(row.damageReason).trim() : null,
+          },
+          update: {
+            quantityRemaining: Math.max(0, qRem || 0),
+            damagedQuantity: Math.max(0, qDam || 0),
+            damageReason: row.damageReason ? String(row.damageReason).trim() : null,
+          },
+        });
+      }
+    }
+
+    const updatedSession = await prisma.dailySession.update({
       where: { id },
       data,
+      include: {
+        expenses: true,
+        leftoverRecords: { include: { product: true } },
+      },
     });
-    return { data: session };
+
+    return { data: updatedSession };
   }
 
   async submitCloseRequest(sessionId: string, body: any, userId: string): ServiceResult {

@@ -51,6 +51,24 @@ export class PayrollService {
     if (!userId || month == null || year == null || baseSalary == null) {
       return { error: 'userId, month, year, baseSalary required', status: 400 };
     }
+
+    const m = parseInt(String(month), 10);
+    const y = parseInt(String(year), 10);
+
+    const existing = await prisma.payrollRecord.findFirst({
+      where: {
+        userId,
+        month: m,
+        year: y,
+      },
+    });
+    if (existing) {
+      return {
+        error: `Payroll for this employee has already been processed for term ${m}/${y}.`,
+        status: 400,
+      };
+    }
+
     const base = decimalToNum(baseSalary);
     const loanD = decimalToNum(loanDeductions);
     const penaltyD = decimalToNum(penaltyDeductions);
@@ -167,11 +185,17 @@ export class PayrollService {
     });
     const penaltyDeductions = undeductedPenalties.reduce((s, p) => s + Number(p.amount), 0);
 
+    const existingPayroll = await prisma.payrollRecord.findFirst({
+      where: { userId, month: m, year: y },
+    });
+
     return {
       data: {
         userId,
         month: m,
         year: y,
+        isAlreadyPaid: !!existingPayroll,
+        existingPayroll: existingPayroll || null,
         baseSalary,
         proratedBase,
         loanDeductions: totalLoanBalance,

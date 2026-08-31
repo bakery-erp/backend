@@ -121,22 +121,113 @@ dailySessionsRouter.post(
   })
 );
 
-dailySessionsRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req, res) => {
-  const { status, cashLeftoverAmount } = req.body as { status?: string; cashLeftoverAmount?: number | string | null };
-  const data: any = {};
-  if (status) data.status = status;
-  if (cashLeftoverAmount !== undefined) {
-    data.cashLeftoverAmount =
-      cashLeftoverAmount === null || cashLeftoverAmount === ''
-        ? null
-        : decimalToNum(cashLeftoverAmount);
-  }
-  const session = await prisma.dailySession.update({
-    where: { id: req.params.id },
-    data,
-  });
-  res.json(session);
-});
+dailySessionsRouter.patch(
+  '/:id',
+  requireRole('OWNER', 'ADMIN', 'CASHIER'),
+  asyncHandler(async (req: AuthRequest, res) => {
+    const {
+      status,
+      cashLeftoverAmount,
+      actualCashAmount,
+      actualCbeAmount,
+      actualTelebirrAmount,
+      notes,
+      label,
+      leftoverRecords,
+      expenses,
+    } = req.body;
+
+    const data: any = {};
+    if (status) data.status = status;
+    if (label !== undefined) data.label = label ? String(label).trim() : null;
+    if (notes !== undefined) data.notes = notes ? String(notes).trim() : null;
+    if (cashLeftoverAmount !== undefined) {
+      data.cashLeftoverAmount = cashLeftoverAmount === null || cashLeftoverAmount === '' ? null : decimalToNum(cashLeftoverAmount);
+    }
+    if (actualCashAmount !== undefined) {
+      data.actualCashAmount = actualCashAmount === null || actualCashAmount === '' ? null : decimalToNum(actualCashAmount);
+    }
+    if (actualCbeAmount !== undefined) {
+      data.actualCbeAmount = actualCbeAmount === null || actualCbeAmount === '' ? null : decimalToNum(actualCbeAmount);
+    }
+    if (actualTelebirrAmount !== undefined) {
+      data.actualTelebirrAmount = actualTelebirrAmount === null || actualTelebirrAmount === '' ? null : decimalToNum(actualTelebirrAmount);
+    }
+
+    const sessionId = req.params.id;
+    const existingSession = await prisma.dailySession.findUnique({ where: { id: sessionId } });
+    if (!existingSession) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+
+    // 1. Process Expenses
+    if (Array.isArray(expenses)) {
+      for (const exp of expenses) {
+        if (exp.id) {
+          await prisma.expense.update({
+            where: { id: exp.id },
+            data: {
+              amount: decimalToNum(exp.amount),
+              category: exp.category || 'MISC',
+              description: exp.description || null,
+            },
+          });
+        } else if (exp.amount && Number(exp.amount) > 0) {
+          await prisma.expense.create({
+            data: {
+              branchId: existingSession.branchId,
+              userId: req.user!.id,
+              sessionId,
+              date: existingSession.date,
+              amount: decimalToNum(exp.amount),
+              category: exp.category || 'MISC',
+              description: exp.description || null,
+              type: 'COMPANY',
+            },
+          });
+        }
+      }
+    }
+
+    // 2. Process Leftover Records
+    if (Array.isArray(leftoverRecords)) {
+      for (const row of leftoverRecords) {
+        const pid = typeof row.productId === 'string' ? row.productId.trim() : '';
+        if (!pid) continue;
+        const qRem = typeof row.quantityRemaining === 'number' ? row.quantityRemaining : parseInt(String(row.quantityRemaining ?? '0'), 10);
+        const qDam = typeof row.damagedQuantity === 'number' ? row.damagedQuantity : parseInt(String(row.damagedQuantity ?? '0'), 10);
+
+        await prisma.leftoverRecord.upsert({
+          where: { sessionId_productId: { sessionId, productId: pid } },
+          create: {
+            sessionId,
+            productId: pid,
+            quantityRemaining: Math.max(0, qRem || 0),
+            damagedQuantity: Math.max(0, qDam || 0),
+            damageReason: row.damageReason ? String(row.damageReason).trim() : null,
+          },
+          update: {
+            quantityRemaining: Math.max(0, qRem || 0),
+            damagedQuantity: Math.max(0, qDam || 0),
+            damageReason: row.damageReason ? String(row.damageReason).trim() : null,
+          },
+        });
+      }
+    }
+
+    const session = await prisma.dailySession.update({
+      where: { id: sessionId },
+      data,
+      include: {
+        expenses: true,
+        leftoverRecords: { include: { product: true } },
+      },
+    });
+
+    res.json(session);
+  })
+);
 
 // Finalize day: save leftovers, then compute sales = production - leftover per product, and register one Sale with items.
 dailySessionsRouter.post(
