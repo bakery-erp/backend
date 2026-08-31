@@ -163,6 +163,13 @@ dailySessionsRouter.patch(
 
     // 1. Process Expenses
     if (Array.isArray(expenses)) {
+      const keepIds = expenses.map((e: any) => e.id).filter(Boolean);
+      await prisma.expense.deleteMany({
+        where: {
+          sessionId,
+          id: { notIn: keepIds },
+        },
+      });
       for (const exp of expenses) {
         if (exp.id) {
           await prisma.expense.update({
