@@ -39,7 +39,7 @@ function normalizeLeftoverRows(
 
 leftoverRecordsRouter.post(
   '/',
-  requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER'),
+  requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER', 'CAKE_WORKER'),
   asyncHandler(async (req: AuthRequest, res) => {
     const { sessionId, records } = req.body as {
       sessionId: string;
@@ -93,7 +93,7 @@ leftoverRecordsRouter.post(
 
 leftoverRecordsRouter.put(
   '/session/:sessionId',
-  requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER'),
+  requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER', 'CAKE_WORKER'),
   asyncHandler(async (req, res) => {
     const { sessionId } = req.params;
     const { records } = req.body as { records: { productId: string; quantityRemaining: number }[] };
@@ -147,7 +147,7 @@ leftoverRecordsRouter.put(
 
 leftoverRecordsRouter.delete(
   '/session/:sessionId/product/:productId',
-  requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER'),
+  requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER', 'CAKE_WORKER'),
   asyncHandler(async (req, res) => {
     const { sessionId, productId } = req.params;
     const session = await prisma.dailySession.findUnique({ where: { id: sessionId } });

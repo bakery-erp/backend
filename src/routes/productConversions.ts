@@ -35,7 +35,7 @@ productConversionsRouter.get('/:id', async (req, res) => {
   res.json(conversion);
 });
 
-productConversionsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER'), async (req: AuthRequest, res) => {
+productConversionsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER'), async (req: AuthRequest, res) => {
   const { branchId, fromProductId, toProductId, fromQuantity, toQuantity } = req.body as {
     branchId?: string;
     fromProductId: string;
@@ -73,7 +73,7 @@ productConversionsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER'), async
   res.status(201).json(conversion);
 });
 
-productConversionsRouter.delete('/:id', requireRole('OWNER', 'ADMIN', 'BAKER'), async (req, res) => {
+productConversionsRouter.delete('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER'), async (req, res) => {
   await prisma.productConversion.delete({ where: { id: req.params.id } });
   res.status(204).send();
 });

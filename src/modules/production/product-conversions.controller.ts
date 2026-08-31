@@ -27,7 +27,7 @@ productConversionsRouter.get('/:id', async (req, res: Response) => {
   res.json(result.data);
 });
 
-productConversionsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER', 'CASHIER'), async (req: AuthRequest, res: Response) => {
+productConversionsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER'), async (req: AuthRequest, res: Response) => {
   const result = await productConversionsService.createProductConversion(req.body, req.user!.id, req.user?.branchId);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -35,7 +35,7 @@ productConversionsRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER', 'CASHI
   res.status(201).json(result.data);
 });
 
-productConversionsRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'CASHIER'), async (req, res: Response) => {
+productConversionsRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER'), async (req, res: Response) => {
   const result = await productConversionsService.updateProductConversion(req.params.id, req.body);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -43,7 +43,7 @@ productConversionsRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'C
   res.json(result.data);
 });
 
-productConversionsRouter.put('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'CASHIER'), async (req, res: Response) => {
+productConversionsRouter.put('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER'), async (req, res: Response) => {
   const result = await productConversionsService.updateProductConversion(req.params.id, req.body);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -51,7 +51,7 @@ productConversionsRouter.put('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAS
   res.json(result.data);
 });
 
-productConversionsRouter.delete('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'CASHIER'), async (req, res: Response) => {
+productConversionsRouter.delete('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER'), async (req, res: Response) => {
   const result = await productConversionsService.deleteProductConversion(req.params.id);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });

@@ -41,6 +41,8 @@ async function main() {
     { phone: '0910000002', fullName: 'Cashier User', role: 'CASHIER' as const },
     { phone: '0910000003', fullName: 'Baker User', role: 'BAKER' as const },
     { phone: '0910000004', fullName: 'Sambusa Worker', role: 'SAMBUSA_WORKER' as const },
+    { phone: '0910000005', fullName: 'Cake Worker', role: 'CAKE_WORKER' as const },
+    { phone: '0910000006', fullName: 'General Employee', role: 'EMPLOYEE' as const },
   ];
   for (const u of roleUsers) {
     await prisma.user.upsert({
@@ -117,7 +119,7 @@ async function main() {
   }
 
   console.log(
-    'Seed done. Owner: 0912345678 / password123 | Staff: 0910000001 ADMIN, 0910000002 CASHIER, 0910000003 BAKER, 0910000004 SAMBUSA_WORKER / password123'
+    'Seed done. Owner: 0912345678 / password123 | Staff: 0910000001 (ADMIN), 0910000002 (CASHIER), 0910000003 (BAKER), 0910000004 (SAMBUSA_WORKER), 0910000005 (CAKE_WORKER), 0910000006 (EMPLOYEE) / password123'
   );
 }
 

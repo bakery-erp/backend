@@ -11,7 +11,7 @@ dashboardRouter.use(authMiddleware);
  */
 dashboardRouter.get(
   '/',
-  requireRole('OWNER', 'ADMIN', 'BAKER', 'CASHIER', 'SAMBUSA_WORKER'),
+  requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER', 'SAMBUSA_WORKER'),
   async (req: AuthRequest, res) => {
     const branchId = (req.query.branchId as string) || req.user?.branchId;
 

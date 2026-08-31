@@ -7,7 +7,7 @@ const dashboardService = new DashboardService();
 
 dashboardRouter.use(authMiddleware);
 
-dashboardRouter.get('/', requireRole('OWNER', 'ADMIN', 'BAKER', 'CASHIER', 'SAMBUSA_WORKER'), async (req: AuthRequest, res: Response) => {
+dashboardRouter.get('/', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER', 'SAMBUSA_WORKER'), async (req: AuthRequest, res: Response) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const result = await dashboardService.getDashboardStats(branchId);
   if (result.error) {

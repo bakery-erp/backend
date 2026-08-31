@@ -28,7 +28,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 usersRouter.get('/roles', requireRole('OWNER', 'ADMIN'), (_req, res) => {
-  res.json(['OWNER', 'ADMIN', 'BAKER', 'CASHIER', 'SAMBUSA_WORKER', 'EMPLOYEE']);
+  res.json(['OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER', 'SAMBUSA_WORKER', 'EMPLOYEE']);
 });
 
 usersRouter.get('/me/dashboard', async (req: AuthRequest, res: Response) => {

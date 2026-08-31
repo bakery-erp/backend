@@ -26,7 +26,7 @@ const expenseInclude = {
 export const expensesRouter = Router();
 expensesRouter.use(authMiddleware);
 
-expensesRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER'), async (req: AuthRequest, res) => {
+expensesRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER', 'CAKE_WORKER'), async (req: AuthRequest, res) => {
   const admin = req.user!.role === 'OWNER' || req.user!.role === 'ADMIN';
   const branchId = admin
     ? ((req.query.branchId as string) || req.user?.branchId)
@@ -50,7 +50,7 @@ expensesRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER'), async
   res.json(list);
 });
 
-expensesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER'), async (req: AuthRequest, res) => {
+expensesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER', 'CAKE_WORKER'), async (req: AuthRequest, res) => {
   const { branchId, type, amount, category, description, date, financialCategoryId } = req.body as {
     branchId?: string;
     type?: string;
@@ -90,7 +90,7 @@ expensesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER'), asyn
   res.status(201).json(expense);
 });
 
-expensesRouter.get('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER'), async (req: AuthRequest, res) => {
+expensesRouter.get('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER', 'CAKE_WORKER'), async (req: AuthRequest, res) => {
   const expense = await prisma.expense.findUnique({
     where: { id: req.params.id },
     include: {

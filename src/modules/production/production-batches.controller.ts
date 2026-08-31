@@ -60,7 +60,7 @@ productionBatchesRouter.get('/:id', async (req, res: Response) => {
   res.json(result.data);
 });
 
-productionBatchesRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER', 'SAMBUSA_WORKER'), async (req: AuthRequest, res: Response) => {
+productionBatchesRouter.post('/', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'SAMBUSA_WORKER'), async (req: AuthRequest, res: Response) => {
   const result = await productionBatchesService.createProductionBatch(req.body, req.user!.id, req.user?.branchId);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -84,7 +84,7 @@ productionBatchesRouter.post('/:id/reject', requireRole('OWNER', 'ADMIN'), async
   res.json(result.data);
 });
 
-productionBatchesRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'SAMBUSA_WORKER'), async (req, res: Response) => {
+productionBatchesRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'SAMBUSA_WORKER'), async (req, res: Response) => {
   const result = await productionBatchesService.updateProductionBatch(req.params.id, req.body);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });

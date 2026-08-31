@@ -1,10 +1,11 @@
 // Bakery ERP - Full schema
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x", "rhel-openssl-1.1.x", "debian-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -12,6 +13,7 @@ enum Role {
   OWNER
   ADMIN
   BAKER
+  CAKE_WORKER
   CASHIER
   SAMBUSA_WORKER
   EMPLOYEE
@@ -244,7 +246,7 @@ model ProductionBatch {
   user      User        @relation(fields: [userId], references: [id], onDelete: Restrict)
   sessionId String?
   session   DailySession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
-  date      DateTime    @db.Date   @default(dbgenerated("(CURDATE())"))  // Day this production is for (flexible; can be past)
+  date      DateTime    @db.Date   @default(dbgenerated("CURRENT_DATE"))  // Day this production is for (flexible; can be past)
   shift     Shift?
   status    BatchStatus @default(STARTED)
   createdAt DateTime    @default(now())
@@ -431,7 +433,7 @@ model Loan {
   totalAmount      Decimal    @db.Decimal(12, 2)
   remainingBalance Decimal    @db.Decimal(12, 2)
   status           LoanStatus @default(OPEN)
-  date             DateTime   @db.Date   @default(dbgenerated("(CURDATE())"))
+  date             DateTime   @db.Date   @default(dbgenerated("CURRENT_DATE"))
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
   payments         LoanPayment[]
