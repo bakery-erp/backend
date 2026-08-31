@@ -130,7 +130,13 @@ export class DailySessionsService {
     });
 
     if (existing) {
-      if (existing.status !== 'OPEN') {
+      if (existing.status === 'CLOSED') {
+        return {
+          error: "Session for today has already been closed. A new session can only be opened on the next calendar day.",
+          status: 400,
+        };
+      }
+      if (existing.status === 'PAUSED') {
         const reopened = await prisma.dailySession.update({
           where: { id: existing.id },
           data: { status: 'OPEN', ...(label ? { label: label.trim() } : {}) },
@@ -764,6 +770,39 @@ export class DailySessionsService {
       return { data: { message: 'Daily session deleted successfully' } };
     } catch (e) {
       return { error: 'Failed to delete session (it may have linked sales or leftover records)', status: 400 };
+    }
+  }
+
+  static async autoCloseExpiredSessions() {
+    try {
+      const now = new Date();
+      // Ethiopian timezone offset UTC+3
+      const ethDateStr = new Date(now.getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10);
+      const parts = parseYmd(ethDateStr);
+      if (!parts) return;
+      const todayUtcNoon = businessDateUtcNoon(parts.y, parts.mo, parts.day);
+
+      const expired = await prisma.dailySession.findMany({
+        where: {
+          status: { in: ['OPEN', 'PAUSED'] },
+          date: { lt: todayUtcNoon },
+        },
+      });
+
+      for (const sess of expired) {
+        await prisma.dailySession.update({
+          where: { id: sess.id },
+          data: {
+            status: 'CLOSED',
+            notes: sess.notes
+              ? `${sess.notes}\n[System Auto-Closed at Midnight]`
+              : '[System Auto-Closed at Midnight]',
+          },
+        });
+        console.log(`[AutoClose] Automatically closed expired daily session ${sess.id}`);
+      }
+    } catch (err) {
+      console.error('[AutoClose] Error auto-closing expired sessions:', err);
     }
   }
 }

@@ -10,7 +10,7 @@ import { stockItemsRouter } from './modules/inventory/stock-items.controller.js'
 import { stockMovementsRouter } from './modules/inventory/stock-movements.controller.js';
 import { productionBatchesRouter } from './modules/production/production-batches.controller.js';
 import { productConversionsRouter } from './modules/production/product-conversions.controller.js';
-import { dailySessionsRouter, leftoverRecordsRouter, salesRouter } from './modules/sessions/index.js';
+import { dailySessionsRouter, leftoverRecordsRouter, salesRouter, DailySessionsService } from './modules/sessions/index.js';
 import { suppliersRouter, supplierDeliveriesRouter } from './modules/procurement/index.js';
 import { financialCategoriesRouter, expensesRouter, loansRouter, penaltiesRouter, payrollRouter } from './modules/finance/index.js';
 import { analyticsRouter, dashboardRouter, financialReportsRouter } from './modules/reporting/index.js';
@@ -18,6 +18,12 @@ import path from 'path';
 import fs from 'fs';
 
 export const app = express();
+
+// Midnight Session Auto-Closer Scheduled Job (runs on startup & every 60 seconds)
+DailySessionsService.autoCloseExpiredSessions();
+setInterval(() => {
+  DailySessionsService.autoCloseExpiredSessions();
+}, 60 * 1000);
 
 const uploadsDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
