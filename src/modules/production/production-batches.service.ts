@@ -10,23 +10,36 @@ function decimalToNum(v: unknown): number {
 }
 
 export class ProductionBatchesService {
-  async getProductionBatches(branchId?: string | null, date?: string, status?: string): ServiceResult {
+  async getProductionBatches(
+    branchId?: string | null,
+    date?: string,
+    status?: string,
+    shift?: string,
+    role?: string,
+    userId?: string
+  ): ServiceResult {
     if (!branchId) {
       return { error: 'branchId required', status: 400 };
     }
 
     const where: any = { branchId };
     if (status) where.status = status;
+    if (shift) where.shift = shift;
+    if (userId) where.userId = userId;
 
     if (date) {
       const p = parseYmd(date);
       if (p) where.date = businessDateUtcNoon(p.y, p.mo, p.day);
     }
 
+    if (role) {
+      where.user = { role };
+    }
+
     const list = await prisma.productionBatch.findMany({
       where,
       include: {
-        user: { select: { id: true, fullName: true } },
+        user: { select: { id: true, fullName: true, role: true } },
         items: { include: { product: { select: { id: true, name: true, unitType: true, basePrice: true } } } },
         materialUsages: { include: { stockItem: { select: { id: true, name: true, unitType: true } } } },
       },

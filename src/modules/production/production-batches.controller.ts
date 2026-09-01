@@ -11,7 +11,10 @@ productionBatchesRouter.get('/', async (req: AuthRequest, res: Response) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const date = req.query.date as string;
   const status = req.query.status as string | undefined;
-  const result = await productionBatchesService.getProductionBatches(branchId, date, status);
+  const shift = req.query.shift as string | undefined;
+  const role = req.query.role as string | undefined;
+  const userId = req.query.userId as string | undefined;
+  const result = await productionBatchesService.getProductionBatches(branchId, date, status, shift, role, userId);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
