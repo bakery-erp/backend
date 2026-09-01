@@ -57,12 +57,30 @@ export class DailySessionsService {
         ],
       },
       include: {
-        items: { include: { product: true } },
-        user: true,
+        items: {
+          include: {
+            product: {
+              include: {
+                category: { select: { id: true, name: true, type: true } },
+              },
+            },
+          },
+        },
+        user: { select: { id: true, fullName: true, role: true } },
       },
     });
 
-    const prodMap: Record<string, { productId: string; productName: string; unitType: string; totalProduced: number }> = {};
+    const prodMap: Record<
+      string,
+      {
+        productId: string;
+        productName: string;
+        unitType: string;
+        categoryName: string;
+        categoryType: string;
+        totalProduced: number;
+      }
+    > = {};
     for (const b of batches) {
       for (const item of b.items) {
         if (!prodMap[item.productId]) {
@@ -70,6 +88,8 @@ export class DailySessionsService {
             productId: item.productId,
             productName: item.product.name,
             unitType: item.product.unitType,
+            categoryName: item.product.category?.name || 'Uncategorized',
+            categoryType: item.product.category?.type || 'PRODUCED',
             totalProduced: 0,
           };
         }
@@ -782,6 +802,7 @@ export class DailySessionsService {
       if (!parts) return;
       const todayUtcNoon = businessDateUtcNoon(parts.y, parts.mo, parts.day);
 
+      // 1. Auto-close any open/paused session prior to today
       const expired = await prisma.dailySession.findMany({
         where: {
           status: { in: ['OPEN', 'PAUSED'] },
@@ -801,8 +822,32 @@ export class DailySessionsService {
         });
         console.log(`[AutoClose] Automatically closed expired daily session ${sess.id}`);
       }
+
+      // 2. Auto-open a new session for today for each active branch if none exists
+      const branches = await prisma.branch.findMany({ where: { isActive: true } });
+      for (const branch of branches) {
+        const todaySession = await prisma.dailySession.findFirst({
+          where: {
+            branchId: branch.id,
+            date: todayUtcNoon,
+          },
+        });
+
+        if (!todaySession) {
+          await prisma.dailySession.create({
+            data: {
+              branchId: branch.id,
+              date: todayUtcNoon,
+              status: 'OPEN',
+              label: `Session - ${ethDateStr}`,
+              notes: '[System Auto-Opened at Midnight]',
+            },
+          });
+          console.log(`[AutoOpen] Automatically opened new session for branch ${branch.name} (${branch.id}) for date ${ethDateStr}`);
+        }
+      }
     } catch (err) {
-      console.error('[AutoClose] Error auto-closing expired sessions:', err);
+      console.error('[AutoClose/AutoOpen] Error during midnight session rollover:', err);
     }
   }
 }
