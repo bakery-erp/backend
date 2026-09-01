@@ -98,11 +98,78 @@ export class DailySessionsService {
     }
     const productionSummary = Object.values(prodMap);
 
+    // Compute Sales and Max Available Stock per product for session validation
+    const sales = await prisma.sale.findMany({
+      where: { sessionId: id },
+      include: { items: true },
+    });
+    const soldMap: Record<string, number> = {};
+    for (const s of sales) {
+      for (const item of s.items) {
+        soldMap[item.productId] = (soldMap[item.productId] || 0) + item.quantity;
+      }
+    }
+
+    const delivMap: Record<string, number> = {};
+    for (const d of session.supplierDeliveries || []) {
+      delivMap[d.productId] = (delivMap[d.productId] || 0) + d.quantityReceived;
+    }
+
+    const availableStockSummary: Record<
+      string,
+      {
+        productId: string;
+        productName: string;
+        unitType: string;
+        categoryName: string;
+        producedQty: number;
+        deliveredQty: number;
+        soldQty: number;
+        maxAvailable: number;
+      }
+    > = {};
+
+    const allPids = new Set([
+      ...Object.keys(prodMap),
+      ...Object.keys(delivMap),
+      ...Object.keys(soldMap),
+      ...(session.leftoverRecords || []).map((r) => r.productId),
+    ]);
+
+    for (const pid of allPids) {
+      const prodItem = prodMap[pid];
+      const delivQty = delivMap[pid] || 0;
+      const prodQty = prodItem?.totalProduced || 0;
+      const soldQty = soldMap[pid] || 0;
+      const pName =
+        prodItem?.productName ||
+        session.leftoverRecords.find((r) => r.productId === pid)?.product?.name ||
+        'Product';
+      const uType =
+        prodItem?.unitType ||
+        session.leftoverRecords.find((r) => r.productId === pid)?.product?.unitType ||
+        'Pcs';
+      const catName = prodItem?.categoryName || 'Bakery';
+      const maxAvailable = Math.max(0, prodQty + delivQty - soldQty);
+
+      availableStockSummary[pid] = {
+        productId: pid,
+        productName: pName,
+        unitType: uType,
+        categoryName: catName,
+        producedQty: prodQty,
+        deliveredQty: delivQty,
+        soldQty,
+        maxAvailable,
+      };
+    }
+
     return {
       data: {
         ...session,
         productionBatches: batches,
         productionSummary,
+        availableStockSummary,
       },
     };
   }
@@ -230,6 +297,64 @@ export class DailySessionsService {
     }
   }
 
+  private async checkLeftoverStockLimits(session: any, leftoverRecords: any[]): Promise<string | null> {
+    if (!Array.isArray(leftoverRecords) || leftoverRecords.length === 0) return null;
+
+    const batches = await prisma.productionBatch.findMany({
+      where: {
+        branchId: session.branchId,
+        OR: [{ sessionId: session.id }, { date: session.date }],
+        status: { in: ['STARTED', 'COMPLETED', 'PENDING_APPROVAL'] },
+      },
+      include: { items: true },
+    });
+    const producedMap: Record<string, number> = {};
+    for (const b of batches) {
+      for (const item of b.items) {
+        producedMap[item.productId] = (producedMap[item.productId] || 0) + item.quantityProduced;
+      }
+    }
+
+    const deliveries = await prisma.supplierDelivery.findMany({
+      where: { sessionId: session.id },
+    });
+    const delivMap: Record<string, number> = {};
+    for (const d of deliveries) {
+      delivMap[d.productId] = (delivMap[d.productId] || 0) + d.quantityReceived;
+    }
+
+    const sales = await prisma.sale.findMany({
+      where: { sessionId: session.id },
+      include: { items: true },
+    });
+    const soldMap: Record<string, number> = {};
+    for (const s of sales) {
+      for (const item of s.items) {
+        soldMap[item.productId] = (soldMap[item.productId] || 0) + item.quantity;
+      }
+    }
+
+    for (const row of leftoverRecords) {
+      const pid = typeof row.productId === 'string' ? row.productId.trim() : '';
+      if (!pid) continue;
+      const qRem = typeof row.quantityRemaining === 'number' ? row.quantityRemaining : parseInt(String(row.quantityRemaining ?? '0'), 10);
+      if (qRem <= 0) continue;
+
+      const prod = producedMap[pid] || 0;
+      const deliv = delivMap[pid] || 0;
+      const sold = soldMap[pid] || 0;
+      const maxAvailable = Math.max(0, prod + deliv - sold);
+
+      if (qRem > maxAvailable) {
+        const prodObj = await prisma.product.findUnique({ where: { id: pid }, select: { name: true } });
+        const name = prodObj?.name || 'Product';
+        return `Cannot set leftover of ${qRem} Pcs for ${name}. Maximum available stock in this session is ${maxAvailable} Pcs (Produced/Delivered: ${prod + deliv}, Sold: ${sold}). Please correct the amount.`;
+      }
+    }
+
+    return null;
+  }
+
   async updateDailySession(id: string, body: any, userId?: string): ServiceResult {
     const {
       status,
@@ -246,6 +371,19 @@ export class DailySessionsService {
     const existingSession = await prisma.dailySession.findUnique({ where: { id } });
     if (!existingSession) {
       return { error: 'Session not found', status: 404 };
+    }
+
+    // Midnight Lockout Enforcement:
+    const ethTodayYmd = new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
+    const sessionYmd = dateToYmdUtc(existingSession.date);
+    if (sessionYmd < ethTodayYmd || existingSession.status === 'CLOSED') {
+      return { error: 'Session editing is locked after midnight or once closed.', status: 400 };
+    }
+
+    // Stock Limit Validation for Leftover Products
+    if (Array.isArray(leftoverRecords) && leftoverRecords.length > 0) {
+      const stockErr = await this.checkLeftoverStockLimits(existingSession, leftoverRecords);
+      if (stockErr) return { error: stockErr, status: 400 };
     }
 
     const data: any = {};
@@ -333,7 +471,7 @@ export class DailySessionsService {
   }
 
   async submitCloseRequest(sessionId: string, body: any, userId: string): ServiceResult {
-    const { actualCashAmount, actualCbeAmount, actualTelebirrAmount, notes, label, leftoverRecords, expenses } = body;
+    const { actualCashAmount, actualCbeAmount, actualTelebirrAmount, cashLeftoverAmount, notes, label, leftoverRecords, expenses } = body;
 
     const session = await prisma.dailySession.findUnique({
       where: { id: sessionId },
@@ -345,6 +483,11 @@ export class DailySessionsService {
     }
     if (session.status === 'CLOSED') {
       return { error: 'Session is already closed', status: 400 };
+    }
+
+    if (Array.isArray(leftoverRecords) && leftoverRecords.length > 0) {
+      const stockErr = await this.checkLeftoverStockLimits(session, leftoverRecords);
+      if (stockErr) return { error: stockErr, status: 400 };
     }
 
     // 1. Upsert Leftover records
