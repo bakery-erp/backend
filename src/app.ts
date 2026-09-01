@@ -29,8 +29,22 @@ const uploadsDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
-app.use('/uploads', express.static(uploadsDir));
-app.use(cors({ origin: true, credentials: true }));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow any requesting origin (including local dev, mobile web, production domains, and curl)
+      callback(null, true);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'x-branch-id'],
+    optionsSuccessStatus: 204,
+  })
+);
+
+// Respond to preflight OPTIONS requests across all routes
+app.options('*', cors());
+
 app.use(express.json());
 
 
@@ -62,8 +76,13 @@ app.use('/api/reports', financialReportsRouter);
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
   const message = err instanceof Error ? err.message : 'Internal server error';
   res.status(500).json({ error: message });
 });
