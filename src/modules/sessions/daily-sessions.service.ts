@@ -115,6 +115,17 @@ export class DailySessionsService {
       delivMap[d.productId] = (delivMap[d.productId] || 0) + d.quantityReceived;
     }
 
+    // Compute Product Conversions in this session
+    const conversions = await prisma.productConversion.findMany({
+      where: { branchId: session.branchId, createdAt: { gte: session.date } },
+    });
+    const convertedOutMap: Record<string, number> = {};
+    const convertedInMap: Record<string, number> = {};
+    for (const c of conversions) {
+      convertedOutMap[c.fromProductId] = (convertedOutMap[c.fromProductId] || 0) + c.fromQuantity;
+      convertedInMap[c.toProductId] = (convertedInMap[c.toProductId] || 0) + c.toQuantity;
+    }
+
     const availableStockSummary: Record<
       string,
       {
@@ -125,6 +136,8 @@ export class DailySessionsService {
         producedQty: number;
         deliveredQty: number;
         soldQty: number;
+        convertedOutQty: number;
+        convertedInQty: number;
         maxAvailable: number;
       }
     > = {};
@@ -133,6 +146,8 @@ export class DailySessionsService {
       ...Object.keys(prodMap),
       ...Object.keys(delivMap),
       ...Object.keys(soldMap),
+      ...Object.keys(convertedOutMap),
+      ...Object.keys(convertedInMap),
       ...(session.leftoverRecords || []).map((r) => r.productId),
     ]);
 
@@ -141,6 +156,8 @@ export class DailySessionsService {
       const delivQty = delivMap[pid] || 0;
       const prodQty = prodItem?.totalProduced || 0;
       const soldQty = soldMap[pid] || 0;
+      const convertedOutQty = convertedOutMap[pid] || 0;
+      const convertedInQty = convertedInMap[pid] || 0;
       const pName =
         prodItem?.productName ||
         session.leftoverRecords.find((r) => r.productId === pid)?.product?.name ||
@@ -150,7 +167,7 @@ export class DailySessionsService {
         session.leftoverRecords.find((r) => r.productId === pid)?.product?.unitType ||
         'Pcs';
       const catName = prodItem?.categoryName || 'Bakery';
-      const maxAvailable = Math.max(0, prodQty + delivQty - soldQty);
+      const maxAvailable = Math.max(0, prodQty + delivQty + convertedInQty - soldQty - convertedOutQty);
 
       availableStockSummary[pid] = {
         productId: pid,
@@ -160,6 +177,8 @@ export class DailySessionsService {
         producedQty: prodQty,
         deliveredQty: delivQty,
         soldQty,
+        convertedOutQty,
+        convertedInQty,
         maxAvailable,
       };
     }

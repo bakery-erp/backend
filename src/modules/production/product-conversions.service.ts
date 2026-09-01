@@ -109,6 +109,59 @@ export class ProductConversionsService {
       return { error: `Target product not found: ${toProductId}`, status: 404 };
     }
 
+    // Validate available shop stock for fromProduct
+    const [sessionBatches, sessionSales, sessionDeliveries, previousConversions] = await Promise.all([
+      prisma.productionBatch.findMany({
+        where: { branchId: bid, date: activeSession.date },
+        include: { items: true },
+      }),
+      prisma.sale.findMany({
+        where: { sessionId: activeSession.id },
+        include: { items: true },
+      }),
+      prisma.supplierDelivery.findMany({
+        where: { sessionId: activeSession.id },
+      }),
+      prisma.productConversion.findMany({
+        where: { branchId: bid, createdAt: { gte: activeSession.date } },
+      }),
+    ]);
+
+    let prodQty = 0;
+    for (const b of sessionBatches) {
+      for (const item of b.items) {
+        if (item.productId === fromProductId) prodQty += item.quantityProduced;
+      }
+    }
+
+    let delivQty = 0;
+    for (const d of sessionDeliveries) {
+      if (d.productId === fromProductId) delivQty += d.quantityReceived;
+    }
+
+    let soldQty = 0;
+    for (const s of sessionSales) {
+      for (const item of s.items) {
+        if (item.productId === fromProductId) soldQty += item.quantity;
+      }
+    }
+
+    let convertedOut = 0;
+    let convertedIn = 0;
+    for (const c of previousConversions) {
+      if (c.fromProductId === fromProductId) convertedOut += c.fromQuantity;
+      if (c.toProductId === fromProductId) convertedIn += c.toQuantity;
+    }
+
+    const maxAvailable = Math.max(0, prodQty + delivQty + convertedIn - soldQty - convertedOut);
+
+    if (fromQ > maxAvailable) {
+      return {
+        error: `Source conversion quantity (${fromQ}) exceeds available shop stock (${maxAvailable} ${fromProduct.unitType}) for "${fromProduct.name}". Maximum convert allowed currently is ${maxAvailable}.`,
+        status: 400,
+      };
+    }
+
     const conversion = await prisma.productConversion.create({
       data: {
         branchId: bid,
