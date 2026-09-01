@@ -424,7 +424,7 @@ export class ProductionBatchesService {
             batch: {
               include: {
                 branch: true,
-                user: { select: { id: true, fullName: true } },
+                user: { select: { id: true, fullName: true, role: true } },
               },
             },
           },
@@ -452,6 +452,8 @@ export class ProductionBatchesService {
             netQuantity: netQty,
             subtotal,
             sourceName: item.batch.user?.fullName || 'Bakery Staff',
+            userRole: item.batch.user?.role || '',
+            userId: item.batch.userId || '',
             sessionId: item.batch.sessionId || null,
             branchName: item.batch.branch?.name || '',
             notes: item.batch.shift ? `Shift: ${item.batch.shift}` : 'Daily Batch',
