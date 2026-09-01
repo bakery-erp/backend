@@ -169,11 +169,7 @@ export class DailySessionsService {
     const sessionLabel = label?.trim() || `Session - ${dateToYmdUtc(d)}`;
 
     try {
-      const session = await prisma.dailySession.create({
-        data: { branchId: bid, date: d, status: 'OPEN', label: sessionLabel },
-      });
-
-      // Seed opening leftovers from the most recent closed session
+      // Find most recent closed session to seed opening float and leftover inventory
       const previousClosed = await prisma.dailySession.findFirst({
         where: {
           branchId: bid,
@@ -182,6 +178,24 @@ export class DailySessionsService {
         },
         include: { leftoverRecords: true },
         orderBy: { date: 'desc' },
+      });
+
+      const carriedFloat = previousClosed?.cashLeftoverAmount != null
+        ? decimalToNum(previousClosed.cashLeftoverAmount)
+        : (previousClosed?.actualCashAmount != null ? decimalToNum(previousClosed.actualCashAmount) : 0);
+
+      const openingFloatVal = body.openingCashFloat != null && body.openingCashFloat !== ''
+        ? decimalToNum(body.openingCashFloat)
+        : carriedFloat;
+
+      const session = await prisma.dailySession.create({
+        data: {
+          branchId: bid,
+          date: d,
+          status: 'OPEN',
+          label: sessionLabel,
+          openingCashFloat: openingFloatVal,
+        },
       });
 
       const carryRows = (previousClosed?.leftoverRecords ?? [])
@@ -834,16 +848,28 @@ export class DailySessionsService {
         });
 
         if (!todaySession) {
+          const previousClosed = await prisma.dailySession.findFirst({
+            where: { branchId: branch.id, status: 'CLOSED' },
+            orderBy: { date: 'desc' },
+          });
+
+          const carriedFloat = previousClosed?.cashLeftoverAmount != null
+            ? decimalToNum(previousClosed.cashLeftoverAmount)
+            : (previousClosed?.actualCashAmount != null ? decimalToNum(previousClosed.actualCashAmount) : 0);
+
           await prisma.dailySession.create({
             data: {
               branchId: branch.id,
               date: todayUtcNoon,
               status: 'OPEN',
               label: `Session - ${ethDateStr}`,
-              notes: '[System Auto-Opened at Midnight]',
+              openingCashFloat: carriedFloat,
+              notes: carriedFloat > 0
+                ? `[System Auto-Opened at Midnight with Carried Starter Cash: ${carriedFloat.toFixed(2)} ETB]`
+                : '[System Auto-Opened at Midnight]',
             },
           });
-          console.log(`[AutoOpen] Automatically opened new session for branch ${branch.name} (${branch.id}) for date ${ethDateStr}`);
+          console.log(`[AutoOpen] Automatically opened new session for branch ${branch.name} (${branch.id}) for date ${ethDateStr} with opening float ${carriedFloat}`);
         }
       }
     } catch (err) {
