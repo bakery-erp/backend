@@ -280,11 +280,29 @@ export class ProductionBatchesService {
     return { data: updated };
   }
 
-  async updateProductionBatch(id: string, body: any): ServiceResult {
+  async updateProductionBatch(id: string, body: any, user?: { id: string; role: string }): ServiceResult {
     const { date, shift, status, items, materialUsages } = body;
     const existing = await prisma.productionBatch.findUnique({ where: { id } });
     if (!existing) {
       return { error: 'Production batch not found', status: 404 };
+    }
+
+    const isAdminOrOwner = user?.role === 'ADMIN' || user?.role === 'OWNER';
+
+    // Lockout Enforcement: Producer roles (BAKER, CAKE_WORKER, SAMBUSA_WORKER) cannot edit an approved/completed or rejected batch
+    if (!isAdminOrOwner && (existing.status === 'COMPLETED' || existing.status === 'REJECTED')) {
+      return {
+        error: `Production batch is already ${existing.status.toLowerCase()} and cannot be modified by producer roles.`,
+        status: 403,
+      };
+    }
+
+    // Producer roles cannot directly change status to COMPLETED or REJECTED
+    if (!isAdminOrOwner && status && (status === 'COMPLETED' || status === 'REJECTED')) {
+      return {
+        error: 'Producer roles cannot approve or reject production batches directly.',
+        status: 403,
+      };
     }
 
     let batchDate: Date | undefined = undefined;
@@ -555,13 +573,29 @@ export class ProductionBatchesService {
     }
   }
 
-  async updateProductionItemReturn(itemId: string, returnedQuantity: number): ServiceResult {
+  async updateProductionItemReturn(itemId: string, returnedQuantity: number, user?: { id: string; role: string }): ServiceResult {
     try {
-      const item = await prisma.productionItem.update({
+      const item = await prisma.productionItem.findUnique({
+        where: { id: itemId },
+        include: { batch: true },
+      });
+      if (!item) {
+        return { error: 'Production item not found', status: 404 };
+      }
+
+      const isAdminOrOwner = user?.role === 'ADMIN' || user?.role === 'OWNER';
+      if (!isAdminOrOwner && (item.batch.status === 'COMPLETED' || item.batch.status === 'REJECTED')) {
+        return {
+          error: `Item returns for ${item.batch.status.toLowerCase()} production batches cannot be modified by producers.`,
+          status: 403,
+        };
+      }
+
+      const updated = await prisma.productionItem.update({
         where: { id: itemId },
         data: { returnedQuantity: Math.max(0, parseInt(String(returnedQuantity), 10) || 0) },
       });
-      return { data: item };
+      return { data: updated };
     } catch (e: any) {
       return { error: e.message || 'Failed to update item returns', status: 500 };
     }

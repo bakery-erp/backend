@@ -48,7 +48,7 @@ productionBatchesRouter.get('/daily-product-history/all', async (req: AuthReques
 
 productionBatchesRouter.patch('/items/:itemId/return', async (req: AuthRequest, res: Response) => {
   const { returnedQuantity } = req.body;
-  const result = await productionBatchesService.updateProductionItemReturn(req.params.itemId, returnedQuantity);
+  const result = await productionBatchesService.updateProductionItemReturn(req.params.itemId, returnedQuantity, req.user);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -87,8 +87,8 @@ productionBatchesRouter.post('/:id/reject', requireRole('OWNER', 'ADMIN'), async
   res.json(result.data);
 });
 
-productionBatchesRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'SAMBUSA_WORKER'), async (req, res: Response) => {
-  const result = await productionBatchesService.updateProductionBatch(req.params.id, req.body);
+productionBatchesRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'SAMBUSA_WORKER'), async (req: AuthRequest, res: Response) => {
+  const result = await productionBatchesService.updateProductionBatch(req.params.id, req.body, req.user);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
