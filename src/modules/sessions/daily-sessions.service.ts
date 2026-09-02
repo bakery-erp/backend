@@ -392,11 +392,11 @@ export class DailySessionsService {
       return { error: 'Session not found', status: 404 };
     }
 
-    // Midnight Lockout Enforcement:
+    // Lockout Enforcement: CLOSED or CLOSE_PENDING sessions cannot be edited
     const ethTodayYmd = new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
     const sessionYmd = dateToYmdUtc(existingSession.date);
-    if (sessionYmd < ethTodayYmd || existingSession.status === 'CLOSED') {
-      return { error: 'Session editing is locked after midnight or once closed.', status: 400 };
+    if (sessionYmd < ethTodayYmd || existingSession.status === 'CLOSED' || existingSession.status === 'CLOSE_PENDING') {
+      return { error: 'Session editing is locked after midnight or once closed/pending approval.', status: 400 };
     }
 
     // Stock Limit Validation for Leftover Products
@@ -500,8 +500,8 @@ export class DailySessionsService {
     if (!session) {
       return { error: 'Session not found', status: 404 };
     }
-    if (session.status === 'CLOSED') {
-      return { error: 'Session is already closed', status: 400 };
+    if (session.status === 'CLOSED' || session.status === 'CLOSE_PENDING') {
+      return { error: `Session is already ${session.status === 'CLOSED' ? 'CLOSED' : 'submitted for closure'}. Cashiers cannot edit closed sessions.`, status: 400 };
     }
 
     if (Array.isArray(leftoverRecords) && leftoverRecords.length > 0) {
