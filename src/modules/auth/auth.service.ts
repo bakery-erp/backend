@@ -41,7 +41,7 @@ export class AuthService {
       return { error: 'Phone and password required', status: 400 };
     }
 
-    const user = await prisma.user.findUnique({
+    const user = await prisma.user.findFirst({
       where: { phone: phoneTrim, isActive: true },
       include: { branch: { select: { id: true, name: true, isActive: true } } },
     });
@@ -110,7 +110,7 @@ export class AuthService {
       return { error: 'Phone number is required', status: 400 };
     }
 
-    const user = await prisma.user.findUnique({
+    const user = await prisma.user.findFirst({
       where: { phone: phoneTrim, isActive: true },
     });
 

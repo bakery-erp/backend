@@ -14,11 +14,16 @@ authRouter.patch('/password', authMiddleware, async (req: AuthRequest, res: Resp
 });
 
 authRouter.post('/login', async (req, res: Response) => {
-  const result = await authService.login(req.body);
-  if (result.error) {
-    return res.status(result.status || 500).json({ error: result.error });
+  try {
+    const result = await authService.login(req.body);
+    if (result.error) {
+      return res.status(result.status || 500).json({ error: result.error });
+    }
+    res.json(result.data);
+  } catch (err: any) {
+    console.error('Login Endpoint Error:', err);
+    res.status(500).json({ error: err?.message || 'Login failed due to an internal server error.' });
   }
-  res.json(result.data);
 });
 
 authRouter.post('/logout', authMiddleware, (_req, res) => {
