@@ -8,8 +8,8 @@ suppliersRouter.use(authMiddleware);
 suppliersRouter.get('/', async (req: AuthRequest, res) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const type = req.query.type as string | undefined;
-  if (!branchId) return res.status(400).json({ error: 'branchId required' });
-  const where: any = { branchId };
+  const where: any = {};
+  if (branchId) where.branchId = branchId;
   if (type) where.type = type;
   const list = await prisma.supplier.findMany({
     where,
@@ -30,7 +30,11 @@ suppliersRouter.get('/:id', async (req, res) => {
 
 suppliersRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res) => {
   const { branchId, name, phone, type } = req.body as { branchId?: string; name: string; phone?: string; type: string };
-  const bid = branchId || req.user?.branchId;
+  let bid = branchId || req.user?.branchId;
+  if (!bid) {
+    const firstBranch = await prisma.branch.findFirst({ where: { isActive: true } });
+    bid = firstBranch?.id;
+  }
   if (!bid || !name?.trim() || !type) return res.status(400).json({ error: 'branchId, name, type required' });
   const supplier = await prisma.supplier.create({
     data: { branchId: bid, name: name.trim(), phone: phone?.trim() || null, type: type as any },

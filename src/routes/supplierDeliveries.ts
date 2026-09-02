@@ -47,11 +47,41 @@ supplierDeliveriesRouter.get('/:id', async (req, res) => {
   res.json(delivery);
 });
 
-supplierDeliveriesRouter.post('/', requireRole('OWNER', 'ADMIN', 'SAMBUSA_WORKER'), async (req: AuthRequest, res) => {
-  const { supplierId, productId, quantityReceived, unitBuyPrice, unitSellPrice, isPaid, returnedQuantity } = req.body as Record<string, unknown>;
-  if (!supplierId || !productId || quantityReceived == null || unitBuyPrice == null || unitSellPrice == null) {
-    return res.status(400).json({ error: 'supplierId, productId, quantityReceived, unitBuyPrice, unitSellPrice required' });
+supplierDeliveriesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'SAMBUSA_WORKER', 'BAKER', 'CAKE_WORKER'), async (req: AuthRequest, res) => {
+  const { supplierId, isPaid, items, productId, quantityReceived, unitBuyPrice, unitSellPrice, returnedQuantity } = req.body as Record<string, unknown>;
+  
+  if (!supplierId) {
+    return res.status(400).json({ error: 'supplierId is required' });
   }
+
+  // Support batch delivery items payload from multi-item UI
+  if (Array.isArray(items) && items.length > 0) {
+    const createdList = [];
+    for (const item of items) {
+      if (!item.productId || item.quantityReceived == null) continue;
+      const qty = typeof item.quantityReceived === 'number' ? item.quantityReceived : parseInt(String(item.quantityReceived), 10);
+      const created = await prisma.supplierDelivery.create({
+        data: {
+          supplierId: supplierId as string,
+          productId: item.productId,
+          quantityReceived: qty,
+          unitBuyPrice: decimalToNum(item.unitBuyPrice),
+          unitSellPrice: decimalToNum(item.unitSellPrice),
+          isPaid: Boolean(isPaid),
+          returnedQuantity: item.returnedQuantity != null ? parseInt(String(item.returnedQuantity), 10) : 0,
+        },
+        include: { supplier: true, product: true },
+      });
+      createdList.push(created);
+    }
+    return res.status(201).json(createdList);
+  }
+
+  // Support single item delivery payload
+  if (!productId || quantityReceived == null) {
+    return res.status(400).json({ error: 'supplierId, productId, and quantityReceived are required' });
+  }
+
   const qty = typeof quantityReceived === 'number' ? quantityReceived : parseInt(String(quantityReceived), 10);
   const delivery = await prisma.supplierDelivery.create({
     data: {
@@ -65,7 +95,7 @@ supplierDeliveriesRouter.post('/', requireRole('OWNER', 'ADMIN', 'SAMBUSA_WORKER
     },
     include: { supplier: true, product: true },
   });
-  res.status(201).json(delivery);
+  return res.status(201).json(delivery);
 });
 
 supplierDeliveriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
