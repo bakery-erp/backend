@@ -26,7 +26,7 @@ loansRouter.get('/my', async (req: any, res) => {
 });
 
 
-loansRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res) => {
+loansRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const type = req.query.type as string | undefined;
   const status = req.query.status as string | undefined;
@@ -55,7 +55,7 @@ loansRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res
   res.json(list);
 });
 
-loansRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+loansRouter.get('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req, res) => {
   const loan = await prisma.loan.findUnique({
     where: { id: req.params.id },
     include: { user: { select: { id: true, fullName: true, phone: true, role: true } }, payments: true },
@@ -64,7 +64,7 @@ loansRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
   res.json(loan);
 });
 
-loansRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res) => {
+loansRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res) => {
   const { branchId, type, entityId, userId, totalAmount, date } = req.body as {
     branchId?: string;
     type: string;
@@ -94,7 +94,7 @@ loansRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, re
   res.status(201).json(loan);
 });
 
-loansRouter.post('/:id/pay', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+loansRouter.post('/:id/pay', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req, res) => {
   const { amountPaid, date } = req.body as { amountPaid: number | string; date?: string };
   if (amountPaid == null) return res.status(400).json({ error: 'amountPaid required' });
   const paid = decimalToNum(amountPaid);
