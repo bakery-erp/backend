@@ -53,10 +53,25 @@ export class FinancialReportsService {
 
     const loans = await prisma.loan.findMany({
       where: { branchId, date: { gte: fromDate, lte: toDate } },
-      include: { user: { select: { fullName: true } } },
+      include: { user: { select: { fullName: true } }, payments: true },
       orderBy: { date: 'desc' },
     });
     const loanTotal = loans.reduce((sum, l) => sum + Number(l.totalAmount), 0);
+
+    const customerLoans = loans.filter(l => l.type === 'CUSTOMER');
+    const customerCreditSalesTotal = customerLoans.reduce((sum, l) => sum + Number(l.totalAmount), 0);
+    const employeeLoans = loans.filter(l => l.type !== 'CUSTOMER');
+    const employeeLoanTotal = employeeLoans.reduce((sum, l) => sum + Number(l.totalAmount), 0);
+
+    const customerLoanPayments = await prisma.loanPayment.findMany({
+      where: {
+        loan: { branchId, type: 'CUSTOMER' },
+        date: { gte: fromDate, lte: toDate },
+      },
+      include: { loan: { select: { id: true, entityId: true } } },
+      orderBy: { date: 'desc' },
+    });
+    const customerCreditPaymentTotal = customerLoanPayments.reduce((sum, p) => sum + Number(p.amountPaid), 0);
 
     const deliveries = await prisma.supplierDelivery.findMany({
       where: { supplier: { branchId }, createdAt: { gte: fromDate, lte: toDate } },
@@ -95,16 +110,25 @@ export class FinancialReportsService {
       orderBy: { date: 'desc' },
     });
 
-    // Total Operating Expenses (Company operating costs + payroll + stock loan payments)
+    // Total Revenue (Accrual: POS cash/bank sales + Customer Credited product sales)
+    const grossRevenueTotal = salesTotal + customerCreditSalesTotal;
+
+    // Cash Realized / Cash Collections (POS sales + Customer Credit repayments collected)
+    const totalCashCollected = salesTotal + customerCreditPaymentTotal;
+
+    // Total Operating Expenses (Daily operating costs + payroll + stock loan payments)
     const totalOperatingExpenses = companyExpenseTotal + payrollTotal + stockLoanPaymentTotal;
     const totalMaterialCosts = supplierDeliveryCost;
     const totalCompanyCosts = totalOperatingExpenses + totalMaterialCosts;
 
-    // Gross & Operating Net Profit
-    const grossProfit = salesTotal - totalMaterialCosts;
-    const operatingNetIncome = salesTotal - totalCompanyCosts;
+    // Gross & Operating Net Profit (Accrual: including credited products sold)
+    const grossProfit = grossRevenueTotal - totalMaterialCosts;
+    const operatingNetIncome = grossRevenueTotal - totalCompanyCosts;
 
-    // Net Cash after Owner Personal Expenses / Withdrawals
+    // Net Cash Position Change (Cash Inflows - Cash Outflows)
+    const netCashPositionChange = totalCashCollected - (companyExpenseTotal + stockLoanPaymentTotal + payrollTotal + ownerExpenseTotal);
+
+    // Net Income after Owner Personal Expenses / Withdrawals
     const netIncomeAfterOwnerDrawings = operatingNetIncome - ownerExpenseTotal;
 
     const openingLeftoverQuantity = sessions.reduce((acc, s) => {
@@ -115,10 +139,15 @@ export class FinancialReportsService {
     const totals = {
       openingLeftoverQuantity,
       salesTotal,
+      customerCreditSalesTotal,
+      customerCreditPaymentTotal,
+      grossRevenueTotal,
+      totalCashCollected,
       cashLeftoverTotal,
       companyExpenseTotal,
       ownerExpenseTotal,
       loanTotal,
+      employeeLoanTotal,
       supplierDeliveryCost,
       stockLoanPaymentTotal,
       payrollTotal,
@@ -128,6 +157,7 @@ export class FinancialReportsService {
       grossProfit,
       operatingNetIncome,
       netIncome: operatingNetIncome,
+      netCashPositionChange,
       netIncomeAfterOwnerDrawings,
     };
 
@@ -140,6 +170,10 @@ export class FinancialReportsService {
           date: dayKey,
           openingLeftoverQuantity: 0,
           salesTotal: 0,
+          customerCreditSalesTotal: 0,
+          customerCreditPaymentTotal: 0,
+          grossRevenueTotal: 0,
+          totalCashCollected: 0,
           cashLeftoverTotal: 0,
           companyExpenseTotal: 0,
           ownerExpenseTotal: 0,
@@ -148,6 +182,7 @@ export class FinancialReportsService {
           stockLoanPaymentTotal: 0,
           payrollTotal: 0,
           operatingNetIncome: 0,
+          netCashPositionChange: 0,
         });
       }
       return dailyMap.get(dayKey);
@@ -176,6 +211,15 @@ export class FinancialReportsService {
       const dayKey = l.date ? new Date(l.date).toISOString().slice(0, 10) : new Date(l.createdAt).toISOString().slice(0, 10);
       const entry = getOrCreateDailyEntry(dayKey);
       entry.loanTotal += Number(l.totalAmount);
+      if (l.type === 'CUSTOMER') {
+        entry.customerCreditSalesTotal += Number(l.totalAmount);
+      }
+    }
+
+    for (const cp of customerLoanPayments) {
+      const dayKey = cp.date ? new Date(cp.date).toISOString().slice(0, 10) : new Date(cp.createdAt).toISOString().slice(0, 10);
+      const entry = getOrCreateDailyEntry(dayKey);
+      entry.customerCreditPaymentTotal += Number(cp.amountPaid);
     }
 
     for (const d of deliveries) {
@@ -198,8 +242,10 @@ export class FinancialReportsService {
 
     const dailyBreakdown = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
     for (const entry of dailyBreakdown) {
-      // Daily Operating Net Income excludes Owner Expenses as per requirement
-      entry.operatingNetIncome = entry.salesTotal - (entry.companyExpenseTotal + entry.supplierDeliveryCost + entry.stockLoanPaymentTotal + entry.payrollTotal);
+      entry.grossRevenueTotal = entry.salesTotal + entry.customerCreditSalesTotal;
+      entry.totalCashCollected = entry.salesTotal + entry.customerCreditPaymentTotal;
+      entry.operatingNetIncome = entry.grossRevenueTotal - (entry.companyExpenseTotal + entry.supplierDeliveryCost + entry.stockLoanPaymentTotal + entry.payrollTotal);
+      entry.netCashPositionChange = entry.totalCashCollected - (entry.companyExpenseTotal + entry.stockLoanPaymentTotal + entry.payrollTotal + entry.ownerExpenseTotal);
     }
 
     return {
@@ -211,10 +257,15 @@ export class FinancialReportsService {
         toDate: toDate.toISOString().slice(0, 10),
         totals,
         salesTotal,
+        customerCreditSalesTotal,
+        customerCreditPaymentTotal,
+        grossRevenueTotal,
+        totalCashCollected,
         cashLeftoverTotal,
         companyExpenseTotal,
         ownerExpenseTotal,
         loanTotal,
+        employeeLoanTotal,
         supplierDeliveryCost,
         stockLoanPaymentTotal,
         payrollTotal,
@@ -223,6 +274,7 @@ export class FinancialReportsService {
         grossProfit,
         operatingNetIncome,
         netIncome: operatingNetIncome,
+        netCashPositionChange,
         netIncomeAfterOwnerDrawings,
         dailyBreakdown,
         sessions,
@@ -231,6 +283,9 @@ export class FinancialReportsService {
         companyExpenses: expenses.filter(e => e.type === 'COMPANY'),
         ownerExpenses: expenses.filter(e => e.type === 'OWNER'),
         loans,
+        customerLoans,
+        employeeLoans,
+        customerLoanPayments,
         supplierDeliveries: deliveries,
         stockPurchasePayments,
         payrollRecords: payroll,
