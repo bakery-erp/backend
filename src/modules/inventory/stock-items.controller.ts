@@ -46,7 +46,7 @@ stockItemsRouter.get('/:id', async (req, res: Response) => {
   res.json(result.data);
 });
 
-stockItemsRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
+stockItemsRouter.post('/', requireRole('OWNER'), async (req: AuthRequest, res: Response) => {
   const result = await stockItemsService.createStockItem(req.body, req.user!.id, req.user?.branchId);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
