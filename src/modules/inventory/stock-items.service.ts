@@ -62,7 +62,11 @@ export class StockItemsService {
 
   async createStockItem(body: Record<string, unknown>, userId: string, userBranchId?: string | null): ServiceResult {
     const { branchId, name, unitType, currentQuantity, minStockLevel, unitPrice, loanInfo } = body;
-    const bid = (branchId as string) || userBranchId;
+    let bid = (branchId as string) || userBranchId || undefined;
+    if (!bid) {
+      const defaultBranch = await prisma.branch.findFirst({ select: { id: true } });
+      if (defaultBranch) bid = defaultBranch.id;
+    }
     
     if (!bid || !name || !unitType) {
       return { error: 'branchId, name, unitType required', status: 400 };

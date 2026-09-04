@@ -125,7 +125,7 @@ export class StockMovementsService {
               user: { select: { id: true, fullName: true } } 
             },
           });
-          return { data: movement };
+          return movement;
         }
       }
 
@@ -180,10 +180,12 @@ export class StockMovementsService {
         });
       }
 
-      return { data: movement };
-    }).catch((err) => {
-      return { error: err.message || 'Transaction failed', status: 400 };
-    });
+      return movement;
+    })
+      .then((movement) => ({ data: movement }))
+      .catch((err) => {
+        return { error: err.message || 'Transaction failed', status: 400 };
+      });
   }
 
   // Per-item full movement history — used on stock item detail pages

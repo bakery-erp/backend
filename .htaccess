@@ -1,0 +1,51 @@
+# ==============================================================================
+# Bakery ERP Backend - cPanel / LiteSpeed .htaccess Configuration
+# ==============================================================================
+
+# Enable Rewrite Engine
+RewriteEngine On
+
+# ------------------------------------------------------------------------------
+# 1. Prevent LiteSpeed 500 Connection Timeout (Increases Backend Timeout)
+# ------------------------------------------------------------------------------
+<IfModule Litespeed>
+    # Prevent LiteSpeed from aborting long database requests / connection pool init
+    RewriteRule .* - [E=noabort:1,E=nconnections:100]
+</IfModule>
+
+<IfModule mod_env.c>
+    SetEnv nokeepalive 1
+</IfModule>
+
+# ------------------------------------------------------------------------------
+# 2. Global CORS Header Configuration (Handles Preflight & API Access)
+# ------------------------------------------------------------------------------
+<IfModule mod_headers.c>
+    Header always set Access-Control-Allow-Origin "*"
+    Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    Header always set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-tenant-id"
+</IfModule>
+
+# Respond immediately to HTTP OPTIONS (Preflight Requests)
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^(.*)$ $1 [R=200,L]
+
+# ------------------------------------------------------------------------------
+# 3. cPanel Node.js Application Selector (Phusion Passenger)
+#    - Adjust startup file path according to your cPanel setup (dist/index.js)
+# ------------------------------------------------------------------------------
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION BEGIN
+# PassengerAppRoot "/home/YOUR_CPANEL_USER/public_html/api"
+# PassengerBaseURI "/"
+# PassengerNodejs "/home/YOUR_CPANEL_USER/nodevenv/public_html/api/20/bin/node"
+# PassengerAppType node
+# PassengerStartupFile dist/index.js
+# DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END
+
+# ------------------------------------------------------------------------------
+# 4. Alternative: Reverse Proxy to Local Node.js Process (e.g. PORT 3001)
+#    - Uncomment below if running Node.js via PM2 or background process
+# ------------------------------------------------------------------------------
+# RewriteCond %{REQUEST_FILENAME} !-f
+# RewriteCond %{REQUEST_FILENAME} !-d
+# RewriteRule ^(.*)$ http://127.0.0.1:3001/$1 [P,L]
