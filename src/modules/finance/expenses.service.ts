@@ -38,10 +38,13 @@ const expenseInclude = {
 };
 
 export class ExpensesService {
-  async getExpenses(branchId?: string | null, from?: string, to?: string, category?: string): ServiceResult {
+  async getExpenses(branchId?: string | null, from?: string, to?: string, category?: string, type?: string): ServiceResult {
     const where: Record<string, unknown> = {};
     if (branchId) where.branchId = branchId;
     if (category) where.category = category;
+    if (type && type !== 'ALL') {
+      where.type = parseExpenseType(type);
+    }
     if (from || to) {
       where.date = {};
       if (from) (where.date as Record<string, Date>).gte = new Date(from);
