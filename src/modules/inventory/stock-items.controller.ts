@@ -55,8 +55,8 @@ stockItemsRouter.post('/', requireRole('OWNER'), async (req: AuthRequest, res: R
 });
 
 stockItemsRouter.post('/:id/add', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
-  const { quantity, reason } = req.body;
-  const result = await stockItemsService.addStockItem(req.params.id, req.user!.id, quantity, reason);
+  const { quantity, reason, loanInfo } = req.body;
+  const result = await stockItemsService.addStockItem(req.params.id, req.user!.id, quantity, reason, loanInfo);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

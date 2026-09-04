@@ -37,6 +37,14 @@ export class StockMovementsService {
       include: {
         stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true, unitPrice: true } },
         user: { select: { id: true, fullName: true, role: true } },
+        purchaseLoan: {
+          include: {
+            payments: {
+              include: { user: { select: { id: true, fullName: true } } },
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: limit,
@@ -127,21 +135,51 @@ export class StockMovementsService {
         data: { currentQuantity: newQty } 
       });
 
+      const totalVal = qty * itemUnitPrice;
       const movement = await tx.stockMovement.create({
         data: {
           stockItemId,
           userId,
           quantity: qty,
           unitPrice: itemUnitPrice,
-          totalValue: qty * itemUnitPrice,
+          totalValue: totalVal,
           type: type as any,
           reason: reason || null,
         },
         include: {
           stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true, unitPrice: true } },
           user: { select: { id: true, fullName: true } },
+          purchaseLoan: {
+            include: {
+              payments: {
+                include: { user: { select: { id: true, fullName: true } } },
+                orderBy: { createdAt: 'desc' },
+              },
+            },
+          },
         },
       });
+
+      if (type === 'IN' && body.loanInfo?.isLoan) {
+        const loan = body.loanInfo;
+        const paidAmount = Math.max(0, Math.min(totalVal, decimalToNum(loan.paidAmount) ?? 0));
+        const remainingBalance = totalVal - paidAmount;
+        const status = remainingBalance <= 0 ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'UNPAID');
+
+        await tx.stockPurchaseLoan.create({
+          data: {
+            stockMovementId: movement.id,
+            stockItemId,
+            branchId: stockItem.branchId,
+            supplierName: loan.supplierName ? String(loan.supplierName).trim() : null,
+            totalAmount: totalVal,
+            paidAmount,
+            remainingBalance,
+            status,
+          },
+        });
+      }
+
       return { data: movement };
     }).catch((err) => {
       return { error: err.message || 'Transaction failed', status: 400 };
@@ -158,7 +196,17 @@ export class StockMovementsService {
 
     const movements = await prisma.stockMovement.findMany({
       where: { stockItemId },
-      include: { user: { select: { id: true, fullName: true, role: true } } },
+      include: { 
+        user: { select: { id: true, fullName: true, role: true } },
+        purchaseLoan: {
+          include: {
+            payments: {
+              include: { user: { select: { id: true, fullName: true } } },
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        },
+      },
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
@@ -203,5 +251,85 @@ export class StockMovementsService {
         items,
       },
     };
+  }
+
+  async getStockPurchaseLoans(branchId?: string | null, status?: string): ServiceResult {
+    const where: any = {};
+    if (branchId) where.branchId = branchId;
+    if (status && status !== 'ALL') where.status = status;
+
+    const loans = await prisma.stockPurchaseLoan.findMany({
+      where,
+      include: {
+        stockMovement: {
+          include: {
+            stockItem: { select: { id: true, name: true, unitType: true } },
+            user: { select: { id: true, fullName: true } },
+          },
+        },
+        payments: {
+          include: { user: { select: { id: true, fullName: true } } },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return { data: loans };
+  }
+
+  async recordLoanPayment(loanId: string, userId: string, amountToPay: number, note?: string): ServiceResult {
+    const amt = decimalToNum(amountToPay);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return { error: 'Valid positive payment amount required', status: 400 };
+    }
+
+    const loan = await prisma.stockPurchaseLoan.findUnique({ where: { id: loanId } });
+    if (!loan) {
+      return { error: 'Stock purchase loan record not found', status: 404 };
+    }
+
+    const currentBal = Number(loan.remainingBalance);
+    if (currentBal <= 0 || loan.status === 'PAID') {
+      return { error: 'Loan is already fully paid and settled', status: 400 };
+    }
+
+    const payAmt = Math.min(currentBal, amt);
+    const newPaid = Number(loan.paidAmount) + payAmt;
+    const newBal = Number(loan.totalAmount) - newPaid;
+    const newStatus = newBal <= 0 ? 'PAID' : 'PARTIAL';
+
+    const result = await prisma.$transaction(async (tx) => {
+      const updatedLoan = await tx.stockPurchaseLoan.update({
+        where: { id: loanId },
+        data: {
+          paidAmount: newPaid,
+          remainingBalance: newBal,
+          status: newStatus,
+        },
+        include: {
+          stockMovement: {
+            include: { stockItem: { select: { id: true, name: true, unitType: true } } },
+          },
+          payments: {
+            include: { user: { select: { id: true, fullName: true } } },
+            orderBy: { createdAt: 'desc' },
+          },
+        },
+      });
+
+      const payment = await tx.stockPurchasePayment.create({
+        data: {
+          loanId,
+          userId,
+          amount: payAmt,
+          note: note?.trim() || 'Loan installment payment',
+        },
+        include: { user: { select: { id: true, fullName: true } } },
+      });
+
+      return { loan: updatedLoan, payment };
+    });
+
+    return { data: result };
   }
 }

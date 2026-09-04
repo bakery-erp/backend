@@ -50,6 +50,27 @@ stockMovementsRouter.get('/:id', async (req, res: Response) => {
   res.json(result.data);
 });
 
+// GET /api/stock-movements/loans?branchId=...&status=UNPAID
+stockMovementsRouter.get('/loans/list', async (req: AuthRequest, res: Response) => {
+  const branchId = (req.query.branchId as string) || req.user?.branchId;
+  const status = req.query.status as string | undefined;
+  const result = await stockMovementsService.getStockPurchaseLoans(branchId, status);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
+// POST /api/stock-movements/loans/:id/pay
+stockMovementsRouter.post('/loans/:id/pay', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
+  const { amount, note } = req.body;
+  const result = await stockMovementsService.recordLoanPayment(req.params.id, req.user!.id, amount, note);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
 // POST /api/stock-movements — manual IN / OUT / ADJUSTMENT entry by admin/owner
 stockMovementsRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
   const result = await stockMovementsService.createStockMovement(req.body, req.user!.id);

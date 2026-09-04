@@ -34,9 +34,11 @@ expensesRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER', 'CAKE_
   const from = req.query.from as string;
   const to = req.query.to as string;
   const category = req.query.category as string | undefined;
+  const type = req.query.type as string | undefined;
   if (!branchId) return res.status(400).json({ error: 'branchId required' });
   const where: Record<string, unknown> = { branchId };
   if (category) where.category = category;
+  if (type) where.type = parseExpenseType(type);
   if (from || to) {
     where.date = {};
     if (from) (where.date as Record<string, Date>).gte = new Date(from);

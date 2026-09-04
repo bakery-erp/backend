@@ -61,7 +61,7 @@ export class StockItemsService {
   }
 
   async createStockItem(body: Record<string, unknown>, userId: string, userBranchId?: string | null): ServiceResult {
-    const { branchId, name, unitType, currentQuantity, minStockLevel, unitPrice } = body;
+    const { branchId, name, unitType, currentQuantity, minStockLevel, unitPrice, loanInfo } = body;
     const bid = (branchId as string) || userBranchId;
     
     if (!bid || !name || !unitType) {
@@ -84,17 +84,38 @@ export class StockItemsService {
       });
 
       if (initQty > 0) {
-        await tx.stockMovement.create({
+        const totalValue = initQty * price;
+        const movement = await tx.stockMovement.create({
           data: {
             stockItemId: item.id,
             userId,
             quantity: initQty,
             unitPrice: price,
-            totalValue: initQty * price,
+            totalValue,
             type: 'IN',
             reason: 'Initial stock item creation',
           },
         });
+
+        const loan = loanInfo as { isLoan?: boolean; paidAmount?: number; supplierName?: string } | undefined;
+        if (loan && loan.isLoan) {
+          const paidAmount = Math.max(0, Math.min(totalValue, decimalToNum(loan.paidAmount) ?? 0));
+          const remainingBalance = totalValue - paidAmount;
+          const status = remainingBalance <= 0 ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'UNPAID');
+
+          await tx.stockPurchaseLoan.create({
+            data: {
+              stockMovementId: movement.id,
+              stockItemId: item.id,
+              branchId: bid,
+              supplierName: loan.supplierName ? String(loan.supplierName).trim() : null,
+              totalAmount: totalValue,
+              paidAmount,
+              remainingBalance,
+              status,
+            },
+          });
+        }
       }
 
       return item;
@@ -162,7 +183,17 @@ export class StockItemsService {
 
     const movements = await prisma.stockMovement.findMany({
       where: { stockItemId: id },
-      include: { user: { select: { id: true, fullName: true, role: true } } },
+      include: { 
+        user: { select: { id: true, fullName: true, role: true } },
+        purchaseLoan: {
+          include: {
+            payments: {
+              include: { user: { select: { id: true, fullName: true } } },
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        },
+      },
       orderBy: { createdAt: 'desc' },
       take: limit,
     });
@@ -219,7 +250,13 @@ export class StockItemsService {
     return { data: lowStockItems };
   }
 
-  async addStockItem(id: string, userId: string, quantityToAdd: number, reason?: string): ServiceResult {
+  async addStockItem(
+    id: string, 
+    userId: string, 
+    quantityToAdd: number, 
+    reason?: string,
+    loanInfo?: { isLoan?: boolean; paidAmount?: number; supplierName?: string }
+  ): ServiceResult {
     const qty = Number(quantityToAdd);
     if (isNaN(qty) || qty <= 0) {
       return { error: 'Valid positive quantity required for addition', status: 400 };
@@ -231,6 +268,7 @@ export class StockItemsService {
     }
 
     const price = Number(item.unitPrice ?? 0);
+    const totalValue = qty * price;
 
     const result = await prisma.$transaction(async (tx) => {
       const updatedItem = await tx.stockItem.update({
@@ -244,11 +282,30 @@ export class StockItemsService {
           userId,
           quantity: qty,
           unitPrice: price,
-          totalValue: qty * price,
+          totalValue,
           type: 'IN',
           reason: reason?.trim() || 'Manual stock addition by Admin/Owner',
         },
       });
+
+      if (loanInfo && loanInfo.isLoan) {
+        const paidAmount = Math.max(0, Math.min(totalValue, decimalToNum(loanInfo.paidAmount) ?? 0));
+        const remainingBalance = totalValue - paidAmount;
+        const status = remainingBalance <= 0 ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'UNPAID');
+
+        await tx.stockPurchaseLoan.create({
+          data: {
+            stockMovementId: movement.id,
+            stockItemId: id,
+            branchId: item.branchId,
+            supplierName: loanInfo.supplierName ? String(loanInfo.supplierName).trim() : null,
+            totalAmount: totalValue,
+            paidAmount,
+            remainingBalance,
+            status,
+          },
+        });
+      }
 
       return { stockItem: updatedItem, movement };
     });

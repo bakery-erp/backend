@@ -41,22 +41,47 @@ export class FinancialReportsService {
 
     const expenses = await prisma.expense.findMany({
       where: { branchId, date: { gte: fromDate, lte: toDate } },
+      include: {
+        financialCategory: { select: { name: true } },
+        user: { select: { fullName: true } },
+      },
+      orderBy: { date: 'desc' },
     });
+
     const companyExpenseTotal = expenses.filter(e => e.type === 'COMPANY').reduce((sum, e) => sum + Number(e.amount), 0);
     const ownerExpenseTotal = expenses.filter(e => e.type === 'OWNER').reduce((sum, e) => sum + Number(e.amount), 0);
 
     const loans = await prisma.loan.findMany({
       where: { branchId, date: { gte: fromDate, lte: toDate } },
+      include: { user: { select: { fullName: true } } },
+      orderBy: { date: 'desc' },
     });
     const loanTotal = loans.reduce((sum, l) => sum + Number(l.totalAmount), 0);
 
     const deliveries = await prisma.supplierDelivery.findMany({
       where: { supplier: { branchId }, createdAt: { gte: fromDate, lte: toDate } },
+      include: { supplier: { select: { name: true } }, product: { select: { name: true } } },
+      orderBy: { createdAt: 'desc' },
     });
     const supplierDeliveryCost = deliveries.reduce((s, d) => s + Number(d.unitBuyPrice) * d.quantityReceived, 0);
 
+    const stockPurchasePayments = await prisma.stockPurchasePayment.findMany({
+      where: {
+        loan: { branchId },
+        createdAt: { gte: fromDate, lte: toDate },
+      },
+      include: {
+        user: { select: { fullName: true } },
+        loan: { select: { supplierName: true, stockMovement: { select: { stockItem: { select: { name: true } } } } } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const stockLoanPaymentTotal = stockPurchasePayments.reduce((sum, sp) => sum + Number(sp.amount), 0);
+
     const payroll = await prisma.payrollRecord.findMany({
       where: { user: { branchId }, paymentDate: { gte: fromDate, lte: toDate } },
+      include: { user: { select: { fullName: true } } },
+      orderBy: { paymentDate: 'desc' },
     });
     const payrollTotal = payroll.reduce((sum, p) => sum + Number(p.finalAmount), 0);
 
@@ -70,38 +95,17 @@ export class FinancialReportsService {
       orderBy: { date: 'desc' },
     });
 
-    const detailedExpenses = await prisma.expense.findMany({
-      where: { branchId, date: { gte: fromDate, lte: toDate } },
-      include: {
-        financialCategory: { select: { name: true } },
-        user: { select: { fullName: true } },
-      },
-      orderBy: { date: 'desc' },
-    });
-
-    const detailedLoans = await prisma.loan.findMany({
-      where: { branchId, date: { gte: fromDate, lte: toDate } },
-      include: { user: { select: { fullName: true } } },
-      orderBy: { date: 'desc' },
-    });
-
-    const detailedDeliveries = await prisma.supplierDelivery.findMany({
-      where: { supplier: { branchId }, createdAt: { gte: fromDate, lte: toDate } },
-      include: { supplier: { select: { name: true } }, product: { select: { name: true } } },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    const detailedPayroll = await prisma.payrollRecord.findMany({
-      where: { user: { branchId }, paymentDate: { gte: fromDate, lte: toDate } },
-      include: { user: { select: { fullName: true } } },
-      orderBy: { paymentDate: 'desc' },
-    });
-
-    const totalOperatingExpenses = companyExpenseTotal + payrollTotal;
+    // Total Operating Expenses (Company operating costs + payroll + stock loan payments)
+    const totalOperatingExpenses = companyExpenseTotal + payrollTotal + stockLoanPaymentTotal;
     const totalMaterialCosts = supplierDeliveryCost;
-    const totalExpenses = totalOperatingExpenses + totalMaterialCosts;
+    const totalCompanyCosts = totalOperatingExpenses + totalMaterialCosts;
+
+    // Gross & Operating Net Profit
     const grossProfit = salesTotal - totalMaterialCosts;
-    const netIncome = salesTotal - totalExpenses;
+    const operatingNetIncome = salesTotal - totalCompanyCosts;
+
+    // Net Cash after Owner Personal Expenses / Withdrawals
+    const netIncomeAfterOwnerDrawings = operatingNetIncome - ownerExpenseTotal;
 
     const openingLeftoverQuantity = sessions.reduce((acc, s) => {
       const recs = s.leftoverRecords || [];
@@ -116,17 +120,21 @@ export class FinancialReportsService {
       ownerExpenseTotal,
       loanTotal,
       supplierDeliveryCost,
+      stockLoanPaymentTotal,
       payrollTotal,
       totalOperatingExpenses,
-      totalExpense: totalExpenses,
-      totalExpenses,
+      totalExpense: totalCompanyCosts,
+      totalExpenses: totalCompanyCosts,
       grossProfit,
-      netIncome,
+      operatingNetIncome,
+      netIncome: operatingNetIncome,
+      netIncomeAfterOwnerDrawings,
     };
 
+    // Build Daily Breakdown Map
     const dailyMap = new Map<string, any>();
-    for (const s of sessions) {
-      const dayKey = s.date.toISOString().slice(0, 10);
+
+    const getOrCreateDailyEntry = (dayKey: string) => {
       if (!dailyMap.has(dayKey)) {
         dailyMap.set(dayKey, {
           date: dayKey,
@@ -137,13 +145,61 @@ export class FinancialReportsService {
           ownerExpenseTotal: 0,
           loanTotal: 0,
           supplierDeliveryCost: 0,
+          stockLoanPaymentTotal: 0,
           payrollTotal: 0,
-          netIncome: 0,
+          operatingNetIncome: 0,
         });
       }
-      const entry = dailyMap.get(dayKey);
+      return dailyMap.get(dayKey);
+    };
+
+    for (const s of sessions) {
+      const dayKey = s.date.toISOString().slice(0, 10);
+      const entry = getOrCreateDailyEntry(dayKey);
       entry.salesTotal += s.sales.reduce((t, x) => t + Number(x.totalAmount), 0);
       entry.cashLeftoverTotal += s.cashLeftoverAmount ? Number(s.cashLeftoverAmount) : 0;
+      const recs = s.leftoverRecords || [];
+      entry.openingLeftoverQuantity += recs.reduce((sum, r) => sum + (r.quantityRemaining || 0), 0);
+    }
+
+    for (const e of expenses) {
+      const dayKey = e.date ? new Date(e.date).toISOString().slice(0, 10) : new Date(e.createdAt).toISOString().slice(0, 10);
+      const entry = getOrCreateDailyEntry(dayKey);
+      if (e.type === 'COMPANY') {
+        entry.companyExpenseTotal += Number(e.amount);
+      } else if (e.type === 'OWNER') {
+        entry.ownerExpenseTotal += Number(e.amount);
+      }
+    }
+
+    for (const l of loans) {
+      const dayKey = l.date ? new Date(l.date).toISOString().slice(0, 10) : new Date(l.createdAt).toISOString().slice(0, 10);
+      const entry = getOrCreateDailyEntry(dayKey);
+      entry.loanTotal += Number(l.totalAmount);
+    }
+
+    for (const d of deliveries) {
+      const dayKey = new Date(d.createdAt).toISOString().slice(0, 10);
+      const entry = getOrCreateDailyEntry(dayKey);
+      entry.supplierDeliveryCost += Number(d.unitBuyPrice) * d.quantityReceived;
+    }
+
+    for (const sp of stockPurchasePayments) {
+      const dayKey = new Date(sp.createdAt).toISOString().slice(0, 10);
+      const entry = getOrCreateDailyEntry(dayKey);
+      entry.stockLoanPaymentTotal += Number(sp.amount);
+    }
+
+    for (const p of payroll) {
+      const dayKey = p.paymentDate ? new Date(p.paymentDate).toISOString().slice(0, 10) : new Date(p.createdAt).toISOString().slice(0, 10);
+      const entry = getOrCreateDailyEntry(dayKey);
+      entry.payrollTotal += Number(p.finalAmount);
+    }
+
+    const dailyBreakdown = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+    for (const entry of dailyBreakdown) {
+      // Daily Operating Net Income excludes Owner Expenses as per requirement
+      entry.operatingNetIncome = entry.salesTotal - (entry.companyExpenseTotal + entry.supplierDeliveryCost + entry.stockLoanPaymentTotal + entry.payrollTotal);
     }
 
     return {
@@ -160,18 +216,24 @@ export class FinancialReportsService {
         ownerExpenseTotal,
         loanTotal,
         supplierDeliveryCost,
+        stockLoanPaymentTotal,
         payrollTotal,
         totalOperatingExpenses,
-        totalExpenses,
+        totalExpenses: totalCompanyCosts,
         grossProfit,
-        netIncome,
-        dailyBreakdown: Array.from(dailyMap.values()),
+        operatingNetIncome,
+        netIncome: operatingNetIncome,
+        netIncomeAfterOwnerDrawings,
+        dailyBreakdown,
         sessions,
         productionBatches,
-        expenses: detailedExpenses,
-        loans: detailedLoans,
-        supplierDeliveries: detailedDeliveries,
-        payrollRecords: detailedPayroll,
+        expenses,
+        companyExpenses: expenses.filter(e => e.type === 'COMPANY'),
+        ownerExpenses: expenses.filter(e => e.type === 'OWNER'),
+        loans,
+        supplierDeliveries: deliveries,
+        stockPurchasePayments,
+        payrollRecords: payroll,
       },
     };
   }
@@ -253,7 +315,7 @@ export class FinancialReportsService {
       return { error: 'Invalid date range', status: 400 };
     }
 
-    const [expenses, supplierDeliveries, sessions] = await Promise.all([
+    const [expenses, supplierDeliveries, stockPurchasePayments, sessions] = await Promise.all([
       prisma.expense.findMany({
         where: { branchId, date: { gte: fromDate, lte: toDate } },
         include: {
@@ -270,15 +332,26 @@ export class FinancialReportsService {
         },
         orderBy: { createdAt: 'desc' },
       }),
+      prisma.stockPurchasePayment.findMany({
+        where: { loan: { branchId }, createdAt: { gte: fromDate, lte: toDate } },
+        include: {
+          user: { select: { id: true, fullName: true } },
+          loan: { select: { supplierName: true, stockMovement: { select: { stockItem: { select: { name: true } } } } } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
       prisma.dailySession.findMany({
         where: { branchId, date: { gte: fromDate, lte: toDate } },
         select: { id: true, date: true, cashLeftoverAmount: true },
       }),
     ]);
 
-    const companyExpenseTotal = expenses.filter(e => e.type === 'COMPANY').reduce((sum, e) => sum + Number(e.amount), 0);
-    const ownerExpenseTotal = expenses.filter(e => e.type === 'OWNER').reduce((sum, e) => sum + Number(e.amount), 0);
+    const companyExpenses = expenses.filter(e => e.type === 'COMPANY');
+    const ownerExpenses = expenses.filter(e => e.type === 'OWNER');
+    const companyExpenseTotal = companyExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+    const ownerExpenseTotal = ownerExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
     const supplierTotal = supplierDeliveries.reduce((sum, d) => sum + Number(d.unitBuyPrice) * d.quantityReceived, 0);
+    const stockLoanTotal = stockPurchasePayments.reduce((sum, sp) => sum + Number(sp.amount), 0);
     const cashLeftoverTotal = sessions.reduce((sum, s) => sum + (s.cashLeftoverAmount ? Number(s.cashLeftoverAmount) : 0), 0);
 
     return {
@@ -288,10 +361,15 @@ export class FinancialReportsService {
         companyExpenseTotal,
         ownerExpenseTotal,
         supplierTotal,
+        stockLoanTotal,
         cashLeftoverTotal,
-        totalExpensed: companyExpenseTotal + ownerExpenseTotal + supplierTotal + cashLeftoverTotal,
+        totalCompanyExpenses: companyExpenseTotal + supplierTotal + stockLoanTotal,
+        totalExpensed: companyExpenseTotal + ownerExpenseTotal + supplierTotal + stockLoanTotal,
         expenses,
+        companyExpenses,
+        ownerExpenses,
         supplierDeliveries,
+        stockPurchasePayments,
         cashLeftovers: sessions.filter(s => s.cashLeftoverAmount != null),
       },
     };
