@@ -213,6 +213,7 @@ model StockItem {
   name            String
   unitType        UnitType
   currentQuantity Decimal  @db.Decimal(12, 3)
+  unitPrice       Decimal? @default(0) @db.Decimal(12, 2)
   minStockLevel   Decimal? @db.Decimal(12, 3)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -229,6 +230,8 @@ model StockMovement {
   userId      String
   user        User              @relation(fields: [userId], references: [id], onDelete: Restrict)
   quantity    Decimal           @db.Decimal(12, 3)
+  unitPrice   Decimal?          @db.Decimal(12, 2)
+  totalValue  Decimal?          @db.Decimal(12, 2)
   type        StockMovementType
   reason      String?
   createdAt   DateTime          @default(now())

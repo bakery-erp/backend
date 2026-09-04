@@ -61,7 +61,7 @@ export class StockItemsService {
   }
 
   async createStockItem(body: Record<string, unknown>, userId: string, userBranchId?: string | null): ServiceResult {
-    const { branchId, name, unitType, currentQuantity, minStockLevel } = body;
+    const { branchId, name, unitType, currentQuantity, minStockLevel, unitPrice } = body;
     const bid = (branchId as string) || userBranchId;
     
     if (!bid || !name || !unitType) {
@@ -69,6 +69,7 @@ export class StockItemsService {
     }
 
     const initQty = decimalToNum(currentQuantity) ?? 0;
+    const price = unitPrice != null ? decimalToNum(unitPrice) ?? 0 : 0;
 
     const result = await prisma.$transaction(async (tx) => {
       const item = await tx.stockItem.create({
@@ -77,6 +78,7 @@ export class StockItemsService {
           name: String(name).trim(),
           unitType: unitType as any,
           currentQuantity: initQty,
+          unitPrice: price,
           minStockLevel: minStockLevel != null ? decimalToNum(minStockLevel) : null,
         },
       });
@@ -87,6 +89,8 @@ export class StockItemsService {
             stockItemId: item.id,
             userId,
             quantity: initQty,
+            unitPrice: price,
+            totalValue: initQty * price,
             type: 'IN',
             reason: 'Initial stock item creation',
           },
@@ -105,12 +109,13 @@ export class StockItemsService {
       return { error: 'Stock item not found', status: 404 };
     }
 
-    const { name, unitType, currentQuantity, minStockLevel } = body;
+    const { name, unitType, currentQuantity, minStockLevel, unitPrice } = body;
     const data: Record<string, unknown> = {};
     
     if (name != null) data.name = String(name).trim();
     if (unitType != null) data.unitType = unitType;
     if (currentQuantity != null) data.currentQuantity = decimalToNum(currentQuantity);
+    if (unitPrice != null) data.unitPrice = decimalToNum(unitPrice);
     if (minStockLevel !== undefined) data.minStockLevel = minStockLevel != null ? decimalToNum(minStockLevel) : null;
 
     const result = await prisma.$transaction(async (tx) => {
@@ -119,17 +124,22 @@ export class StockItemsService {
         data: data as any,
       });
 
+      const effectivePrice = Number(updated.unitPrice ?? existing.unitPrice ?? 0);
+
       if (currentQuantity != null) {
         const oldQty = Number(existing.currentQuantity);
         const newQty = Number(updated.currentQuantity);
         const diff = newQty - oldQty;
 
         if (diff !== 0) {
+          const absDiff = Math.abs(diff);
           await tx.stockMovement.create({
             data: {
               stockItemId: id,
               userId,
-              quantity: Math.abs(diff),
+              quantity: absDiff,
+              unitPrice: effectivePrice,
+              totalValue: absDiff * effectivePrice,
               type: diff > 0 ? 'IN' : 'OUT',
               reason: `Stock updated via edit (changed from ${oldQty} to ${newQty} ${updated.unitType})`,
             },
@@ -164,12 +174,25 @@ export class StockItemsService {
       .filter((m) => m.type === 'OUT' || m.type === 'PRODUCTION_USAGE')
       .reduce((s, m) => s + Number(m.quantity), 0);
 
+    const totalValueIn = movements
+      .filter((m) => m.type === 'IN')
+      .reduce((s, m) => s + Number(m.totalValue ?? (Number(m.quantity) * Number(m.unitPrice ?? stockItem.unitPrice ?? 0))), 0);
+
+    const totalValueOut = movements
+      .filter((m) => m.type === 'OUT' || m.type === 'PRODUCTION_USAGE')
+      .reduce((s, m) => s + Number(m.totalValue ?? (Number(m.quantity) * Number(m.unitPrice ?? stockItem.unitPrice ?? 0))), 0);
+
+    const currentValuation = Number(stockItem.currentQuantity) * Number(stockItem.unitPrice ?? 0);
+
     return {
       data: {
         stockItem,
         movements,
         totalIn,
         totalOut,
+        totalValueIn,
+        totalValueOut,
+        currentValuation,
       },
     };
   }
@@ -207,6 +230,8 @@ export class StockItemsService {
       return { error: 'Stock item not found', status: 404 };
     }
 
+    const price = Number(item.unitPrice ?? 0);
+
     const result = await prisma.$transaction(async (tx) => {
       const updatedItem = await tx.stockItem.update({
         where: { id },
@@ -218,6 +243,8 @@ export class StockItemsService {
           stockItemId: id,
           userId,
           quantity: qty,
+          unitPrice: price,
+          totalValue: qty * price,
           type: 'IN',
           reason: reason?.trim() || 'Manual stock addition by Admin/Owner',
         },
@@ -248,6 +275,8 @@ export class StockItemsService {
       };
     }
 
+    const price = Number(item.unitPrice ?? 0);
+
     const result = await prisma.$transaction(async (tx) => {
       const updatedItem = await tx.stockItem.update({
         where: { id },
@@ -259,6 +288,8 @@ export class StockItemsService {
           stockItemId: id,
           userId,
           quantity: qty,
+          unitPrice: price,
+          totalValue: qty * price,
           type: 'OUT',
           reason: reason?.trim() || 'Manual stock reduction by Admin/Owner',
         },

@@ -232,12 +232,16 @@ export class ProductionBatchesService {
           data: { currentQuantity: { decrement: used } },
         });
 
+        const itemUnitPrice = Number(m.stockItem.unitPrice ?? 0);
+
         // Log movement attributed to the person who used/produced the item (batch.userId)
         await tx.stockMovement.create({
           data: {
             stockItemId: m.stockItemId,
             userId: batch.userId,
             quantity: used,
+            unitPrice: itemUnitPrice,
+            totalValue: used * itemUnitPrice,
             type: 'PRODUCTION_USAGE',
             reason: `Production Usage (${productNamesSummary}) [Used by ${batch.user?.fullName || 'Worker'}${adminUser ? `, Approved by ${adminUser.fullName}` : ''}]`,
           },

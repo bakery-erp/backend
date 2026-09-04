@@ -35,7 +35,7 @@ export class StockMovementsService {
     const list = await prisma.stockMovement.findMany({
       where,
       include: {
-        stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true } },
+        stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true, unitPrice: true } },
         user: { select: { id: true, fullName: true, role: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -59,7 +59,7 @@ export class StockMovementsService {
   }
 
   async createStockMovement(body: any, userId: string): ServiceResult {
-    const { stockItemId, quantity, type, reason, adjustTo } = body;
+    const { stockItemId, quantity, type, reason, adjustTo, unitPrice } = body;
     
     if (!stockItemId || quantity == null || !type) {
       return { 
@@ -79,6 +79,7 @@ export class StockMovementsService {
     }
 
     const current = Number(stockItem.currentQuantity);
+    const itemUnitPrice = unitPrice != null ? decimalToNum(unitPrice) : Number(stockItem.unitPrice ?? 0);
 
     // Guard: OUT and PRODUCTION_USAGE cannot bring stock below zero
     if ((type === 'OUT' || type === 'PRODUCTION_USAGE') && qty > current) {
@@ -100,11 +101,14 @@ export class StockMovementsService {
             where: { id: stockItemId }, 
             data: { currentQuantity: adjQty } 
           });
+          const deltaQty = Math.abs(adjQty - current);
           const movement = await tx.stockMovement.create({
             data: {
               stockItemId,
               userId,
-              quantity: Math.abs(adjQty - current),
+              quantity: deltaQty,
+              unitPrice: itemUnitPrice,
+              totalValue: deltaQty * itemUnitPrice,
               type: 'ADJUSTMENT',
               reason: reason || `Adjusted to ${adjQty}`,
             },
@@ -128,11 +132,13 @@ export class StockMovementsService {
           stockItemId,
           userId,
           quantity: qty,
+          unitPrice: itemUnitPrice,
+          totalValue: qty * itemUnitPrice,
           type: type as any,
           reason: reason || null,
         },
         include: {
-          stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true } },
+          stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true, unitPrice: true } },
           user: { select: { id: true, fullName: true } },
         },
       });
