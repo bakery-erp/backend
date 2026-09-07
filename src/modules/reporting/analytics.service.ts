@@ -76,6 +76,33 @@ export class AnalyticsService {
     const closedSessions = sessions.filter((s) => s.status === 'CLOSED').length;
     const openSessions = sessions.filter((s) => s.status === 'OPEN').length;
 
+    const customerLoanPayments = await prisma.loanPayment.findMany({
+      where: {
+        loan: { branchId, type: 'CUSTOMER' },
+        date: cal,
+      },
+    });
+    const creditReceivedFromLoan = customerLoanPayments.reduce((sum, p) => sum + Number(p.amountPaid), 0);
+
+    const prevClosed = await prisma.dailySession.findFirst({
+      where: {
+        branchId,
+        status: 'CLOSED',
+        date: { lt: cal },
+      },
+      orderBy: { date: 'desc' },
+      select: { cashLeftoverAmount: true, actualCashAmount: true },
+    });
+
+    const primarySession = sessions[0];
+    const yesterdayLeftoverCash = primarySession?.openingCashFloat != null && Number(primarySession.openingCashFloat) > 0
+      ? Number(primarySession.openingCashFloat)
+      : (prevClosed?.cashLeftoverAmount != null ? Number(prevClosed.cashLeftoverAmount) : (prevClosed?.actualCashAmount != null ? Number(prevClosed.actualCashAmount) : 0));
+
+    const tomorrowLeftoverCash = primarySession?.cashLeftoverAmount != null ? Number(primarySession.cashLeftoverAmount) : 0;
+    const dailyTotalRevenue = Math.round((yesterdayLeftoverCash + salesSum + creditReceivedFromLoan - tomorrowLeftoverCash) * 100) / 100;
+    const dailyNetIncome = Math.round((dailyTotalRevenue - expenseTotal) * 100) / 100;
+
     return {
       data: {
         date: date || new Date().toISOString().slice(0, 10),
@@ -84,9 +111,16 @@ export class AnalyticsService {
         closedSessions,
         openSessions,
         leftoverLines,
+        yesterdayLeftoverCash,
         salesTotal: salesSum,
+        creditReceivedFromLoan,
+        tomorrowLeftoverCash,
+        dailyTotalRevenue,
         expenseTotal,
+        companyExpenseTotal: expenseTotal,
         ownerExpenseTotal,
+        dailyNetIncome,
+        netIncome: dailyNetIncome,
         batches,
         deliveryCost,
         deliveryRevenue,

@@ -183,12 +183,53 @@ export class DailySessionsService {
       };
     }
 
+    // Exact financial calculation:
+    const customerLoanPayments = await prisma.loanPayment.findMany({
+      where: {
+        loan: { branchId: session.branchId, type: 'CUSTOMER' },
+        date: session.date,
+      },
+    });
+    const creditReceivedFromLoan = customerLoanPayments.reduce((sum, p) => sum + Number(p.amountPaid), 0);
+
+    const prevClosed = await prisma.dailySession.findFirst({
+      where: {
+        branchId: session.branchId,
+        status: 'CLOSED',
+        date: { lt: session.date },
+      },
+      orderBy: { date: 'desc' },
+      select: { cashLeftoverAmount: true, actualCashAmount: true },
+    });
+
+    const yesterdayCashLeftover = session.openingCashFloat != null && Number(session.openingCashFloat) > 0
+      ? Number(session.openingCashFloat)
+      : (prevClosed?.cashLeftoverAmount != null ? Number(prevClosed.cashLeftoverAmount) : (prevClosed?.actualCashAmount != null ? Number(prevClosed.actualCashAmount) : 0));
+
+    const totalSalesIncome = session.sales.reduce((acc, s) => acc + s.items.reduce((sum, i) => sum + Number(i.subtotal || 0), 0), 0) || session.sales.reduce((acc, s) => acc + Number(s.totalAmount || 0), 0);
+    const tomorrowCashLeftover = session.cashLeftoverAmount != null ? Number(session.cashLeftoverAmount) : 0;
+    const dailyTotalRevenue = Math.round((yesterdayCashLeftover + totalSalesIncome + creditReceivedFromLoan - tomorrowCashLeftover) * 100) / 100;
+    const companyExpenses = (session.expenses || []).filter((e: any) => e.type === 'COMPANY');
+    const dailyCompanyExpenses = companyExpenses.reduce((sum: number, e: any) => sum + Number(e.amount || 0), 0);
+    const dailyNetIncome = Math.round((dailyTotalRevenue - dailyCompanyExpenses) * 100) / 100;
+
+    const financialSummary = {
+      yesterdayCashLeftover,
+      totalSalesIncome,
+      creditReceivedFromLoan,
+      tomorrowCashLeftover,
+      dailyTotalRevenue,
+      dailyCompanyExpenses,
+      dailyNetIncome,
+    };
+
     return {
       data: {
         ...session,
         productionBatches: batches,
         productionSummary,
         availableStockSummary,
+        financialSummary,
       },
     };
   }
@@ -873,6 +914,19 @@ export class DailySessionsService {
     const openingFloat = Number(session.openingCashFloat ?? 0);
     const expectedCash = Math.round((openingFloat + totalBrr - totalCompanyExpense) * 100) / 100;
 
+    const customerLoanPayments = await prisma.loanPayment.findMany({
+      where: {
+        loan: { branchId: session.branchId, type: 'CUSTOMER' },
+        date: sessionBusinessDate,
+      },
+    });
+    const creditReceivedFromLoan = customerLoanPayments.reduce((sum, p) => sum + Number(p.amountPaid), 0);
+
+    const yesterdayCashLeftover = openingFloat;
+    const tomorrowCashLeftover = cashLeftoverAmount != null ? Number(cashLeftoverAmount) : 0;
+    const dailyTotalRevenue = Math.round((yesterdayCashLeftover + totalBrr + creditReceivedFromLoan - tomorrowCashLeftover) * 100) / 100;
+    const dailyNetIncome = Math.round((dailyTotalRevenue - totalCompanyExpense) * 100) / 100;
+
     return {
       data: {
         ...updated,
@@ -882,6 +936,13 @@ export class DailySessionsService {
           purchaseLineItems,
           derivedLineItems: saleItems.length,
           totalBrr,
+          totalSalesIncome: totalBrr,
+          yesterdayCashLeftover,
+          creditReceivedFromLoan,
+          tomorrowCashLeftover,
+          dailyTotalRevenue,
+          dailyCompanyExpenses: totalCompanyExpense,
+          dailyNetIncome,
           openingCashFloat: openingFloat,
           totalCompanyExpense,
           expectedCash,

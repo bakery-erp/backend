@@ -136,30 +136,6 @@ export class FinancialReportsService {
       return acc + recs.reduce((sum, r) => sum + (r.quantityRemaining || 0), 0);
     }, 0);
 
-    const totals = {
-      openingLeftoverQuantity,
-      salesTotal,
-      customerCreditSalesTotal,
-      customerCreditPaymentTotal,
-      grossRevenueTotal,
-      totalCashCollected,
-      cashLeftoverTotal,
-      companyExpenseTotal,
-      ownerExpenseTotal,
-      loanTotal,
-      employeeLoanTotal,
-      supplierDeliveryCost,
-      stockLoanPaymentTotal,
-      payrollTotal,
-      totalOperatingExpenses,
-      totalExpense: totalCompanyCosts,
-      totalExpenses: totalCompanyCosts,
-      grossProfit,
-      operatingNetIncome,
-      netIncome: operatingNetIncome,
-      netCashPositionChange,
-      netIncomeAfterOwnerDrawings,
-    };
 
     // Build Daily Breakdown Map
     const dailyMap = new Map<string, any>();
@@ -168,15 +144,22 @@ export class FinancialReportsService {
       if (!dailyMap.has(dayKey)) {
         dailyMap.set(dayKey, {
           date: dayKey,
-          openingLeftoverQuantity: 0,
+          sessionId: null,
+          sessionStatus: null,
+          yesterdayCashLeftover: 0,
           salesTotal: 0,
+          creditReceivedFromLoan: 0,
+          tomorrowCashLeftover: 0,
+          dailyTotalRevenue: 0,
+          companyExpenseTotal: 0,
+          ownerExpenseTotal: 0,
+          dailyNetIncome: 0,
+          openingLeftoverQuantity: 0,
           customerCreditSalesTotal: 0,
           customerCreditPaymentTotal: 0,
           grossRevenueTotal: 0,
           totalCashCollected: 0,
           cashLeftoverTotal: 0,
-          companyExpenseTotal: 0,
-          ownerExpenseTotal: 0,
           loanTotal: 0,
           supplierDeliveryCost: 0,
           stockLoanPaymentTotal: 0,
@@ -191,8 +174,33 @@ export class FinancialReportsService {
     for (const s of sessions) {
       const dayKey = s.date.toISOString().slice(0, 10);
       const entry = getOrCreateDailyEntry(dayKey);
-      entry.salesTotal += s.sales.reduce((t, x) => t + Number(x.totalAmount), 0);
-      entry.cashLeftoverTotal += s.cashLeftoverAmount ? Number(s.cashLeftoverAmount) : 0;
+      entry.sessionId = s.id;
+      entry.sessionStatus = s.status;
+
+      let yesterdayCash = s.openingCashFloat != null ? Number(s.openingCashFloat) : 0;
+      if (yesterdayCash === 0) {
+        const prevClosed = await prisma.dailySession.findFirst({
+          where: {
+            branchId,
+            status: 'CLOSED',
+            date: { lt: s.date },
+          },
+          orderBy: { date: 'desc' },
+          select: { cashLeftoverAmount: true, actualCashAmount: true },
+        });
+        yesterdayCash = prevClosed?.cashLeftoverAmount != null
+          ? Number(prevClosed.cashLeftoverAmount)
+          : (prevClosed?.actualCashAmount != null ? Number(prevClosed.actualCashAmount) : 0);
+      }
+      entry.yesterdayCashLeftover = yesterdayCash;
+
+      const salesSum = s.sales.reduce((t, x) => t + Number(x.totalAmount), 0);
+      entry.salesTotal += salesSum;
+
+      const tomorrowCash = s.cashLeftoverAmount != null ? Number(s.cashLeftoverAmount) : 0;
+      entry.tomorrowCashLeftover = tomorrowCash;
+      entry.cashLeftoverTotal += tomorrowCash;
+
       const recs = s.leftoverRecords || [];
       entry.openingLeftoverQuantity += recs.reduce((sum, r) => sum + (r.quantityRemaining || 0), 0);
     }
@@ -219,6 +227,7 @@ export class FinancialReportsService {
     for (const cp of customerLoanPayments) {
       const dayKey = cp.date ? new Date(cp.date).toISOString().slice(0, 10) : new Date(cp.createdAt).toISOString().slice(0, 10);
       const entry = getOrCreateDailyEntry(dayKey);
+      entry.creditReceivedFromLoan += Number(cp.amountPaid);
       entry.customerCreditPaymentTotal += Number(cp.amountPaid);
     }
 
@@ -242,11 +251,55 @@ export class FinancialReportsService {
 
     const dailyBreakdown = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
     for (const entry of dailyBreakdown) {
+      // Exact user formula: Yesterday Leftover + Sales Income + Credit Received - Tomorrow Leftover
+      entry.dailyTotalRevenue = entry.yesterdayCashLeftover + entry.salesTotal + entry.creditReceivedFromLoan - entry.tomorrowCashLeftover;
+      // Net Income: Total Revenue - Total Expense
+      entry.dailyNetIncome = entry.dailyTotalRevenue - entry.companyExpenseTotal;
+
       entry.grossRevenueTotal = entry.salesTotal + entry.customerCreditSalesTotal;
       entry.totalCashCollected = entry.salesTotal + entry.customerCreditPaymentTotal;
-      entry.operatingNetIncome = entry.grossRevenueTotal - (entry.companyExpenseTotal + entry.supplierDeliveryCost + entry.stockLoanPaymentTotal + entry.payrollTotal);
+      entry.operatingNetIncome = entry.dailyNetIncome;
       entry.netCashPositionChange = entry.totalCashCollected - (entry.companyExpenseTotal + entry.stockLoanPaymentTotal + entry.payrollTotal + entry.ownerExpenseTotal);
     }
+
+    const rangeYesterdayCash = dailyBreakdown.length > 0 ? dailyBreakdown[0].yesterdayCashLeftover : 0;
+    const rangeTomorrowCash = dailyBreakdown.length > 0 ? dailyBreakdown[dailyBreakdown.length - 1].tomorrowCashLeftover : 0;
+    const totalCreditReceived = dailyBreakdown.reduce((sum, d) => sum + d.creditReceivedFromLoan, 0);
+    const totalDailyRevenue = dailyBreakdown.reduce((sum, d) => sum + d.dailyTotalRevenue, 0);
+    const totalDailyNetIncome = dailyBreakdown.reduce((sum, d) => sum + d.dailyNetIncome, 0);
+
+    const totals = {
+      // Exact formula fields:
+      yesterdayLeftoverCash: rangeYesterdayCash,
+      salesTotal,
+      creditReceivedFromLoans: totalCreditReceived,
+      tomorrowLeftoverCash: rangeTomorrowCash,
+      dailyTotalRevenue: totalDailyRevenue,
+      companyExpenseTotal,
+      ownerExpenseTotal,
+      dailyNetIncome: totalDailyNetIncome,
+
+      // Compatibility & Extended reporting:
+      openingLeftoverQuantity,
+      customerCreditSalesTotal,
+      customerCreditPaymentTotal,
+      grossRevenueTotal,
+      totalCashCollected,
+      cashLeftoverTotal: rangeTomorrowCash || cashLeftoverTotal,
+      loanTotal,
+      employeeLoanTotal,
+      supplierDeliveryCost,
+      stockLoanPaymentTotal,
+      payrollTotal,
+      totalOperatingExpenses: companyExpenseTotal,
+      totalExpense: companyExpenseTotal,
+      totalExpenses: companyExpenseTotal,
+      grossProfit: totalDailyRevenue - companyExpenseTotal,
+      operatingNetIncome: totalDailyNetIncome,
+      netIncome: totalDailyNetIncome,
+      netCashPositionChange,
+      netIncomeAfterOwnerDrawings: totalDailyNetIncome - ownerExpenseTotal,
+    };
 
     return {
       data: {
@@ -257,11 +310,15 @@ export class FinancialReportsService {
         toDate: toDate.toISOString().slice(0, 10),
         totals,
         salesTotal,
+        yesterdayLeftoverCash: totals.yesterdayLeftoverCash,
+        creditReceivedFromLoans: totals.creditReceivedFromLoans,
+        tomorrowLeftoverCash: totals.tomorrowLeftoverCash,
+        dailyTotalRevenue: totals.dailyTotalRevenue,
         customerCreditSalesTotal,
         customerCreditPaymentTotal,
         grossRevenueTotal,
         totalCashCollected,
-        cashLeftoverTotal,
+        cashLeftoverTotal: totals.tomorrowLeftoverCash || cashLeftoverTotal,
         companyExpenseTotal,
         ownerExpenseTotal,
         loanTotal,
@@ -269,13 +326,14 @@ export class FinancialReportsService {
         supplierDeliveryCost,
         stockLoanPaymentTotal,
         payrollTotal,
-        totalOperatingExpenses,
-        totalExpenses: totalCompanyCosts,
-        grossProfit,
-        operatingNetIncome,
-        netIncome: operatingNetIncome,
+        totalOperatingExpenses: companyExpenseTotal,
+        totalExpense: companyExpenseTotal,
+        totalExpenses: companyExpenseTotal,
+        grossProfit: totals.grossProfit,
+        operatingNetIncome: totals.dailyNetIncome,
+        netIncome: totals.dailyNetIncome,
         netCashPositionChange,
-        netIncomeAfterOwnerDrawings,
+        netIncomeAfterOwnerDrawings: totals.netIncomeAfterOwnerDrawings,
         dailyBreakdown,
         sessions,
         productionBatches,
