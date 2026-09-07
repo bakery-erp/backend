@@ -29,7 +29,7 @@ supplierDeliveriesRouter.get('/:id', async (req, res: Response) => {
   res.json(result.data);
 });
 
-supplierDeliveriesRouter.post('/', requireRole('OWNER', 'ADMIN', 'SAMBUSA_WORKER'), async (req: AuthRequest, res: Response) => {
+supplierDeliveriesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'SAMBUSA_WORKER'), async (req: AuthRequest, res: Response) => {
   const result = await supplierDeliveriesService.createSupplierDelivery(req.body, req.user!.id);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });

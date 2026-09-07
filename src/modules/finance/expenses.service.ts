@@ -102,11 +102,8 @@ export class ExpensesService {
       };
     }
 
-    // Role-based Expense Type Enforcement (Cashiers/Non-admins only get COMPANY)
-    let expenseType = parseExpenseType(type);
-    if (!admin) {
-      expenseType = 'COMPANY';
-    }
+    // Allow selecting COMPANY or OWNER expense, default to COMPANY if not specified
+    const expenseType = parseExpenseType(type) || 'COMPANY';
 
     const fcErr = await validateExpenseFinancialCategory(financialCategoryId);
     if (fcErr) {

@@ -15,8 +15,9 @@ productsRouter.get('/', async (req, res: Response) => {
   const type = req.query.type as string | undefined;
   const isActiveParam = req.query.isActive as string | undefined;
   const isActive = isActiveParam === 'true' ? true : isActiveParam === 'false' ? false : undefined;
+  const branchId = (req.query.branchId as string) || undefined;
 
-  const result = await productsService.getProducts(categoryId, includeSubcategories, search, type, isActive);
+  const result = await productsService.getProducts(categoryId, includeSubcategories, search, type, isActive, branchId);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -24,7 +25,8 @@ productsRouter.get('/', async (req, res: Response) => {
 });
 
 productsRouter.get('/:id', async (req, res: Response) => {
-  const result = await productsService.getProductById(req.params.id);
+  const branchId = (req.query.branchId as string) || undefined;
+  const result = await productsService.getProductById(req.params.id, branchId);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

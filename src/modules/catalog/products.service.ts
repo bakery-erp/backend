@@ -14,7 +14,8 @@ export class ProductsService {
     includeSubcategories?: boolean,
     search?: string,
     type?: string,
-    isActive?: boolean
+    isActive?: boolean,
+    branchId?: string
   ): ServiceResult {
     let categoryIds: string[] | undefined;
 
@@ -73,56 +74,85 @@ export class ProductsService {
       orderBy: [{ category: { name: 'asc' } }, { name: 'asc' }],
     });
 
-    // Compute house stock dynamically from production, sales, conversions, and damages
-    const [producedAgg, conversionsToAgg, conversionsFromAgg, salesAgg, damagedAgg] = await Promise.all([
+    // Compute house stock dynamically from production, supplier deliveries, conversions, sales, and damages
+    const [producedAgg, deliveredAgg, conversionsToAgg, conversionsFromAgg, salesAgg, damagedAgg] = await Promise.all([
       prisma.productionItem.groupBy({
         by: ['productId'],
         _sum: { quantityProduced: true },
-        where: { batch: { status: 'COMPLETED' } },
+        where: {
+          batch: {
+            status: { in: ['COMPLETED', 'STARTED'] },
+            ...(branchId ? { branchId } : {}),
+          },
+        },
+      }),
+      prisma.supplierDelivery.groupBy({
+        by: ['productId'],
+        _sum: { quantityReceived: true, returnedQuantity: true },
+        where: branchId ? { supplier: { branchId } } : {},
       }),
       prisma.productConversion.groupBy({
         by: ['toProductId'],
         _sum: { toQuantity: true },
+        where: branchId ? { branchId } : {},
       }),
       prisma.productConversion.groupBy({
         by: ['fromProductId'],
         _sum: { fromQuantity: true },
+        where: branchId ? { branchId } : {},
       }),
       prisma.saleItem.groupBy({
         by: ['productId'],
         _sum: { quantity: true },
+        where: branchId ? { sale: { session: { branchId } } } : {},
       }),
       prisma.leftoverRecord.groupBy({
         by: ['productId'],
         _sum: { damagedQuantity: true },
+        where: branchId ? { session: { branchId } } : {},
       }),
     ]);
 
     const producedMap = new Map(producedAgg.map(a => [a.productId, a._sum.quantityProduced || 0]));
+    const deliveredMap = new Map(
+      deliveredAgg.map(a => [
+        a.productId,
+        Math.max(0, (a._sum.quantityReceived || 0) - (a._sum.returnedQuantity || 0)),
+      ])
+    );
     const convToMap = new Map(conversionsToAgg.map(a => [a.toProductId, a._sum.toQuantity || 0]));
     const convFromMap = new Map(conversionsFromAgg.map(a => [a.fromProductId, a._sum.fromQuantity || 0]));
     const salesMap = new Map(salesAgg.map(a => [a.productId, a._sum.quantity || 0]));
     const damagedMap = new Map(damagedAgg.map(a => [a.productId, a._sum.damagedQuantity || 0]));
 
     const enrichedList = list.map((p) => {
-      const totalProduced = (producedMap.get(p.id) || 0) + (convToMap.get(p.id) || 0);
+      const totalProduced = producedMap.get(p.id) || 0;
+      const totalDelivered = deliveredMap.get(p.id) || 0;
+      const totalConvertedIn = convToMap.get(p.id) || 0;
       const totalSold = salesMap.get(p.id) || 0;
       const totalConvertedOut = convFromMap.get(p.id) || 0;
       const totalDamaged = damagedMap.get(p.id) || 0;
-      const currentHouseStock = Math.max(0, totalProduced - totalSold - totalConvertedOut - totalDamaged);
+      const currentHouseStock = Math.max(
+        0,
+        (totalProduced + totalDelivered + totalConvertedIn) - (totalSold + totalConvertedOut + totalDamaged)
+      );
 
       return {
         ...p,
         currentHouseStock,
         totalProduced,
+        totalDelivered,
+        totalConvertedIn,
+        totalConvertedOut,
         totalSold,
+        totalDamaged,
       };
     });
 
     return { data: enrichedList };
   }
 
-  async getProductById(id: string): ServiceResult {
+  async getProductById(id: string, branchId?: string): ServiceResult {
     const product = await prisma.product.findUnique({
       where: { id },
       include: {
@@ -137,7 +167,81 @@ export class ProductsService {
     if (!product) {
       return { error: 'Product not found', status: 404 };
     }
-    return { data: product };
+
+    const [producedAgg, deliveredAgg, convToAgg, convFromAgg, salesAgg, damagedAgg] = await Promise.all([
+      prisma.productionItem.aggregate({
+        where: {
+          productId: id,
+          batch: {
+            status: { in: ['COMPLETED', 'STARTED'] },
+            ...(branchId ? { branchId } : {}),
+          },
+        },
+        _sum: { quantityProduced: true },
+      }),
+      prisma.supplierDelivery.aggregate({
+        where: {
+          productId: id,
+          ...(branchId ? { supplier: { branchId } } : {}),
+        },
+        _sum: { quantityReceived: true, returnedQuantity: true },
+      }),
+      prisma.productConversion.aggregate({
+        where: {
+          toProductId: id,
+          ...(branchId ? { branchId } : {}),
+        },
+        _sum: { toQuantity: true },
+      }),
+      prisma.productConversion.aggregate({
+        where: {
+          fromProductId: id,
+          ...(branchId ? { branchId } : {}),
+        },
+        _sum: { fromQuantity: true },
+      }),
+      prisma.saleItem.aggregate({
+        where: {
+          productId: id,
+          ...(branchId ? { sale: { session: { branchId } } } : {}),
+        },
+        _sum: { quantity: true },
+      }),
+      prisma.leftoverRecord.aggregate({
+        where: {
+          productId: id,
+          ...(branchId ? { session: { branchId } } : {}),
+        },
+        _sum: { damagedQuantity: true },
+      }),
+    ]);
+
+    const totalProduced = producedAgg._sum.quantityProduced || 0;
+    const totalDelivered = Math.max(
+      0,
+      (deliveredAgg._sum.quantityReceived || 0) - (deliveredAgg._sum.returnedQuantity || 0)
+    );
+    const totalConvertedIn = convToAgg._sum.toQuantity || 0;
+    const totalConvertedOut = convFromAgg._sum.fromQuantity || 0;
+    const totalSold = salesAgg._sum.quantity || 0;
+    const totalDamaged = damagedAgg._sum.damagedQuantity || 0;
+    const currentHouseStock = Math.max(
+      0,
+      (totalProduced + totalDelivered + totalConvertedIn) - (totalSold + totalConvertedOut + totalDamaged)
+    );
+
+    return {
+      data: {
+        ...product,
+        currentHouseStock,
+        totalProduced,
+        totalDelivered,
+        totalConvertedIn,
+        totalConvertedOut,
+        totalSold,
+        totalDamaged,
+      },
+    };
   }
 
   async createProduct(body: Record<string, unknown>): ServiceResult {
