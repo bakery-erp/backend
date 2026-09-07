@@ -10,6 +10,50 @@ function decimalToNum(v: unknown): number {
   return 0;
 }
 
+export function extractCreditItemsFromEntityId(
+  entityId: string | null | undefined,
+  productsByName: Map<string, string>
+): Array<{ productId: string; quantity: number }> {
+  if (!entityId) return [];
+
+  // 1. Try structured JSON: [CreditItems:[{"productId":"...","quantity":5},...]]
+  const jsonMatch = entityId.match(/\[CreditItems:\s*(\[.*?\])\s*\]/);
+  if (jsonMatch) {
+    try {
+      const items = JSON.parse(jsonMatch[1]);
+      if (Array.isArray(items)) {
+        return items
+          .map((it: any) => ({
+            productId: String(it.productId || ''),
+            quantity: Number(it.quantity || 0),
+          }))
+          .filter((it) => it.productId && it.quantity > 0);
+      }
+    } catch {}
+  }
+
+  // 2. Fallback to parsing [Products: 5x Donut @ 25 ETB, 2x Bread @ 15 ETB]
+  const prodMatch = entityId.match(/\[Products:\s*(.*?)\s*\]/);
+  if (prodMatch) {
+    const results: Array<{ productId: string; quantity: number }> = [];
+    const parts = prodMatch[1].split(/,\s*/);
+    for (const p of parts) {
+      const match = p.match(/^(\d+(?:\.\d+)?)\s*x?\s*([^@]+)(?:@.*)?$/i);
+      if (match) {
+        const qty = parseFloat(match[1]);
+        const name = match[2].trim().toLowerCase();
+        const pid = productsByName.get(name);
+        if (pid && qty > 0) {
+          results.push({ productId: pid, quantity: qty });
+        }
+      }
+    }
+    return results;
+  }
+
+  return [];
+}
+
 export class DailySessionsService {
   async getDailySessions(branchId?: string | null, from?: string, to?: string, status?: string): ServiceResult {
     if (!branchId) {
@@ -126,6 +170,58 @@ export class DailySessionsService {
       convertedInMap[c.toProductId] = (convertedInMap[c.toProductId] || 0) + c.toQuantity;
     }
 
+    // Compute Previous Closed Session Leftovers (Opening Adari)
+    const prevClosed = await prisma.dailySession.findFirst({
+      where: {
+        branchId: session.branchId,
+        status: 'CLOSED',
+        date: { lt: session.date },
+      },
+      orderBy: { date: 'desc' },
+      include: { leftoverRecords: true },
+    });
+    const openingMap: Record<string, number> = {};
+    if (session.status === 'OPEN' || session.status === 'PAUSED') {
+      if (session.leftoverRecords && session.leftoverRecords.length > 0) {
+        for (const r of session.leftoverRecords) {
+          openingMap[r.productId] = (openingMap[r.productId] || 0) + r.quantityRemaining;
+        }
+      } else if (prevClosed?.leftoverRecords) {
+        for (const r of prevClosed.leftoverRecords) {
+          openingMap[r.productId] = (openingMap[r.productId] || 0) + r.quantityRemaining;
+        }
+      }
+    } else if (prevClosed?.leftoverRecords) {
+      for (const r of prevClosed.leftoverRecords) {
+        openingMap[r.productId] = (openingMap[r.productId] || 0) + r.quantityRemaining;
+      }
+    }
+
+    // Compute Customer Credits Lent for this branch and date
+    const allProductsCatalog = await prisma.product.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+    });
+    const productsByName = new Map<string, string>();
+    for (const p of allProductsCatalog) {
+      productsByName.set(p.name.trim().toLowerCase(), p.id);
+    }
+
+    const customerLoans = await prisma.loan.findMany({
+      where: {
+        branchId: session.branchId,
+        type: 'CUSTOMER',
+        date: session.date,
+      },
+    });
+    const creditLentMap: Record<string, number> = {};
+    for (const loan of customerLoans) {
+      const items = extractCreditItemsFromEntityId(loan.entityId, productsByName);
+      for (const it of items) {
+        creditLentMap[it.productId] = (creditLentMap[it.productId] || 0) + it.quantity;
+      }
+    }
+
     const availableStockSummary: Record<
       string,
       {
@@ -133,11 +229,13 @@ export class DailySessionsService {
         productName: string;
         unitType: string;
         categoryName: string;
+        openingAdariQty: number;
         producedQty: number;
         deliveredQty: number;
+        convertedInQty: number;
         soldQty: number;
         convertedOutQty: number;
-        convertedInQty: number;
+        creditLentQty: number;
         maxAvailable: number;
       }
     > = {};
@@ -148,6 +246,8 @@ export class DailySessionsService {
       ...Object.keys(soldMap),
       ...Object.keys(convertedOutMap),
       ...Object.keys(convertedInMap),
+      ...Object.keys(openingMap),
+      ...Object.keys(creditLentMap),
       ...(session.leftoverRecords || []).map((r) => r.productId),
     ]);
 
@@ -158,27 +258,33 @@ export class DailySessionsService {
       const soldQty = soldMap[pid] || 0;
       const convertedOutQty = convertedOutMap[pid] || 0;
       const convertedInQty = convertedInMap[pid] || 0;
+      const openingAdariQty = openingMap[pid] || 0;
+      const creditLentQty = creditLentMap[pid] || 0;
+
       const pName =
         prodItem?.productName ||
         session.leftoverRecords.find((r) => r.productId === pid)?.product?.name ||
+        allProductsCatalog.find((r) => r.id === pid)?.name ||
         'Product';
       const uType =
         prodItem?.unitType ||
         session.leftoverRecords.find((r) => r.productId === pid)?.product?.unitType ||
         'Pcs';
       const catName = prodItem?.categoryName || 'Bakery';
-      const maxAvailable = Math.max(0, prodQty + delivQty + convertedInQty - soldQty - convertedOutQty);
+      const maxAvailable = Math.max(0, openingAdariQty + prodQty + delivQty + convertedInQty - soldQty - convertedOutQty - creditLentQty);
 
       availableStockSummary[pid] = {
         productId: pid,
         productName: pName,
         unitType: uType,
         categoryName: catName,
+        openingAdariQty,
         producedQty: prodQty,
         deliveredQty: delivQty,
+        convertedInQty,
         soldQty,
         convertedOutQty,
-        convertedInQty,
+        creditLentQty,
         maxAvailable,
       };
     }
@@ -191,16 +297,6 @@ export class DailySessionsService {
       },
     });
     const creditReceivedFromLoan = customerLoanPayments.reduce((sum, p) => sum + Number(p.amountPaid), 0);
-
-    const prevClosed = await prisma.dailySession.findFirst({
-      where: {
-        branchId: session.branchId,
-        status: 'CLOSED',
-        date: { lt: session.date },
-      },
-      orderBy: { date: 'desc' },
-      select: { cashLeftoverAmount: true, actualCashAmount: true },
-    });
 
     const yesterdayCashLeftover = session.openingCashFloat != null && Number(session.openingCashFloat) > 0
       ? Number(session.openingCashFloat)
@@ -394,21 +490,75 @@ export class DailySessionsService {
       }
     }
 
+    const conversions = await prisma.productConversion.findMany({
+      where: { branchId: session.branchId, createdAt: { gte: session.date } },
+    });
+    const convOutMap: Record<string, number> = {};
+    const convInMap: Record<string, number> = {};
+    for (const c of conversions) {
+      convOutMap[c.fromProductId] = (convOutMap[c.fromProductId] || 0) + c.fromQuantity;
+      convInMap[c.toProductId] = (convInMap[c.toProductId] || 0) + c.toQuantity;
+    }
+
+    const prevClosed = await prisma.dailySession.findFirst({
+      where: {
+        branchId: session.branchId,
+        status: 'CLOSED',
+        date: { lt: session.date },
+      },
+      orderBy: { date: 'desc' },
+      include: { leftoverRecords: true },
+    });
+    const openingMap: Record<string, number> = {};
+    if (prevClosed?.leftoverRecords) {
+      for (const r of prevClosed.leftoverRecords) {
+        openingMap[r.productId] = (openingMap[r.productId] || 0) + r.quantityRemaining;
+      }
+    }
+
+    const allProductsCatalog = await prisma.product.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+    });
+    const productsByName = new Map<string, string>();
+    for (const p of allProductsCatalog) {
+      productsByName.set(p.name.trim().toLowerCase(), p.id);
+    }
+
+    const customerLoans = await prisma.loan.findMany({
+      where: {
+        branchId: session.branchId,
+        type: 'CUSTOMER',
+        date: session.date,
+      },
+    });
+    const creditLentMap: Record<string, number> = {};
+    for (const loan of customerLoans) {
+      const items = extractCreditItemsFromEntityId(loan.entityId, productsByName);
+      for (const it of items) {
+        creditLentMap[it.productId] = (creditLentMap[it.productId] || 0) + it.quantity;
+      }
+    }
+
     for (const row of leftoverRecords) {
       const pid = typeof row.productId === 'string' ? row.productId.trim() : '';
       if (!pid) continue;
       const qRem = typeof row.quantityRemaining === 'number' ? row.quantityRemaining : parseInt(String(row.quantityRemaining ?? '0'), 10);
       if (qRem <= 0) continue;
 
+      const opening = openingMap[pid] || 0;
       const prod = producedMap[pid] || 0;
       const deliv = delivMap[pid] || 0;
+      const convIn = convInMap[pid] || 0;
       const sold = soldMap[pid] || 0;
-      const maxAvailable = Math.max(0, prod + deliv - sold);
+      const convOut = convOutMap[pid] || 0;
+      const creditLent = creditLentMap[pid] || 0;
+      const maxAvailable = Math.max(0, opening + prod + deliv + convIn - sold - convOut - creditLent);
 
       if (qRem > maxAvailable) {
         const prodObj = await prisma.product.findUnique({ where: { id: pid }, select: { name: true } });
         const name = prodObj?.name || 'Product';
-        return `Cannot set leftover of ${qRem} Pcs for ${name}. Maximum available stock in this session is ${maxAvailable} Pcs (Produced/Delivered: ${prod + deliv}, Sold: ${sold}). Please correct the amount.`;
+        return `Cannot set leftover of ${qRem} Pcs for ${name}. Maximum available stock in this session is ${maxAvailable} Pcs (Opening: ${opening}, Produced/Delivered: ${prod + deliv}, Sold: ${sold}, Credit Lent: ${creditLent}). Please correct the amount.`;
       }
     }
 
@@ -1098,5 +1248,174 @@ export class DailySessionsService {
     } catch (err) {
       console.error('[AutoClose/AutoOpen] Error during midnight session rollover:', err);
     }
+  }
+
+  async getInShopAvailableProducts(branchId?: string | null): ServiceResult {
+    let bid = branchId;
+    if (!bid) {
+      const defaultBranch = await prisma.branch.findFirst({ where: { isActive: true } });
+      bid = defaultBranch?.id || null;
+    }
+    if (!bid) {
+      return { error: 'branchId required', status: 400 };
+    }
+
+    const activeSession = await prisma.dailySession.findFirst({
+      where: {
+        branchId: bid,
+        status: { in: ['OPEN', 'PAUSED'] },
+      },
+      include: {
+        leftoverRecords: { include: { product: true } },
+        supplierDeliveries: true,
+      },
+      orderBy: { date: 'desc' },
+    });
+
+    if (!activeSession) {
+      return {
+        data: {
+          hasActiveSession: false,
+          message: 'No active daily session is currently open for this branch. Please start or open a daily session first.',
+          products: [],
+        },
+      };
+    }
+
+    // 1. All active products
+    const allProducts = await prisma.product.findMany({
+      where: { isActive: true },
+      include: { category: true },
+      orderBy: { name: 'asc' },
+    });
+
+    const productsByName = new Map<string, string>();
+    for (const p of allProducts) {
+      productsByName.set(p.name.trim().toLowerCase(), p.id);
+    }
+
+    // 2. Production Batches
+    const batches = await prisma.productionBatch.findMany({
+      where: {
+        branchId: bid,
+        OR: [{ sessionId: activeSession.id }, { date: activeSession.date }],
+        status: { in: ['STARTED', 'COMPLETED', 'PENDING_APPROVAL'] },
+      },
+      include: { items: true },
+    });
+    const prodMap: Record<string, number> = {};
+    for (const b of batches) {
+      for (const item of b.items) {
+        prodMap[item.productId] = (prodMap[item.productId] || 0) + item.quantityProduced;
+      }
+    }
+
+    // 3. Supplier Deliveries
+    const delivMap: Record<string, number> = {};
+    for (const d of activeSession.supplierDeliveries || []) {
+      delivMap[d.productId] = (delivMap[d.productId] || 0) + d.quantityReceived;
+    }
+
+    // 4. Sales
+    const sales = await prisma.sale.findMany({
+      where: { sessionId: activeSession.id },
+      include: { items: true },
+    });
+    const soldMap: Record<string, number> = {};
+    for (const s of sales) {
+      for (const item of s.items) {
+        soldMap[item.productId] = (soldMap[item.productId] || 0) + item.quantity;
+      }
+    }
+
+    // 5. Conversions
+    const conversions = await prisma.productConversion.findMany({
+      where: { branchId: bid, createdAt: { gte: activeSession.date } },
+    });
+    const convOutMap: Record<string, number> = {};
+    const convInMap: Record<string, number> = {};
+    for (const c of conversions) {
+      convOutMap[c.fromProductId] = (convOutMap[c.fromProductId] || 0) + c.fromQuantity;
+      convInMap[c.toProductId] = (convInMap[c.toProductId] || 0) + c.toQuantity;
+    }
+
+    // 6. Previous Closed Session Adari Leftovers (Opening stock)
+    const prevClosed = await prisma.dailySession.findFirst({
+      where: {
+        branchId: bid,
+        status: 'CLOSED',
+        date: { lt: activeSession.date },
+      },
+      orderBy: { date: 'desc' },
+      include: { leftoverRecords: true },
+    });
+    const openingMap: Record<string, number> = {};
+    if (activeSession.leftoverRecords && activeSession.leftoverRecords.length > 0) {
+      for (const r of activeSession.leftoverRecords) {
+        openingMap[r.productId] = (openingMap[r.productId] || 0) + r.quantityRemaining;
+      }
+    } else if (prevClosed?.leftoverRecords) {
+      for (const r of prevClosed.leftoverRecords) {
+        openingMap[r.productId] = (openingMap[r.productId] || 0) + r.quantityRemaining;
+      }
+    }
+
+    // 7. Customer Credits Lent Today
+    const customerLoans = await prisma.loan.findMany({
+      where: {
+        branchId: bid,
+        type: 'CUSTOMER',
+        date: activeSession.date,
+      },
+    });
+    const creditLentMap: Record<string, number> = {};
+    for (const loan of customerLoans) {
+      const items = extractCreditItemsFromEntityId(loan.entityId, productsByName);
+      for (const it of items) {
+        creditLentMap[it.productId] = (creditLentMap[it.productId] || 0) + it.quantity;
+      }
+    }
+
+    // Compute availability for all products
+    const products = allProducts.map((p) => {
+      const openingAdariQty = openingMap[p.id] || 0;
+      const producedQty = prodMap[p.id] || 0;
+      const deliveredQty = delivMap[p.id] || 0;
+      const convertedInQty = convInMap[p.id] || 0;
+      const soldQty = soldMap[p.id] || 0;
+      const convertedOutQty = convOutMap[p.id] || 0;
+      const creditLentQty = creditLentMap[p.id] || 0;
+
+      const totalInflow = openingAdariQty + producedQty + deliveredQty + convertedInQty;
+      const totalOutflow = soldQty + convertedOutQty + creditLentQty;
+      const availableStock = Math.max(0, totalInflow - totalOutflow);
+
+      return {
+        id: p.id,
+        name: p.name,
+        unitType: p.unitType,
+        basePrice: decimalToNum(p.basePrice),
+        categoryName: p.category?.name || 'Bakery',
+        categoryType: p.category?.type || 'PRODUCED',
+        openingAdariQty,
+        producedQty,
+        deliveredQty,
+        convertedInQty,
+        soldQty,
+        convertedOutQty,
+        creditLentQty,
+        availableStock,
+      };
+    });
+
+    return {
+      data: {
+        hasActiveSession: true,
+        sessionId: activeSession.id,
+        sessionDate: dateToYmdUtc(activeSession.date),
+        sessionStatus: activeSession.status,
+        products,
+      },
+    };
   }
 }

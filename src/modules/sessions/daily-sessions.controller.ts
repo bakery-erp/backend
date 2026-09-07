@@ -28,6 +28,15 @@ dailySessionsRouter.get('/active', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_
   res.json(result.data);
 });
 
+dailySessionsRouter.get('/active/available-products', requireRole('OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER', 'SAMBUSA_WORKER', 'EMPLOYEE'), async (req: AuthRequest, res: Response) => {
+  const branchId = (req.query.branchId as string) || req.user?.branchId;
+  const result = await dailySessionsService.getInShopAvailableProducts(branchId);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
 dailySessionsRouter.get('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req, res: Response) => {
   const result = await dailySessionsService.getDailySessionById(req.params.id);
   if (result.error) {

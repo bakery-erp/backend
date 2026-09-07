@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma.js';
 import { businessDateFromYmdString } from '../../lib/businessDate.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
+import { DailySessionsService } from '../sessions/daily-sessions.service.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -58,15 +59,18 @@ export class LoansService {
   }
 
   async createLoan(body: any, userBranchId?: string | null): ServiceResult {
-    const { branchId, type, entityId, userId, totalAmount, date } = body;
+    const { branchId, type, entityId, userId, totalAmount, date, items } = body;
     let bid = branchId || userBranchId;
     if (!bid && userId) {
       const u = await prisma.user.findUnique({ where: { id: userId }, select: { branchId: true } });
       if (u?.branchId) bid = u.branchId;
     }
     if (!bid) {
-      const firstBranch = await prisma.branch.findFirst();
+      const firstBranch = await prisma.branch.findFirst({ where: { isActive: true } });
       if (firstBranch) bid = firstBranch.id;
+    }
+    if (!bid) {
+      return { error: 'branchId required', status: 400 };
     }
 
     if (!type || totalAmount == null) {
@@ -74,7 +78,78 @@ export class LoansService {
     }
     const isCustomerLoan = type === 'CUSTOMER' || type === 'CUSTOMER_CREDIT';
     const finalType = isCustomerLoan ? 'CUSTOMER' : 'EMPLOYEE';
-    const customerIdentifier = entityId || (body.customerName ? `${body.customerName}${body.customerPhone ? ' (' + body.customerPhone + ')' : ''}${body.notes ? ' - ' + body.notes : ''}` : undefined);
+
+    let activeSessionDate: Date | undefined;
+    let availMap = new Map<string, any>();
+
+    if (isCustomerLoan) {
+      const dailySessionsService = new DailySessionsService();
+      const activeSession = await prisma.dailySession.findFirst({
+        where: { branchId: bid, status: { in: ['OPEN', 'PAUSED'] } },
+        orderBy: { date: 'desc' },
+      });
+
+      if (!activeSession) {
+        return {
+          error: 'Cannot issue customer credit: No active daily session is open for this branch. Please start or open a daily session first.',
+          status: 400,
+        };
+      }
+      activeSessionDate = activeSession.date;
+
+      if (Array.isArray(items) && items.length > 0) {
+        const availResult = await dailySessionsService.getInShopAvailableProducts(bid);
+        if (availResult.error) {
+          return { error: availResult.error, status: availResult.status || 400 };
+        }
+        const availProducts: any[] = availResult.data?.products || [];
+        availMap = new Map<string, any>(availProducts.map((p) => [p.id, p]));
+
+        for (const it of items) {
+          const pid = it.productId;
+          const requestedQty = typeof it.quantity === 'number' ? it.quantity : parseFloat(String(it.quantity || '0'));
+          if (requestedQty <= 0) {
+            return { error: 'Quantity must be greater than zero for all credit items', status: 400 };
+          }
+          const prodInfo = availMap.get(pid);
+          if (!prodInfo) {
+            return { error: `Product not found or inactive for ID: ${pid}`, status: 400 };
+          }
+          if (requestedQty > prodInfo.availableStock) {
+            return {
+              error: `Cannot lend ${requestedQty} ${prodInfo.unitType} of "${prodInfo.name}". Only ${prodInfo.availableStock} ${prodInfo.unitType} currently available in the shop for this session.`,
+              status: 400,
+            };
+          }
+        }
+      }
+    }
+
+    let customerIdentifier = entityId;
+    if (isCustomerLoan && !customerIdentifier && body.customerName) {
+      const namePart = body.customerName.trim();
+      const phonePart = body.customerPhone ? ` (${body.customerPhone.trim()})` : '';
+      let prodSummary = '';
+      if (Array.isArray(items) && items.length > 0) {
+        const itemStrs = items.map((it: any) => {
+          const pName = availMap.get(it.productId)?.name || it.productName || 'Product';
+          const uPrice = it.unitPrice != null ? Number(it.unitPrice) : (availMap.get(it.productId)?.basePrice || 0);
+          const total = (Number(it.quantity) * uPrice).toFixed(2);
+          return `${it.quantity}x ${pName} @ ${uPrice} ETB (${total} ETB)`;
+        });
+        prodSummary = ` - [Products: ${itemStrs.join(', ')}]`;
+      }
+      const jsonMeta = Array.isArray(items) && items.length > 0
+        ? ` [CreditItems:${JSON.stringify(items.map((it: any) => ({
+            productId: it.productId,
+            productName: availMap.get(it.productId)?.name || it.productName || 'Product',
+            quantity: Number(it.quantity),
+            unitPrice: it.unitPrice != null ? Number(it.unitPrice) : (availMap.get(it.productId)?.basePrice || 0),
+          })))}]`
+        : '';
+      const notesPart = body.notes ? ` - ${body.notes.trim()}` : '';
+      customerIdentifier = `${namePart}${phonePart}${prodSummary}${jsonMeta}${notesPart}`;
+    }
 
     if (isCustomerLoan && !customerIdentifier?.trim()) {
       return { error: 'Customer name / entityId required for customer credit', status: 400 };
@@ -85,15 +160,17 @@ export class LoansService {
 
     const amount = decimalToNum(totalAmount);
     const initialStatus = isCustomerLoan ? 'OPEN' : 'PENDING_APPROVAL';
+    const loanDate = date ? businessDateFromYmdString(date) : (activeSessionDate ?? undefined);
+
     const loan = await prisma.loan.create({
       data: {
-        branchId: bid!,
+        branchId: bid,
         type: finalType as any,
-        entityId: isCustomerLoan ? customerIdentifier.trim() : null,
+        entityId: isCustomerLoan ? customerIdentifier?.trim() : null,
         userId: !isCustomerLoan ? userId ?? undefined : null,
         totalAmount: amount,
         remainingBalance: amount,
-        date: date ? businessDateFromYmdString(date) ?? undefined : undefined,
+        date: loanDate ?? undefined,
         status: initialStatus,
       },
       include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
