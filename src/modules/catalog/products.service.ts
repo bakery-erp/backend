@@ -74,7 +74,9 @@ export class ProductsService {
       orderBy: [{ category: { name: 'asc' } }, { name: 'asc' }],
     });
 
-    // Compute house stock dynamically from production, supplier deliveries, conversions, sales, and damages
+    const stockMap = await this.calculateHouseStockMap(branchId);
+
+    // Compute cumulative metrics (produced, delivered, sold, damaged) for reference
     const [producedAgg, deliveredAgg, conversionsToAgg, conversionsFromAgg, salesAgg, damagedAgg] = await Promise.all([
       prisma.productionItem.groupBy({
         by: ['productId'],
@@ -132,10 +134,7 @@ export class ProductsService {
       const totalSold = salesMap.get(p.id) || 0;
       const totalConvertedOut = convFromMap.get(p.id) || 0;
       const totalDamaged = damagedMap.get(p.id) || 0;
-      const currentHouseStock = Math.max(
-        0,
-        (totalProduced + totalDelivered + totalConvertedIn) - (totalSold + totalConvertedOut + totalDamaged)
-      );
+      const currentHouseStock = stockMap.get(p.id) ?? 0;
 
       return {
         ...p,
@@ -150,6 +149,187 @@ export class ProductsService {
     });
 
     return { data: enrichedList };
+  }
+
+  /**
+   * Calculates real-time house stock anchored to daily session leftovers:
+   * 1. If latest session is CLOSED or CLOSE_PENDING:
+   *    Stock IS the leftover quantity remaining recorded at session close.
+   * 2. If latest session is OPEN or PAUSED:
+   *    Stock = (previous closed leftover) + (produced today) + (delivered today) + (converted in) - (sold today) - (converted out) - (damaged today).
+   * 3. If no session exists:
+   *    Fallback to lifetime produced + delivered - sold.
+   */
+  private async calculateHouseStockMap(branchId?: string): Promise<Map<string, number>> {
+    const stockMap = new Map<string, number>();
+
+    const branches = branchId
+      ? [{ id: branchId }]
+      : await prisma.branch.findMany({ where: { isActive: true }, select: { id: true } });
+
+    for (const b of branches) {
+      const latestSession = await prisma.dailySession.findFirst({
+        where: { branchId: b.id },
+        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+        include: { leftoverRecords: true },
+      });
+
+      if (!latestSession) {
+        // Fallback for brand new branch with no session yet
+        const [producedAgg, deliveredAgg, convToAgg, convFromAgg, salesAgg, damagedAgg] = await Promise.all([
+          prisma.productionItem.groupBy({
+            by: ['productId'],
+            _sum: { quantityProduced: true },
+            where: { batch: { branchId: b.id, status: { in: ['COMPLETED', 'STARTED'] } } },
+          }),
+          prisma.supplierDelivery.groupBy({
+            by: ['productId'],
+            _sum: { quantityReceived: true, returnedQuantity: true },
+            where: { supplier: { branchId: b.id } },
+          }),
+          prisma.productConversion.groupBy({
+            by: ['toProductId'],
+            _sum: { toQuantity: true },
+            where: { branchId: b.id },
+          }),
+          prisma.productConversion.groupBy({
+            by: ['fromProductId'],
+            _sum: { fromQuantity: true },
+            where: { branchId: b.id },
+          }),
+          prisma.saleItem.groupBy({
+            by: ['productId'],
+            _sum: { quantity: true },
+            where: { sale: { session: { branchId: b.id } } },
+          }),
+          prisma.leftoverRecord.groupBy({
+            by: ['productId'],
+            _sum: { damagedQuantity: true },
+            where: { session: { branchId: b.id } },
+          }),
+        ]);
+
+        const pMap = new Map(producedAgg.map(a => [a.productId, a._sum.quantityProduced || 0]));
+        const dMap = new Map(deliveredAgg.map(a => [a.productId, Math.max(0, (a._sum.quantityReceived || 0) - (a._sum.returnedQuantity || 0))]));
+        const toMap = new Map(convToAgg.map(a => [a.toProductId, a._sum.toQuantity || 0]));
+        const fromMap = new Map(convFromAgg.map(a => [a.fromProductId, a._sum.fromQuantity || 0]));
+        const sMap = new Map(salesAgg.map(a => [a.productId, a._sum.quantity || 0]));
+        const damMap = new Map(damagedAgg.map(a => [a.productId, a._sum.damagedQuantity || 0]));
+
+        const allProds = await prisma.product.findMany({ select: { id: true } });
+        for (const p of allProds) {
+          const qty = Math.max(
+            0,
+            (pMap.get(p.id) || 0) + (dMap.get(p.id) || 0) + (toMap.get(p.id) || 0) -
+            (sMap.get(p.id) || 0) - (fromMap.get(p.id) || 0) - (damMap.get(p.id) || 0)
+          );
+          stockMap.set(p.id, (stockMap.get(p.id) || 0) + qty);
+        }
+      } else if (latestSession.status === 'CLOSED' || latestSession.status === 'CLOSE_PENDING') {
+        // When session is CLOSED (or CLOSE_PENDING), the product count IS strictly the leftover recorded!
+        for (const r of latestSession.leftoverRecords) {
+          stockMap.set(r.productId, (stockMap.get(r.productId) || 0) + (r.quantityRemaining || 0));
+        }
+      } else {
+        // Session is OPEN or PAUSED:
+        // Baseline is previous closed session's leftover (or seeded leftovers)
+        const prevClosed = await prisma.dailySession.findFirst({
+          where: {
+            branchId: b.id,
+            status: 'CLOSED',
+            date: { lt: latestSession.date },
+          },
+          orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+          include: { leftoverRecords: true },
+        });
+
+        const openingMap: Record<string, number> = {};
+        if (latestSession.leftoverRecords && latestSession.leftoverRecords.length > 0) {
+          for (const r of latestSession.leftoverRecords) {
+            openingMap[r.productId] = r.quantityRemaining || 0;
+          }
+        } else if (prevClosed?.leftoverRecords) {
+          for (const r of prevClosed.leftoverRecords) {
+            openingMap[r.productId] = r.quantityRemaining || 0;
+          }
+        }
+
+        const [actProdAgg, actDelivAgg, actConvToAgg, actConvFromAgg, actSaleAgg, actDamAgg] = await Promise.all([
+          prisma.productionItem.groupBy({
+            by: ['productId'],
+            _sum: { quantityProduced: true },
+            where: {
+              batch: {
+                branchId: b.id,
+                status: { in: ['COMPLETED', 'STARTED'] },
+                OR: [{ sessionId: latestSession.id }, { date: latestSession.date }],
+              },
+            },
+          }),
+          prisma.supplierDelivery.groupBy({
+            by: ['productId'],
+            _sum: { quantityReceived: true, returnedQuantity: true },
+            where: {
+              OR: [
+                { sessionId: latestSession.id },
+                { supplier: { branchId: b.id }, createdAt: { gte: latestSession.date } },
+              ],
+            },
+          }),
+          prisma.productConversion.groupBy({
+            by: ['toProductId'],
+            _sum: { toQuantity: true },
+            where: { branchId: b.id, createdAt: { gte: latestSession.date } },
+          }),
+          prisma.productConversion.groupBy({
+            by: ['fromProductId'],
+            _sum: { fromQuantity: true },
+            where: { branchId: b.id, createdAt: { gte: latestSession.date } },
+          }),
+          prisma.saleItem.groupBy({
+            by: ['productId'],
+            _sum: { quantity: true },
+            where: { sale: { sessionId: latestSession.id } },
+          }),
+          prisma.leftoverRecord.groupBy({
+            by: ['productId'],
+            _sum: { damagedQuantity: true },
+            where: { sessionId: latestSession.id },
+          }),
+        ]);
+
+        const actProd = new Map(actProdAgg.map(a => [a.productId, a._sum.quantityProduced || 0]));
+        const actDeliv = new Map(actDelivAgg.map(a => [a.productId, Math.max(0, (a._sum.quantityReceived || 0) - (a._sum.returnedQuantity || 0))]));
+        const actConvTo = new Map(actConvToAgg.map(a => [a.toProductId, a._sum.toQuantity || 0]));
+        const actConvFrom = new Map(actConvFromAgg.map(a => [a.fromProductId, a._sum.fromQuantity || 0]));
+        const actSale = new Map(actSaleAgg.map(a => [a.productId, a._sum.quantity || 0]));
+        const actDam = new Map(actDamAgg.map(a => [a.productId, a._sum.damagedQuantity || 0]));
+
+        const allProdIds = new Set([
+          ...Object.keys(openingMap),
+          ...actProd.keys(),
+          ...actDeliv.keys(),
+          ...actConvTo.keys(),
+          ...actConvFrom.keys(),
+          ...actSale.keys(),
+        ]);
+
+        for (const pid of allProdIds) {
+          const opening = openingMap[pid] || 0;
+          const prod = actProd.get(pid) || 0;
+          const deliv = actDeliv.get(pid) || 0;
+          const convIn = actConvTo.get(pid) || 0;
+          const sold = actSale.get(pid) || 0;
+          const convOut = actConvFrom.get(pid) || 0;
+          const dam = actDam.get(pid) || 0;
+
+          const qty = Math.max(0, (opening + prod + deliv + convIn) - (sold + convOut + dam));
+          stockMap.set(pid, (stockMap.get(pid) || 0) + qty);
+        }
+      }
+    }
+
+    return stockMap;
   }
 
   async getProductById(id: string, branchId?: string): ServiceResult {
@@ -167,6 +347,9 @@ export class ProductsService {
     if (!product) {
       return { error: 'Product not found', status: 404 };
     }
+
+    const stockMap = await this.calculateHouseStockMap(branchId);
+    const currentHouseStock = stockMap.get(id) ?? 0;
 
     const [producedAgg, deliveredAgg, convToAgg, convFromAgg, salesAgg, damagedAgg] = await Promise.all([
       prisma.productionItem.aggregate({
@@ -225,10 +408,6 @@ export class ProductsService {
     const totalConvertedOut = convFromAgg._sum.fromQuantity || 0;
     const totalSold = salesAgg._sum.quantity || 0;
     const totalDamaged = damagedAgg._sum.damagedQuantity || 0;
-    const currentHouseStock = Math.max(
-      0,
-      (totalProduced + totalDelivered + totalConvertedIn) - (totalSold + totalConvertedOut + totalDamaged)
-    );
 
     return {
       data: {
