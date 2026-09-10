@@ -27,6 +27,9 @@ export class FinancialReportsService {
       return { error: 'Invalid date range', status: 400 };
     }
 
+    const timestampStart = startOfDayUtc(fromDate);
+    const timestampEnd = endOfDayUtc(toDate);
+
     const sessions = await prisma.dailySession.findMany({
       where: { branchId, date: { gte: fromDate, lte: toDate } },
       include: {
@@ -74,16 +77,38 @@ export class FinancialReportsService {
     const customerCreditPaymentTotal = customerLoanPayments.reduce((sum, p) => sum + Number(p.amountPaid), 0);
 
     const deliveries = await prisma.supplierDelivery.findMany({
-      where: { supplier: { branchId }, createdAt: { gte: fromDate, lte: toDate } },
-      include: { supplier: { select: { name: true } }, product: { select: { name: true } } },
+      where: {
+        AND: [
+          {
+            OR: [
+              { supplier: { branchId } },
+              { session: { branchId } },
+            ],
+          },
+          {
+            OR: [
+              { createdAt: { gte: timestampStart, lte: timestampEnd } },
+              { session: { date: { gte: fromDate, lte: toDate } } },
+            ],
+          },
+        ],
+      },
+      include: {
+        supplier: { select: { id: true, name: true, branchId: true } },
+        product: { select: { id: true, name: true, unitType: true, basePrice: true, buyPrice: true } },
+        session: { select: { id: true, date: true, status: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
-    const supplierDeliveryCost = deliveries.reduce((s, d) => s + Number(d.unitBuyPrice) * d.quantityReceived, 0);
+    const supplierDeliveryCost = deliveries.reduce(
+      (s, d) => s + Number(d.unitBuyPrice) * Math.max(0, d.quantityReceived - (d.returnedQuantity || 0)),
+      0
+    );
 
     const stockPurchasePayments = await prisma.stockPurchasePayment.findMany({
       where: {
         loan: { branchId },
-        createdAt: { gte: fromDate, lte: toDate },
+        createdAt: { gte: timestampStart, lte: timestampEnd },
       },
       include: {
         user: { select: { fullName: true } },
@@ -232,9 +257,12 @@ export class FinancialReportsService {
     }
 
     for (const d of deliveries) {
-      const dayKey = new Date(d.createdAt).toISOString().slice(0, 10);
+      const dayKey = d.session?.date
+        ? new Date(d.session.date).toISOString().slice(0, 10)
+        : new Date(d.createdAt).toISOString().slice(0, 10);
       const entry = getOrCreateDailyEntry(dayKey);
-      entry.supplierDeliveryCost += Number(d.unitBuyPrice) * d.quantityReceived;
+      const netQty = Math.max(0, d.quantityReceived - (d.returnedQuantity || 0));
+      entry.supplierDeliveryCost += Number(d.unitBuyPrice) * netQty;
     }
 
     for (const sp of stockPurchasePayments) {
@@ -428,6 +456,9 @@ export class FinancialReportsService {
       return { error: 'Invalid date range', status: 400 };
     }
 
+    const timestampStart = startOfDayUtc(fromDate);
+    const timestampEnd = endOfDayUtc(toDate);
+
     const [expenses, supplierDeliveries, stockPurchasePayments, sessions] = await Promise.all([
       prisma.expense.findMany({
         where: { branchId, date: { gte: fromDate, lte: toDate } },
@@ -438,15 +469,31 @@ export class FinancialReportsService {
         orderBy: { date: 'desc' },
       }),
       prisma.supplierDelivery.findMany({
-        where: { supplier: { branchId }, createdAt: { gte: fromDate, lte: toDate } },
+        where: {
+          AND: [
+            {
+              OR: [
+                { supplier: { branchId } },
+                { session: { branchId } },
+              ],
+            },
+            {
+              OR: [
+                { createdAt: { gte: timestampStart, lte: timestampEnd } },
+                { session: { date: { gte: fromDate, lte: toDate } } },
+              ],
+            },
+          ],
+        },
         include: {
           supplier: { select: { id: true, name: true, type: true } },
           product: { select: { id: true, name: true } },
+          session: { select: { id: true, date: true } },
         },
         orderBy: { createdAt: 'desc' },
       }),
       prisma.stockPurchasePayment.findMany({
-        where: { loan: { branchId }, createdAt: { gte: fromDate, lte: toDate } },
+        where: { loan: { branchId }, createdAt: { gte: timestampStart, lte: timestampEnd } },
         include: {
           user: { select: { id: true, fullName: true } },
           loan: { select: { supplierName: true, stockMovement: { select: { stockItem: { select: { name: true } } } } } },
@@ -463,7 +510,10 @@ export class FinancialReportsService {
     const ownerExpenses = expenses.filter(e => e.type === 'OWNER');
     const companyExpenseTotal = companyExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
     const ownerExpenseTotal = ownerExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
-    const supplierTotal = supplierDeliveries.reduce((sum, d) => sum + Number(d.unitBuyPrice) * d.quantityReceived, 0);
+    const supplierTotal = supplierDeliveries.reduce(
+      (sum, d) => sum + Number(d.unitBuyPrice) * Math.max(0, d.quantityReceived - (d.returnedQuantity || 0)),
+      0
+    );
     const stockLoanTotal = stockPurchasePayments.reduce((sum, sp) => sum + Number(sp.amount), 0);
     const cashLeftoverTotal = sessions.reduce((sum, s) => sum + (s.cashLeftoverAmount ? Number(s.cashLeftoverAmount) : 0), 0);
 

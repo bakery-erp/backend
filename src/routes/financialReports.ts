@@ -176,8 +176,23 @@ async function loadRangeReport(branchId: string, fromDate: Date, toDate: Date) {
   });
 
   const supplierDeliveries = await prisma.supplierDelivery.findMany({
-    where: { supplier: { branchId }, createdAt: { gte: fromDate, lte: toDate } },
-    include: { supplier: true, product: true },
+    where: {
+      AND: [
+        {
+          OR: [
+            { supplier: { branchId } },
+            { session: { branchId } },
+          ],
+        },
+        {
+          OR: [
+            { createdAt: { gte: fromDate, lte: toDate } },
+            { session: { date: { gte: fromDate, lte: toDate } } },
+          ],
+        },
+      ],
+    },
+    include: { supplier: true, product: true, session: true },
     orderBy: { createdAt: 'desc' },
   });
 

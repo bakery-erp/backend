@@ -26,7 +26,12 @@ export class FinancialReportsRepository {
 
   async findSupplierDeliveriesByDateRange(branchId: string, fromDate: Date, toDate: Date) {
     return prisma.supplierDelivery.findMany({
-      where: { supplier: { branchId }, createdAt: { gte: fromDate, lte: toDate } },
+      where: {
+        AND: [
+          { OR: [{ supplier: { branchId } }, { session: { branchId } }] },
+          { OR: [{ createdAt: { gte: fromDate, lte: toDate } }, { session: { date: { gte: fromDate, lte: toDate } } }] },
+        ],
+      },
     });
   }
 
