@@ -30,76 +30,138 @@ export class FinancialReportsService {
     const timestampStart = startOfDayUtc(fromDate);
     const timestampEnd = endOfDayUtc(toDate);
 
-    const sessions = await prisma.dailySession.findMany({
-      where: { branchId, date: { gte: fromDate, lte: toDate } },
-      include: {
-        sales: { include: { items: { include: { product: true } } } },
-        leftoverRecords: { include: { product: true } },
-      },
-      orderBy: { date: 'asc' },
-    });
+    const [
+      sessions,
+      expenses,
+      loans,
+      customerLoanPayments,
+      allDeliveries,
+      unpaidStockLoans,
+      stockPurchasePayments,
+      payroll,
+      productionBatches,
+      allClosedSessions,
+    ] = await Promise.all([
+      prisma.dailySession.findMany({
+        where: { branchId, date: { gte: fromDate, lte: toDate } },
+        include: {
+          sales: { include: { items: { include: { product: true } } } },
+          leftoverRecords: { include: { product: true } },
+        },
+        orderBy: { date: 'asc' },
+      }),
+      prisma.expense.findMany({
+        where: { branchId, date: { gte: fromDate, lte: toDate } },
+        include: {
+          financialCategory: { select: { name: true } },
+          user: { select: { fullName: true } },
+        },
+        orderBy: { date: 'desc' },
+      }),
+      prisma.loan.findMany({
+        where: { branchId, date: { gte: fromDate, lte: toDate } },
+        include: { user: { select: { fullName: true } }, payments: true },
+        orderBy: { date: 'desc' },
+      }),
+      prisma.loanPayment.findMany({
+        where: {
+          loan: { branchId, type: 'CUSTOMER' },
+          date: { gte: fromDate, lte: toDate },
+        },
+        include: { loan: { select: { id: true, entityId: true } } },
+        orderBy: { date: 'desc' },
+      }),
+      prisma.supplierDelivery.findMany({
+        where: {
+          AND: [
+            {
+              OR: [
+                { supplier: { branchId } },
+                { session: { branchId } },
+              ],
+            },
+            {
+              OR: [
+                { createdAt: { gte: timestampStart, lte: timestampEnd } },
+                { session: { date: { gte: fromDate, lte: toDate } } },
+              ],
+            },
+          ],
+        },
+        include: {
+          supplier: { select: { id: true, name: true, branchId: true } },
+          product: { select: { id: true, name: true, unitType: true, basePrice: true, buyPrice: true } },
+          session: { select: { id: true, date: true, status: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.stockPurchaseLoan.findMany({
+        where: {
+          branchId,
+          status: { not: 'PAID' },
+        },
+        include: {
+          stockMovement: {
+            select: {
+              stockItem: { select: { name: true, unitType: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.stockPurchasePayment.findMany({
+        where: {
+          loan: { branchId },
+          createdAt: { gte: timestampStart, lte: timestampEnd },
+        },
+        include: {
+          user: { select: { fullName: true } },
+          loan: { select: { supplierName: true, stockMovement: { select: { stockItem: { select: { name: true } } } } } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.payrollRecord.findMany({
+        where: {
+          user: { branchId },
+          status: { not: 'REJECTED' },
+          OR: [
+            { paymentDate: { gte: timestampStart, lte: timestampEnd } },
+            { paymentDate: null, createdAt: { gte: timestampStart, lte: timestampEnd } },
+          ],
+        },
+        include: { user: { select: { id: true, fullName: true, phone: true, role: true } } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.productionBatch.findMany({
+        where: { branchId, date: { gte: fromDate, lte: toDate } },
+        include: {
+          user: { select: { fullName: true } },
+          items: { include: { product: true } },
+          materialUsages: { include: { stockItem: true } },
+        },
+        orderBy: { date: 'desc' },
+      }),
+      prisma.dailySession.findMany({
+        where: { branchId, status: 'CLOSED' },
+        orderBy: { date: 'desc' },
+        select: { date: true, cashLeftoverAmount: true, actualCashAmount: true },
+      }),
+    ]);
 
     const salesTotal = sessions.reduce((acc, s) => acc + s.sales.reduce((t, x) => t + Number(x.totalAmount), 0), 0);
     const cashLeftoverTotal = sessions.reduce((acc, s) => acc + (s.cashLeftoverAmount ? Number(s.cashLeftoverAmount) : 0), 0);
 
-    const expenses = await prisma.expense.findMany({
-      where: { branchId, date: { gte: fromDate, lte: toDate } },
-      include: {
-        financialCategory: { select: { name: true } },
-        user: { select: { fullName: true } },
-      },
-      orderBy: { date: 'desc' },
-    });
-
     const companyExpenseTotal = expenses.filter(e => e.type === 'COMPANY').reduce((sum, e) => sum + Number(e.amount), 0);
     const ownerExpenseTotal = expenses.filter(e => e.type === 'OWNER').reduce((sum, e) => sum + Number(e.amount), 0);
 
-    const loans = await prisma.loan.findMany({
-      where: { branchId, date: { gte: fromDate, lte: toDate } },
-      include: { user: { select: { fullName: true } }, payments: true },
-      orderBy: { date: 'desc' },
-    });
     const loanTotal = loans.reduce((sum, l) => sum + Number(l.totalAmount), 0);
-
     const customerLoans = loans.filter(l => l.type === 'CUSTOMER');
     const customerCreditSalesTotal = customerLoans.reduce((sum, l) => sum + Number(l.totalAmount), 0);
     const employeeLoans = loans.filter(l => l.type !== 'CUSTOMER');
     const employeeLoanTotal = employeeLoans.reduce((sum, l) => sum + Number(l.totalAmount), 0);
 
-    const customerLoanPayments = await prisma.loanPayment.findMany({
-      where: {
-        loan: { branchId, type: 'CUSTOMER' },
-        date: { gte: fromDate, lte: toDate },
-      },
-      include: { loan: { select: { id: true, entityId: true } } },
-      orderBy: { date: 'desc' },
-    });
     const customerCreditPaymentTotal = customerLoanPayments.reduce((sum, p) => sum + Number(p.amountPaid), 0);
 
-    const allDeliveries = await prisma.supplierDelivery.findMany({
-      where: {
-        AND: [
-          {
-            OR: [
-              { supplier: { branchId } },
-              { session: { branchId } },
-            ],
-          },
-          {
-            OR: [
-              { createdAt: { gte: timestampStart, lte: timestampEnd } },
-              { session: { date: { gte: fromDate, lte: toDate } } },
-            ],
-          },
-        ],
-      },
-      include: {
-        supplier: { select: { id: true, name: true, branchId: true } },
-        product: { select: { id: true, name: true, unitType: true, basePrice: true, buyPrice: true } },
-        session: { select: { id: true, date: true, status: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
     // On dashboard, show supplier purchases only if taken from daily cash drawer
     const deliveries = allDeliveries.filter((d) => d.paymentSource === 'DAILY_CASH');
     const ownerDeliveries = allDeliveries.filter((d) => d.paymentSource === 'OWNER');
@@ -120,59 +182,11 @@ export class FinancialReportsService {
     );
 
     // Unpaid stock purchase loans (Credits/debts that owner has to pay to suppliers)
-    const unpaidStockLoans = await prisma.stockPurchaseLoan.findMany({
-      where: {
-        branchId,
-        status: { not: 'PAID' },
-      },
-      include: {
-        stockMovement: {
-          select: {
-            stockItem: { select: { name: true, unitType: true } },
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
     const unpaidStockLoansTotal = unpaidStockLoans.reduce((sum, sl) => sum + Number(sl.remainingBalance), 0);
     const totalPendingOwnerLiabilities = unpaidSupplierDeliveriesTotal + unpaidStockLoansTotal;
 
-    const stockPurchasePayments = await prisma.stockPurchasePayment.findMany({
-      where: {
-        loan: { branchId },
-        createdAt: { gte: timestampStart, lte: timestampEnd },
-      },
-      include: {
-        user: { select: { fullName: true } },
-        loan: { select: { supplierName: true, stockMovement: { select: { stockItem: { select: { name: true } } } } } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
     const stockLoanPaymentTotal = stockPurchasePayments.reduce((sum, sp) => sum + Number(sp.amount), 0);
-
-    const payroll = await prisma.payrollRecord.findMany({
-      where: {
-        user: { branchId },
-        status: { not: 'REJECTED' },
-        OR: [
-          { paymentDate: { gte: timestampStart, lte: timestampEnd } },
-          { paymentDate: null, createdAt: { gte: timestampStart, lte: timestampEnd } },
-        ],
-      },
-      include: { user: { select: { id: true, fullName: true, phone: true, role: true } } },
-      orderBy: { createdAt: 'desc' },
-    });
     const payrollTotal = payroll.reduce((sum, p) => sum + Number(p.finalAmount), 0);
-
-    const productionBatches = await prisma.productionBatch.findMany({
-      where: { branchId, date: { gte: fromDate, lte: toDate } },
-      include: {
-        user: { select: { fullName: true } },
-        items: { include: { product: true } },
-        materialUsages: { include: { stockItem: true } },
-      },
-      orderBy: { date: 'desc' },
-    });
 
     // Total Revenue (Accrual: POS cash/bank sales + Customer Credited product sales)
     const grossRevenueTotal = salesTotal + customerCreditSalesTotal;
@@ -243,15 +257,7 @@ export class FinancialReportsService {
 
       let yesterdayCash = s.openingCashFloat != null ? Number(s.openingCashFloat) : 0;
       if (yesterdayCash === 0) {
-        const prevClosed = await prisma.dailySession.findFirst({
-          where: {
-            branchId,
-            status: 'CLOSED',
-            date: { lt: s.date },
-          },
-          orderBy: { date: 'desc' },
-          select: { cashLeftoverAmount: true, actualCashAmount: true },
-        });
+        const prevClosed = allClosedSessions.find((cs) => cs.date < s.date);
         yesterdayCash = prevClosed?.cashLeftoverAmount != null
           ? Number(prevClosed.cashLeftoverAmount)
           : (prevClosed?.actualCashAmount != null ? Number(prevClosed.actualCashAmount) : 0);
