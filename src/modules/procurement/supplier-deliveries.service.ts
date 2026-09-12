@@ -43,7 +43,8 @@ export class SupplierDeliveriesService {
   }
 
   async createSupplierDelivery(body: Record<string, unknown>, userId: string): ServiceResult {
-    const { supplierId, isPaid, sessionId, items } = body;
+    const { supplierId, isPaid, sessionId, items, paymentSource } = body;
+    const finalPaymentSource = (paymentSource === 'OWNER' ? 'OWNER' : 'DAILY_CASH') as any;
     
     if (!supplierId) {
       return { error: 'supplierId is required', status: 400 };
@@ -76,6 +77,7 @@ export class SupplierDeliveriesService {
             if (p) sellPrice = Number(p.basePrice);
           }
 
+          const itemSource = (item.paymentSource === 'OWNER' || finalPaymentSource === 'OWNER') ? 'OWNER' : 'DAILY_CASH';
           const qty = typeof quantityReceived === 'number' ? quantityReceived : parseInt(String(quantityReceived), 10);
           const del = await tx.supplierDelivery.create({
             data: {
@@ -86,6 +88,7 @@ export class SupplierDeliveriesService {
               unitBuyPrice: decimalToNum(unitBuyPrice || 0),
               unitSellPrice: sellPrice,
               isPaid: Boolean(isPaid),
+              paymentSource: itemSource as any,
               returnedQuantity: returnedQuantity != null ? parseInt(String(returnedQuantity), 10) : 0,
             },
             include: { supplier: true, product: true },
@@ -120,6 +123,7 @@ export class SupplierDeliveriesService {
         unitBuyPrice: decimalToNum(unitBuyPrice),
         unitSellPrice: sellPrice,
         isPaid: Boolean(isPaid),
+        paymentSource: finalPaymentSource,
         returnedQuantity: returnedQuantity != null ? parseInt(String(returnedQuantity), 10) : 0,
       },
       include: { supplier: true, product: true },
@@ -128,13 +132,14 @@ export class SupplierDeliveriesService {
     return { data: delivery };
   }
 
-  async updateSupplierDelivery(id: string, body: { isPaid?: boolean; returnedQuantity?: number }): ServiceResult {
-    const { isPaid, returnedQuantity } = body;
+  async updateSupplierDelivery(id: string, body: { isPaid?: boolean; returnedQuantity?: number; paymentSource?: string }): ServiceResult {
+    const { isPaid, returnedQuantity, paymentSource } = body;
     const delivery = await prisma.supplierDelivery.update({
       where: { id },
       data: {
         ...(isPaid !== undefined && { isPaid }),
         ...(returnedQuantity !== undefined && { returnedQuantity }),
+        ...(paymentSource !== undefined && { paymentSource: paymentSource as any }),
       },
       include: { supplier: true, product: true },
     });

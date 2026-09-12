@@ -63,6 +63,11 @@ enum SupplierType {
   GENERAL
 }
 
+enum DeliveryPaymentSource {
+  DAILY_CASH
+  OWNER
+}
+
 enum LoanType {
   SALARY_ADVANCE
   STAFF_LOAN
@@ -430,6 +435,7 @@ model SupplierDelivery {
   sessionId        String?
   session          DailySession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
   isPaid           Boolean    @default(false)
+  paymentSource    DeliveryPaymentSource @default(DAILY_CASH)
   returnedQuantity Int        @default(0)
   createdAt        DateTime   @default(now())
 
@@ -520,6 +526,7 @@ model PayrollRecord {
   penaltyDeductions Decimal  @db.Decimal(12, 2) @default(0)
   bonus             Decimal  @db.Decimal(12, 2) @default(0)
   finalAmount       Decimal  @db.Decimal(12, 2)
+  status            ApprovalStatus @default(PENDING_APPROVAL)
   paymentDate       DateTime?
   createdAt         DateTime @default(now())
   @@unique([userId, month, year])
