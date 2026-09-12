@@ -112,6 +112,31 @@ export class FinancialReportsService {
       0
     );
 
+    // Unpaid deliveries (Payables / Credits that owner has to pay)
+    const unpaidSupplierDeliveries = allDeliveries.filter((d) => !d.isPaid);
+    const unpaidSupplierDeliveriesTotal = unpaidSupplierDeliveries.reduce(
+      (s, d) => s + Number(d.unitBuyPrice) * Math.max(0, d.quantityReceived - (d.returnedQuantity || 0)),
+      0
+    );
+
+    // Unpaid stock purchase loans (Credits/debts that owner has to pay to suppliers)
+    const unpaidStockLoans = await prisma.stockPurchaseLoan.findMany({
+      where: {
+        branchId,
+        status: { not: 'PAID' },
+      },
+      include: {
+        stockMovement: {
+          select: {
+            stockItem: { select: { name: true, unitType: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const unpaidStockLoansTotal = unpaidStockLoans.reduce((sum, sl) => sum + Number(sl.remainingBalance), 0);
+    const totalPendingOwnerLiabilities = unpaidSupplierDeliveriesTotal + unpaidStockLoansTotal;
+
     const stockPurchasePayments = await prisma.stockPurchasePayment.findMany({
       where: {
         loan: { branchId },
@@ -341,6 +366,11 @@ export class FinancialReportsService {
       netIncome: totalDailyNetIncome,
       netCashPositionChange,
       netIncomeAfterOwnerDrawings: totalDailyNetIncome - ownerExpenseTotal,
+      unpaidSupplierDeliveriesTotal,
+      unpaidStockLoansTotal,
+      totalPendingOwnerLiabilities,
+      dailyTotalRevenueWithCredit: totalDailyRevenue + customerCreditSalesTotal,
+      ownerExpenseWithLiabilities: ownerExpenseTotal + totalPendingOwnerLiabilities,
     };
 
     return {
@@ -356,6 +386,7 @@ export class FinancialReportsService {
         creditReceivedFromLoans: totals.creditReceivedFromLoans,
         tomorrowLeftoverCash: totals.tomorrowLeftoverCash,
         dailyTotalRevenue: totals.dailyTotalRevenue,
+        dailyTotalRevenueWithCredit: totals.dailyTotalRevenueWithCredit,
         customerCreditSalesTotal,
         customerCreditPaymentTotal,
         grossRevenueTotal,
@@ -363,6 +394,10 @@ export class FinancialReportsService {
         cashLeftoverTotal: totals.tomorrowLeftoverCash || cashLeftoverTotal,
         companyExpenseTotal,
         ownerExpenseTotal,
+        ownerExpenseWithLiabilities: totals.ownerExpenseWithLiabilities,
+        unpaidSupplierDeliveriesTotal,
+        unpaidStockLoansTotal,
+        totalPendingOwnerLiabilities,
         loanTotal,
         employeeLoanTotal,
         supplierDeliveryCost,
@@ -387,6 +422,8 @@ export class FinancialReportsService {
         employeeLoans,
         customerLoanPayments,
         supplierDeliveries: deliveries,
+        unpaidSupplierDeliveries,
+        unpaidStockLoans,
         stockPurchasePayments,
         payrollRecords: payroll,
       },
