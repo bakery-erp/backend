@@ -1,5 +1,5 @@
 import { prisma } from '../../lib/prisma.js';
-import { businessDateFromYmdString } from '../../lib/businessDate.js';
+import { businessDateFromYmdString, parseYmd } from '../../lib/businessDate.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
 function startOfDayUtc(d: Date): Date {
@@ -20,15 +20,28 @@ export class FinancialReportsService {
       return { error: 'branchId required', status: 400 };
     }
 
-    const fromDate = from || date ? businessDateFromYmdString(from || date || '') : startOfDayUtc(new Date());
-    const toDate = to || date ? businessDateFromYmdString(to || date || '') : endOfDayUtc(new Date());
+    const fromStr = from || date;
+    const toStr = to || date;
 
-    if (!fromDate || !toDate) {
-      return { error: 'Invalid date range', status: 400 };
+    let fromDate: Date;
+    let toDate: Date;
+
+    if (fromStr) {
+      const p = parseYmd(fromStr);
+      fromDate = p ? new Date(Date.UTC(p.y, p.mo - 1, p.day, 0, 0, 0, 0)) : startOfDayUtc(new Date());
+    } else {
+      fromDate = startOfDayUtc(new Date());
     }
 
-    const timestampStart = startOfDayUtc(fromDate);
-    const timestampEnd = endOfDayUtc(toDate);
+    if (toStr) {
+      const p = parseYmd(toStr);
+      toDate = p ? new Date(Date.UTC(p.y, p.mo - 1, p.day, 23, 59, 59, 999)) : endOfDayUtc(new Date());
+    } else {
+      toDate = endOfDayUtc(new Date());
+    }
+
+    const timestampStart = fromDate;
+    const timestampEnd = toDate;
 
     const [
       sessions,
