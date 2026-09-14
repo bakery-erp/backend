@@ -182,7 +182,7 @@ export class ProductionBatchesService {
       }
 
       return batch;
-    });
+    }, { maxWait: 10000, timeout: 20000 });
 
     return { data: result };
   }
@@ -257,7 +257,7 @@ export class ProductionBatchesService {
           materialUsages: { include: { stockItem: true } },
         },
       });
-    });
+    }, { maxWait: 10000, timeout: 20000 });
 
     return { data: updated };
   }
@@ -356,7 +356,7 @@ export class ProductionBatchesService {
           materialUsages: { include: { stockItem: true } },
         },
       });
-    });
+    }, { maxWait: 10000, timeout: 20000 });
 
     return { data: updated };
   }
