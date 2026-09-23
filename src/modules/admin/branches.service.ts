@@ -83,4 +83,30 @@ export class BranchesService {
 
     return { data: branch };
   }
+
+  async deleteBranch(id: string): ServiceResult {
+    const branch = await prisma.branch.findUnique({ where: { id } });
+    if (!branch) {
+      return { error: 'Branch not found', status: 404 };
+    }
+
+    // Safety checks:
+    // 1. Prevent deleting if it is the only branch remaining
+    const totalBranches = await prisma.branch.count({ where: { companyId: branch.companyId } });
+    if (totalBranches <= 1) {
+      return { error: 'Cannot delete the only remaining branch in the system', status: 400 };
+    }
+
+    // 2. Prevent deleting if it is the Main branch
+    if (branch.name.toLowerCase().includes('main')) {
+      return { error: 'The Main Bakery branch cannot be deleted', status: 400 };
+    }
+
+    // Delete the branch (cascades to child operational records)
+    await prisma.branch.delete({
+      where: { id },
+    });
+
+    return { data: { success: true } };
+  }
 }

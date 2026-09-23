@@ -61,6 +61,14 @@ dailySessionsRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res
   res.json(result.data);
 });
 
+dailySessionsRouter.post('/:id/save-draft', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res: Response) => {
+  const result = await dailySessionsService.saveSessionDraft(req.params.id, req.body);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
 dailySessionsRouter.post('/:id/submit-close', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res: Response) => {
   const result = await dailySessionsService.submitCloseRequest(req.params.id, req.body, req.user!.id);
   if (result.error) {

@@ -105,6 +105,16 @@ export class UsersService {
       return { error: 'fullName, phone, password required', status: 400 };
     }
 
+    if (!finalFilesUrl?.trim()) {
+      return { error: 'Identification document is mandatory when creating a new user', status: 400 };
+    }
+
+    if (startDate && lastPaidDate) {
+      if (new Date(lastPaidDate).getTime() < new Date(startDate).getTime()) {
+        return { error: 'Last paid date cannot be earlier than employment start date', status: 400 };
+      }
+    }
+
     const existing = await prisma.user.findUnique({ where: { phone: phoneTrim } });
     if (existing) {
       return { error: 'Phone already exists', status: 400 };
@@ -148,6 +158,15 @@ export class UsersService {
     } = body;
 
     const finalFilesUrl = fileUrl !== undefined ? fileUrl : bodyFilesUrl;
+
+    if (startDate !== undefined || lastPaidDate !== undefined) {
+      const current = await prisma.user.findUnique({ where: { id }, select: { startDate: true, lastPaidDate: true } });
+      const s = startDate !== undefined ? (startDate ? new Date(startDate as string) : null) : current?.startDate;
+      const p = lastPaidDate !== undefined ? (lastPaidDate ? new Date(lastPaidDate as string) : null) : current?.lastPaidDate;
+      if (s && p && p.getTime() < s.getTime()) {
+        return { error: 'Last paid date cannot be earlier than employment start date', status: 400 };
+      }
+    }
 
     const data: Record<string, unknown> = {};
 

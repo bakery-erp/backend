@@ -44,3 +44,11 @@ branchesRouter.patch('/:id', requireRole('OWNER'), async (req: AuthRequest, res:
   }
   res.json(result.data);
 });
+
+branchesRouter.delete('/:id', requireRole('OWNER'), async (req: AuthRequest, res: Response) => {
+  const result = await branchesService.deleteBranch(req.params.id);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.status(204).send();
+});
