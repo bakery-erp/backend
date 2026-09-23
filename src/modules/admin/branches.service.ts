@@ -67,6 +67,20 @@ export class BranchesService {
         ...(isActive !== undefined && { isActive }),
       },
     });
+
+    // When a branch is enabled or disabled, synchronize the active status of all non-owner staff assigned to this branch
+    if (typeof isActive === 'boolean') {
+      await prisma.user.updateMany({
+        where: {
+          branchId: id,
+          role: { not: 'OWNER' },
+        },
+        data: {
+          isActive: isActive,
+        },
+      });
+    }
+
     return { data: branch };
   }
 }

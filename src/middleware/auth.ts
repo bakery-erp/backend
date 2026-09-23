@@ -33,10 +33,17 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
     const payload = jwt.verify(token, getJwtSecret()) as JwtPayload;
     const user = await prisma.user.findUnique({
       where: { id: payload.userId },
-      select: { id: true, phone: true, role: true, branchId: true, isActive: true },
+      select: {
+        id: true,
+        phone: true,
+        role: true,
+        branchId: true,
+        isActive: true,
+        branch: { select: { isActive: true } },
+      },
     });
-    if (!user || !user.isActive) {
-      return res.status(401).json({ error: 'User not found or inactive' });
+    if (!user || !user.isActive || (user.role !== 'OWNER' && user.branch && !user.branch.isActive)) {
+      return res.status(401).json({ error: 'User or branch is inactive' });
     }
     req.user = {
       id: user.id,
