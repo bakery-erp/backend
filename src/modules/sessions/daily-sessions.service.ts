@@ -207,16 +207,30 @@ export class DailySessionsService {
       productsByName.set(p.name.trim().toLowerCase(), p.id);
     }
 
-    const customerLoans = await prisma.loan.findMany({
-      where: {
-        branchId: session.branchId,
-        type: 'CUSTOMER',
-        date: session.date,
-      },
-    });
+    const [customerLoans, customerCredits] = await Promise.all([
+      prisma.loan.findMany({
+        where: {
+          branchId: session.branchId,
+          type: 'CUSTOMER',
+          date: session.date,
+        },
+      }),
+      prisma.customerCredit.findMany({
+        where: {
+          branchId: session.branchId,
+          date: session.date,
+        },
+      }),
+    ]);
     const creditLentMap: Record<string, number> = {};
     for (const loan of customerLoans) {
       const items = extractCreditItemsFromEntityId(loan.entityId, productsByName);
+      for (const it of items) {
+        creditLentMap[it.productId] = (creditLentMap[it.productId] || 0) + it.quantity;
+      }
+    }
+    for (const cc of customerCredits) {
+      const items = extractCreditItemsFromEntityId(cc.description, productsByName);
       for (const it of items) {
         creditLentMap[it.productId] = (creditLentMap[it.productId] || 0) + it.quantity;
       }
@@ -525,16 +539,30 @@ export class DailySessionsService {
       productsByName.set(p.name.trim().toLowerCase(), p.id);
     }
 
-    const customerLoans = await prisma.loan.findMany({
-      where: {
-        branchId: session.branchId,
-        type: 'CUSTOMER',
-        date: session.date,
-      },
-    });
+    const [customerLoans, customerCredits] = await Promise.all([
+      prisma.loan.findMany({
+        where: {
+          branchId: session.branchId,
+          type: 'CUSTOMER',
+          date: session.date,
+        },
+      }),
+      prisma.customerCredit.findMany({
+        where: {
+          branchId: session.branchId,
+          date: session.date,
+        },
+      }),
+    ]);
     const creditLentMap: Record<string, number> = {};
     for (const loan of customerLoans) {
       const items = extractCreditItemsFromEntityId(loan.entityId, productsByName);
+      for (const it of items) {
+        creditLentMap[it.productId] = (creditLentMap[it.productId] || 0) + it.quantity;
+      }
+    }
+    for (const cc of customerCredits) {
+      const items = extractCreditItemsFromEntityId(cc.description, productsByName);
       for (const it of items) {
         creditLentMap[it.productId] = (creditLentMap[it.productId] || 0) + it.quantity;
       }
@@ -680,8 +708,50 @@ export class DailySessionsService {
     return { data: updatedSession };
   }
 
+  async saveSessionDraft(sessionId: string, body: any): ServiceResult {
+    const session = await prisma.dailySession.findUnique({
+      where: { id: sessionId },
+    });
+    if (!session) {
+      return { error: 'Session not found', status: 404 };
+    }
+    if (session.status === 'CLOSED') {
+      return { error: 'Cannot modify a closed session', status: 400 };
+    }
+
+    const {
+      openingCashFloat,
+      actualCashAmount,
+      actualCbeAmount,
+      actualTelebirrAmount,
+      cashLeftoverAmount,
+      notes,
+      label,
+      draftExchangeLogs,
+    } = body;
+
+    const data: any = {};
+    if (openingCashFloat !== undefined) data.openingCashFloat = decimalToNum(openingCashFloat);
+    if (actualCashAmount !== undefined) data.actualCashAmount = decimalToNum(actualCashAmount);
+    if (actualCbeAmount !== undefined) data.actualCbeAmount = decimalToNum(actualCbeAmount);
+    if (actualTelebirrAmount !== undefined) data.actualTelebirrAmount = decimalToNum(actualTelebirrAmount);
+    if (cashLeftoverAmount !== undefined) data.cashLeftoverAmount = decimalToNum(cashLeftoverAmount);
+    if (notes !== undefined) data.notes = notes;
+    if (label !== undefined) data.label = label;
+    if (draftExchangeLogs !== undefined) {
+      data.draftExchangeLogs = typeof draftExchangeLogs === 'object' ? JSON.stringify(draftExchangeLogs) : String(draftExchangeLogs);
+    }
+
+    const updated = await prisma.dailySession.update({
+      where: { id: sessionId },
+      data,
+    });
+
+    return { data: updated };
+  }
+
   async submitCloseRequest(sessionId: string, body: any, userId: string): ServiceResult {
-    const { actualCashAmount, actualCbeAmount, actualTelebirrAmount, cashLeftoverAmount, notes, label, leftoverRecords, expenses } = body;
+    const { actualCashAmount, actualCbeAmount, actualTelebirrAmount, cashLeftoverAmount, notes, label, leftoverRecords, expenses, draftExchangeLogs } = body;
 
     const session = await prisma.dailySession.findUnique({
       where: { id: sessionId },
@@ -765,6 +835,7 @@ export class DailySessionsService {
         actualTelebirrAmount: actualTelebirrAmount != null ? decimalToNum(actualTelebirrAmount) : undefined,
         notes: notes ? String(notes) : undefined,
         label: label ? String(label).trim() : undefined,
+        draftExchangeLogs: draftExchangeLogs ? (typeof draftExchangeLogs === 'object' ? JSON.stringify(draftExchangeLogs) : String(draftExchangeLogs)) : undefined,
       },
       include: {
         expenses: true,
@@ -1361,16 +1432,30 @@ export class DailySessionsService {
     }
 
     // 7. Customer Credits Lent Today
-    const customerLoans = await prisma.loan.findMany({
-      where: {
-        branchId: bid,
-        type: 'CUSTOMER',
-        date: activeSession.date,
-      },
-    });
+    const [customerLoans, customerCredits] = await Promise.all([
+      prisma.loan.findMany({
+        where: {
+          branchId: bid,
+          type: 'CUSTOMER',
+          date: activeSession.date,
+        },
+      }),
+      prisma.customerCredit.findMany({
+        where: {
+          branchId: bid,
+          date: activeSession.date,
+        },
+      }),
+    ]);
     const creditLentMap: Record<string, number> = {};
     for (const loan of customerLoans) {
       const items = extractCreditItemsFromEntityId(loan.entityId, productsByName);
+      for (const it of items) {
+        creditLentMap[it.productId] = (creditLentMap[it.productId] || 0) + it.quantity;
+      }
+    }
+    for (const cc of customerCredits) {
+      const items = extractCreditItemsFromEntityId(cc.description, productsByName);
       for (const it of items) {
         creditLentMap[it.productId] = (creditLentMap[it.productId] || 0) + it.quantity;
       }

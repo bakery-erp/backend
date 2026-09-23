@@ -14,6 +14,7 @@ import { dailySessionsRouter, leftoverRecordsRouter, salesRouter, DailySessionsS
 import { suppliersRouter, supplierDeliveriesRouter } from './modules/procurement/index.js';
 import { financialCategoriesRouter, expensesRouter, loansRouter, penaltiesRouter, payrollRouter } from './modules/finance/index.js';
 import { analyticsRouter, dashboardRouter, financialReportsRouter } from './modules/reporting/index.js';
+import { customersRouter } from './modules/customers/customers.controller.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -29,6 +30,10 @@ const uploadsDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
+
+// Serve uploaded media / documents statically
+app.use('/uploads', express.static(uploadsDir));
+
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -68,6 +73,7 @@ app.use('/api/supplier-deliveries', supplierDeliveriesRouter);
 app.use('/api/expenses', expensesRouter);
 app.use('/api/financial-categories', financialCategoriesRouter);
 app.use('/api/loans', loansRouter);
+app.use('/api/customers', customersRouter);
 app.use('/api/penalties', penaltiesRouter);
 app.use('/api/payroll', payrollRouter);
 app.use('/api/analytics', analyticsRouter);

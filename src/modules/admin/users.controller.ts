@@ -27,6 +27,19 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+const profilePictureUpload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    if (allowed.includes(file.mimetype.toLowerCase())) {
+      cb(null, true);
+    } else {
+      cb(new Error('Unsupported file format. Please upload a JPG, PNG, or WebP image.'));
+    }
+  },
+});
+
 usersRouter.get('/roles', requireRole('OWNER', 'ADMIN'), (_req, res) => {
   res.json(['OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER', 'SAMBUSA_WORKER', 'EMPLOYEE']);
 });
@@ -52,7 +65,7 @@ usersRouter.post('/me/change-password', async (req: AuthRequest, res: Response) 
   res.json(result.data);
 });
 
-usersRouter.post('/me/profile-picture', upload.single('file'), async (req: AuthRequest, res: Response) => {
+usersRouter.post('/me/profile-picture', profilePictureUpload.single('file'), async (req: AuthRequest, res: Response) => {
   if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const fileUrl = `/uploads/${req.file.filename}`;
@@ -84,7 +97,10 @@ usersRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response
 });
 
 usersRouter.post('/', requireRole('OWNER', 'ADMIN'), upload.single('file'), async (req: AuthRequest, res: Response) => {
-  const fileUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
+  if (!req.file && !req.body.filesUrl) {
+    return res.status(400).json({ error: 'Identification document is mandatory when creating a new user.' });
+  }
+  const fileUrl = req.file ? `/uploads/${req.file.filename}` : req.body.filesUrl;
   const result = await usersService.createUser(req.body, fileUrl);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });

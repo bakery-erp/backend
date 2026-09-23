@@ -117,6 +117,7 @@ model Company {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   branches  Branch[]
+  customers Customer[]
 
   @@unique([name])
 }
@@ -137,6 +138,8 @@ model Branch {
   suppliers Supplier[]
   expenses Expense[]
   loans Loan[]
+  customers Customer[]
+  customerCredits CustomerCredit[]
 
   @@index([companyId])
 }
@@ -360,6 +363,7 @@ model DailySession {
   actualCbeAmount    Decimal? @db.Decimal(12, 2)
   actualTelebirrAmount Decimal? @db.Decimal(12, 2)
   notes              String?
+  draftExchangeLogs  String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   sales        Sale[]
@@ -367,6 +371,7 @@ model DailySession {
   supplierDeliveries SupplierDelivery[]
   leftoverRecords LeftoverRecord[]
   productionBatches ProductionBatch[]
+  customerCredits CustomerCredit[]
   @@unique([branchId, date])
 }
 
@@ -550,4 +555,66 @@ model PasswordResetRequest {
 
   @@index([userId])
   @@index([status])
+}
+
+enum CreditStatus {
+  OPEN
+  PAID
+  OVERDUE
+}
+
+model Customer {
+  id          String           @id @default(cuid())
+  companyId   String
+  company     Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  branchId    String?
+  branch      Branch?          @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  fullName    String
+  phone       String
+  address     String?
+  notes       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  credits     CustomerCredit[]
+
+  @@index([companyId])
+  @@index([branchId])
+  @@index([phone])
+}
+
+model CustomerCredit {
+  id               String                  @id @default(cuid())
+  customerId       String
+  customer         Customer                @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  branchId         String
+  branch           Branch                  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  sessionId        String?
+  session          DailySession?           @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  amount           Decimal                 @db.Decimal(12, 2)
+  paidAmount       Decimal                 @default(0) @db.Decimal(12, 2)
+  remainingBalance Decimal                 @db.Decimal(12, 2)
+  status           CreditStatus            @default(OPEN)
+  description      String?
+  dueDate          DateTime?               @db.Date
+  date             DateTime                @db.Date @default(dbgenerated("CURRENT_DATE"))
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  payments         CustomerCreditPayment[]
+
+  @@index([customerId])
+  @@index([branchId])
+  @@index([status])
+}
+
+model CustomerCreditPayment {
+  id             String         @id @default(cuid())
+  creditId       String
+  credit         CustomerCredit @relation(fields: [creditId], references: [id], onDelete: Cascade)
+  amount         Decimal        @db.Decimal(12, 2)
+  paymentMethod  PaymentMethod  @default(CASH)
+  notes          String?
+  date           DateTime       @db.Date
+  createdAt      DateTime       @default(now())
+
+  @@index([creditId])
 }

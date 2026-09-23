@@ -42,12 +42,19 @@ export class AuthService {
     }
 
     const user = await prisma.user.findFirst({
-      where: { phone: phoneTrim, isActive: true },
+      where: { phone: phoneTrim },
       include: { branch: { select: { id: true, name: true, isActive: true } } },
     });
 
     if (!user) {
       return { error: 'Invalid credentials', status: 401 };
+    }
+
+    if (!user.isActive) {
+      return {
+        error: 'Your account has been deactivated by an administrator. Please contact your manager.',
+        status: 403,
+      };
     }
 
     if (user.branch && !user.branch.isActive) {
