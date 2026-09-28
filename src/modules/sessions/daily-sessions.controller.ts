@@ -62,7 +62,7 @@ dailySessionsRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res
 });
 
 dailySessionsRouter.post('/:id/save-draft', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res: Response) => {
-  const result = await dailySessionsService.saveSessionDraft(req.params.id, req.body);
+  const result = await dailySessionsService.saveSessionDraft(req.params.id, req.body, req.user?.id);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

@@ -613,6 +613,7 @@ export class DailySessionsService {
       label,
       leftoverRecords,
       expenses,
+      draftExchangeLogs,
     } = body;
 
     const existingSession = await prisma.dailySession.findUnique({ where: { id } });
@@ -620,11 +621,9 @@ export class DailySessionsService {
       return { error: 'Session not found', status: 404 };
     }
 
-    // Lockout Enforcement: CLOSED or CLOSE_PENDING sessions cannot be edited
-    const ethTodayYmd = new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
-    const sessionYmd = dateToYmdUtc(existingSession.date);
-    if (sessionYmd < ethTodayYmd || existingSession.status === 'CLOSED' || existingSession.status === 'CLOSE_PENDING') {
-      return { error: 'Session editing is locked after midnight or once closed/pending approval.', status: 400 };
+    // Lockout Enforcement: CLOSED sessions cannot be edited
+    if (existingSession.status === 'CLOSED') {
+      return { error: 'Session editing is locked because the session is already CLOSED.', status: 400 };
     }
 
     // Stock Limit Validation for Leftover Products
@@ -637,6 +636,11 @@ export class DailySessionsService {
     if (status) data.status = status;
     if (label !== undefined) data.label = label ? String(label).trim() : null;
     if (notes !== undefined) data.notes = notes ? String(notes).trim() : null;
+    if (draftExchangeLogs !== undefined) {
+      data.draftExchangeLogs = draftExchangeLogs
+        ? (typeof draftExchangeLogs === 'object' ? JSON.stringify(draftExchangeLogs) : String(draftExchangeLogs))
+        : null;
+    }
     if (cashLeftoverAmount !== undefined) {
       data.cashLeftoverAmount = cashLeftoverAmount === null || cashLeftoverAmount === '' ? null : decimalToNum(cashLeftoverAmount);
     }
@@ -692,13 +696,13 @@ export class DailySessionsService {
           create: {
             sessionId: id,
             productId: pid,
-            quantityRemaining: Math.max(0, qRem || 0),
-            damagedQuantity: Math.max(0, qDam || 0),
+            quantityRemaining: Math.max(0, isNaN(qRem) ? 0 : qRem),
+            damagedQuantity: Math.max(0, isNaN(qDam) ? 0 : qDam),
             damageReason: row.damageReason ? String(row.damageReason).trim() : null,
           },
           update: {
-            quantityRemaining: Math.max(0, qRem || 0),
-            damagedQuantity: Math.max(0, qDam || 0),
+            quantityRemaining: Math.max(0, isNaN(qRem) ? 0 : qRem),
+            damagedQuantity: Math.max(0, isNaN(qDam) ? 0 : qDam),
             damageReason: row.damageReason ? String(row.damageReason).trim() : null,
           },
         });
@@ -709,7 +713,7 @@ export class DailySessionsService {
       where: { id },
       data,
       include: {
-        expenses: true,
+        expenses: { include: { financialCategory: true, user: true } },
         leftoverRecords: { include: { product: true } },
       },
     });
@@ -717,7 +721,7 @@ export class DailySessionsService {
     return { data: updatedSession };
   }
 
-  async saveSessionDraft(sessionId: string, body: any): ServiceResult {
+  async saveSessionDraft(sessionId: string, body: any, userId?: string): ServiceResult {
     const session = await prisma.dailySession.findUnique({
       where: { id: sessionId },
     });
@@ -737,23 +741,100 @@ export class DailySessionsService {
       notes,
       label,
       draftExchangeLogs,
+      leftoverRecords,
+      expenses,
     } = body;
 
     const data: any = {};
-    if (openingCashFloat !== undefined) data.openingCashFloat = decimalToNum(openingCashFloat);
-    if (actualCashAmount !== undefined) data.actualCashAmount = decimalToNum(actualCashAmount);
-    if (actualCbeAmount !== undefined) data.actualCbeAmount = decimalToNum(actualCbeAmount);
-    if (actualTelebirrAmount !== undefined) data.actualTelebirrAmount = decimalToNum(actualTelebirrAmount);
-    if (cashLeftoverAmount !== undefined) data.cashLeftoverAmount = decimalToNum(cashLeftoverAmount);
-    if (notes !== undefined) data.notes = notes;
-    if (label !== undefined) data.label = label;
+    if (openingCashFloat !== undefined) {
+      data.openingCashFloat = openingCashFloat === null || openingCashFloat === '' ? null : decimalToNum(openingCashFloat);
+    }
+    if (actualCashAmount !== undefined) {
+      data.actualCashAmount = actualCashAmount === null || actualCashAmount === '' ? null : decimalToNum(actualCashAmount);
+    }
+    if (actualCbeAmount !== undefined) {
+      data.actualCbeAmount = actualCbeAmount === null || actualCbeAmount === '' ? null : decimalToNum(actualCbeAmount);
+    }
+    if (actualTelebirrAmount !== undefined) {
+      data.actualTelebirrAmount = actualTelebirrAmount === null || actualTelebirrAmount === '' ? null : decimalToNum(actualTelebirrAmount);
+    }
+    if (cashLeftoverAmount !== undefined) {
+      data.cashLeftoverAmount = cashLeftoverAmount === null || cashLeftoverAmount === '' ? null : decimalToNum(cashLeftoverAmount);
+    }
+    if (notes !== undefined) {
+      data.notes = notes ? String(notes).trim() : null;
+    }
+    if (label !== undefined) {
+      data.label = label ? String(label).trim() : null;
+    }
     if (draftExchangeLogs !== undefined) {
-      data.draftExchangeLogs = typeof draftExchangeLogs === 'object' ? JSON.stringify(draftExchangeLogs) : String(draftExchangeLogs);
+      data.draftExchangeLogs = draftExchangeLogs
+        ? (typeof draftExchangeLogs === 'object' ? JSON.stringify(draftExchangeLogs) : String(draftExchangeLogs))
+        : null;
+    }
+
+    // 1. Handle Expenses (create new or update existing)
+    if (Array.isArray(expenses)) {
+      for (const exp of expenses) {
+        if (exp.id) {
+          await prisma.expense.update({
+            where: { id: exp.id },
+            data: {
+              amount: decimalToNum(exp.amount),
+              category: exp.category || 'MISC',
+              description: exp.description || null,
+            },
+          });
+        } else if (exp.amount && Number(exp.amount) > 0) {
+          await prisma.expense.create({
+            data: {
+              branchId: session.branchId,
+              userId: userId || session.id,
+              sessionId,
+              date: session.date,
+              amount: decimalToNum(exp.amount),
+              category: exp.category || 'MISC',
+              description: exp.description || null,
+              type: 'COMPANY',
+            },
+          });
+        }
+      }
+    }
+
+    // 2. Handle Leftover Records (upsert)
+    if (Array.isArray(leftoverRecords)) {
+      for (const row of leftoverRecords) {
+        const pid = typeof row.productId === 'string' ? row.productId.trim() : '';
+        if (!pid) continue;
+        const qRem = typeof row.quantityRemaining === 'number' ? row.quantityRemaining : parseInt(String(row.quantityRemaining ?? '0'), 10);
+        const qDam = typeof row.damagedQuantity === 'number' ? row.damagedQuantity : parseInt(String(row.damagedQuantity ?? '0'), 10);
+
+        await prisma.leftoverRecord.upsert({
+          where: { sessionId_productId: { sessionId, productId: pid } },
+          create: {
+            sessionId,
+            productId: pid,
+            quantityRemaining: Math.max(0, isNaN(qRem) ? 0 : qRem),
+            damagedQuantity: Math.max(0, isNaN(qDam) ? 0 : qDam),
+            damageReason: row.damageReason ? String(row.damageReason).trim() : null,
+          },
+          update: {
+            quantityRemaining: Math.max(0, isNaN(qRem) ? 0 : qRem),
+            damagedQuantity: Math.max(0, isNaN(qDam) ? 0 : qDam),
+            damageReason: row.damageReason ? String(row.damageReason).trim() : null,
+          },
+        });
+      }
     }
 
     const updated = await prisma.dailySession.update({
       where: { id: sessionId },
       data,
+      include: {
+        expenses: { include: { financialCategory: true, user: true } },
+        leftoverRecords: { include: { product: true } },
+      },
     });
 
     return { data: updated };
@@ -842,6 +923,7 @@ export class DailySessionsService {
         actualCashAmount: actualCashAmount != null ? decimalToNum(actualCashAmount) : undefined,
         actualCbeAmount: actualCbeAmount != null ? decimalToNum(actualCbeAmount) : undefined,
         actualTelebirrAmount: actualTelebirrAmount != null ? decimalToNum(actualTelebirrAmount) : undefined,
+        cashLeftoverAmount: cashLeftoverAmount != null ? decimalToNum(cashLeftoverAmount) : undefined,
         notes: notes ? String(notes) : undefined,
         label: label ? String(label).trim() : undefined,
         draftExchangeLogs: draftExchangeLogs ? (typeof draftExchangeLogs === 'object' ? JSON.stringify(draftExchangeLogs) : String(draftExchangeLogs)) : undefined,
@@ -857,7 +939,7 @@ export class DailySessionsService {
 
   async finalizeDailySession(sessionId: string, body: any, userId: string): ServiceResult {
     const cashLeftoverAmountRaw = body.cashLeftoverAmount;
-    const { leftoverRecords, actualCashAmount, actualCbeAmount, actualTelebirrAmount, notes, label, expenses } = body;
+    const { leftoverRecords, actualCashAmount, actualCbeAmount, actualTelebirrAmount, notes, label, expenses, draftExchangeLogs } = body;
 
     const session = await prisma.dailySession.findUnique({
       where: { id: sessionId },
@@ -908,32 +990,34 @@ export class DailySessionsService {
     const sessionBusinessDate = session.date;
 
     // Upsert leftover records (including damaged quantities)
-    for (const row of leftoverRecords) {
-      const pid = typeof row.productId === 'string' ? row.productId.trim() : '';
-      if (!pid) continue;
-      const rawRem = row.quantityRemaining;
-      const qRem = typeof rawRem === 'number' ? rawRem : parseInt(String(rawRem ?? '0'), 10);
-      const quantityRemaining = Number.isFinite(qRem) ? Math.max(0, Math.floor(qRem)) : 0;
+    if (Array.isArray(leftoverRecords)) {
+      for (const row of leftoverRecords) {
+        const pid = typeof row.productId === 'string' ? row.productId.trim() : '';
+        if (!pid) continue;
+        const rawRem = row.quantityRemaining;
+        const qRem = typeof rawRem === 'number' ? rawRem : parseInt(String(rawRem ?? '0'), 10);
+        const quantityRemaining = Number.isFinite(qRem) ? Math.max(0, Math.floor(qRem)) : 0;
 
-      const rawDam = row.damagedQuantity;
-      const qDam = typeof rawDam === 'number' ? rawDam : parseInt(String(rawDam ?? '0'), 10);
-      const damagedQuantity = Number.isFinite(qDam) ? Math.max(0, Math.floor(qDam)) : 0;
+        const rawDam = row.damagedQuantity;
+        const qDam = typeof rawDam === 'number' ? rawDam : parseInt(String(rawDam ?? '0'), 10);
+        const damagedQuantity = Number.isFinite(qDam) ? Math.max(0, Math.floor(qDam)) : 0;
 
-      const damageReason = typeof row.damageReason === 'string' ? row.damageReason.trim() : null;
+        const damageReason = typeof row.damageReason === 'string' ? row.damageReason.trim() : null;
 
-      await prisma.leftoverRecord.upsert({
-        where: {
-          sessionId_productId: { sessionId, productId: pid },
-        },
-        create: {
-          sessionId,
-          productId: pid,
-          quantityRemaining,
-          damagedQuantity,
-          damageReason,
-        },
-        update: { quantityRemaining, damagedQuantity, damageReason },
-      });
+        await prisma.leftoverRecord.upsert({
+          where: {
+            sessionId_productId: { sessionId, productId: pid },
+          },
+          create: {
+            sessionId,
+            productId: pid,
+            quantityRemaining,
+            damagedQuantity,
+            damageReason,
+          },
+          update: { quantityRemaining, damagedQuantity, damageReason },
+        });
+      }
     }
 
     // Opening leftovers from previous closed day
@@ -1114,6 +1198,11 @@ export class DailySessionsService {
         ...(actualTelebirrAmount != null && { actualTelebirrAmount: decimalToNum(actualTelebirrAmount) }),
         ...(notes && { notes: String(notes) }),
         ...(label && { label: String(label).trim() }),
+        ...(draftExchangeLogs !== undefined && {
+          draftExchangeLogs: draftExchangeLogs
+            ? (typeof draftExchangeLogs === 'object' ? JSON.stringify(draftExchangeLogs) : String(draftExchangeLogs))
+            : null,
+        }),
       },
     });
 
