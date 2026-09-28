@@ -17,7 +17,8 @@ export class ProductsService {
     isActive?: boolean,
     branchId?: string
   ): ServiceResult {
-    let categoryIds: string[] | undefined;
+    try {
+      let categoryIds: string[] | undefined;
 
     if (categoryId) {
       if (includeSubcategories) {
@@ -148,7 +149,11 @@ export class ProductsService {
       };
     });
 
-    return { data: enrichedList };
+      return { data: enrichedList };
+    } catch (err: any) {
+      console.error('[ProductsService.getProducts] Error:', err);
+      return { error: err.message || 'Failed to fetch products', status: 500 };
+    }
   }
 
   /**
