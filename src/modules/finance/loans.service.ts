@@ -185,7 +185,13 @@ export class LoansService {
         entityId: isCustomerLoan
           ? customerIdentifier?.trim()
           : isOwnerLoan
-          ? (body.notes || body.reason || entityId || 'Owner Personal Loan').trim()
+          ? (body.lenderName || body.lender || entityId || body.reason || body.notes
+              ? JSON.stringify({
+                  lender: (body.lenderName || body.lender || entityId || '').trim(),
+                  reason: (body.reason || '').trim(),
+                  notes: (body.notes || '').trim(),
+                })
+              : null)
           : null,
         userId: !isCustomerLoan ? loanUserId ?? undefined : null,
         totalAmount: amount,
