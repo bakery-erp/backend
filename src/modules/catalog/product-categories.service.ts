@@ -52,6 +52,14 @@ export class ProductCategoriesService {
       return { error: 'name and type (PRODUCED|RESELL) required', status: 400 };
     }
 
+    const trimmedName = name.trim();
+    const existingName = await prisma.productCategory.findFirst({
+      where: { name: { equals: trimmedName, mode: 'insensitive' } },
+    });
+    if (existingName) {
+      return { error: `Category with name "${trimmedName}" already exists`, status: 400 };
+    }
+
     const parent = await this.resolveParentCategory(parentId);
     if (typeof parent === 'string') {
       return { error: parent, status: 400 };
@@ -60,18 +68,25 @@ export class ProductCategoriesService {
       return { error: 'parent category must have the same type', status: 400 };
     }
 
-    const category = await prisma.productCategory.create({
-      data: {
-        name: name.trim(),
-        type: type as any,
-        parentId: parent ? parent.id : null,
-      },
-      include: {
-        parent: { select: { id: true, name: true, type: true } },
-        _count: { select: { products: true, children: true } },
-      },
-    });
-    return { data: category };
+    try {
+      const category = await prisma.productCategory.create({
+        data: {
+          name: trimmedName,
+          type: type as any,
+          parentId: parent ? parent.id : null,
+        },
+        include: {
+          parent: { select: { id: true, name: true, type: true } },
+          _count: { select: { products: true, children: true } },
+        },
+      });
+      return { data: category };
+    } catch (err: any) {
+      if (err.code === 'P2002') {
+        return { error: `Category with name "${trimmedName}" already exists`, status: 400 };
+      }
+      throw err;
+    }
   }
 
   async updateCategory(id: string, body: { name?: string; type?: string; parentId?: string | null }): ServiceResult {
@@ -81,6 +96,20 @@ export class ProductCategoriesService {
     }
 
     const { name, type, parentId } = body;
+    const trimmedName = name !== undefined ? name.trim() : undefined;
+
+    if (trimmedName && trimmedName.toLowerCase() !== existing.name.toLowerCase()) {
+      const duplicate = await prisma.productCategory.findFirst({
+        where: {
+          id: { not: id },
+          name: { equals: trimmedName, mode: 'insensitive' },
+        },
+      });
+      if (duplicate) {
+        return { error: `Category with name "${trimmedName}" already exists`, status: 400 };
+      }
+    }
+
     const resolvedType = type !== undefined ? type : existing.type;
     const resolvedParentId = parentId !== undefined ? parentId : existing.parentId;
 
@@ -92,19 +121,26 @@ export class ProductCategoriesService {
       return { error: 'parent category must have the same type', status: 400 };
     }
 
-    const category = await prisma.productCategory.update({
-      where: { id },
-      data: {
-        ...(name !== undefined && { name: name.trim() }),
-        ...(type !== undefined && { type: type as any }),
-        ...(parentId !== undefined && { parentId: parent ? parent.id : null }),
-      },
-      include: {
-        parent: { select: { id: true, name: true, type: true } },
-        _count: { select: { products: true, children: true } },
-      },
-    });
-    return { data: category };
+    try {
+      const category = await prisma.productCategory.update({
+        where: { id },
+        data: {
+          ...(trimmedName !== undefined && { name: trimmedName }),
+          ...(type !== undefined && { type: type as any }),
+          ...(parentId !== undefined && { parentId: parent ? parent.id : null }),
+        },
+        include: {
+          parent: { select: { id: true, name: true, type: true } },
+          _count: { select: { products: true, children: true } },
+        },
+      });
+      return { data: category };
+    } catch (err: any) {
+      if (err.code === 'P2002') {
+        return { error: `Category with name "${trimmedName}" already exists`, status: 400 };
+      }
+      throw err;
+    }
   }
 
   async deleteCategory(id: string): ServiceResult {
