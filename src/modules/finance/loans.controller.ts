@@ -16,12 +16,16 @@ loansRouter.get('/my', async (req: AuthRequest, res: Response) => {
 });
 
 loansRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res: Response) => {
-  const branchId = (req.query.branchId as string) || req.user?.branchId;
+  let branchId: string | undefined = (req.query.branchId as string) || req.user?.branchId;
+  if (req.query.branchId === 'ALL' || req.query.branchId === '' || (req.query.type === 'OWNER_LOAN' && !req.query.branchId)) {
+    branchId = undefined;
+  }
   const type = req.query.type as string | undefined;
   const status = req.query.status as string | undefined;
   const from = req.query.from as string | undefined;
   const to = req.query.to as string | undefined;
-  const result = await loansService.getLoans(branchId, type, status, from, to);
+  const userId = req.query.userId as string | undefined;
+  const result = await loansService.getLoans(branchId, type, status, from, to, userId);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -37,7 +41,11 @@ loansRouter.get('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req, re
 });
 
 loansRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res: Response) => {
-  const result = await loansService.createLoan(req.body, req.user?.branchId);
+  const payload = {
+    ...req.body,
+    userId: req.body.userId || (req.body.type === 'OWNER_LOAN' ? req.user?.id : undefined),
+  };
+  const result = await loansService.createLoan(payload, req.user?.branchId);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

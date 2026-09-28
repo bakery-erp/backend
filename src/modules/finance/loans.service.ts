@@ -23,9 +23,10 @@ export class LoansService {
     return { data: list };
   }
 
-  async getLoans(branchId?: string | null, type?: string, status?: string, from?: string, to?: string): ServiceResult {
+  async getLoans(branchId?: string | null, type?: string, status?: string, from?: string, to?: string, userId?: string): ServiceResult {
     const where: any = {};
     if (branchId) where.branchId = branchId;
+    if (userId) where.userId = userId;
     if (type) {
       if (type === 'EMPLOYEE' || type === 'STAFF') {
         where.type = { in: ['EMPLOYEE', 'STAFF_LOAN', 'SALARY_ADVANCE'] };
@@ -41,7 +42,7 @@ export class LoansService {
     }
     const list = await prisma.loan.findMany({
       where,
-      include: { user: { select: { id: true, fullName: true, phone: true, role: true } }, payments: true },
+      include: { user: { select: { id: true, fullName: true, phone: true, role: true } }, payments: { orderBy: { date: 'desc' } } },
       orderBy: { createdAt: 'desc' },
     });
     return { data: list };
@@ -77,7 +78,16 @@ export class LoansService {
       return { error: 'type and totalAmount required', status: 400 };
     }
     const isCustomerLoan = type === 'CUSTOMER' || type === 'CUSTOMER_CREDIT';
-    const finalType = isCustomerLoan ? 'CUSTOMER' : 'EMPLOYEE';
+    const isOwnerLoan = type === 'OWNER_LOAN' || type === 'OWNER';
+    const finalType = isCustomerLoan
+      ? 'CUSTOMER'
+      : isOwnerLoan
+      ? 'OWNER_LOAN'
+      : type === 'SALARY_ADVANCE'
+      ? 'SALARY_ADVANCE'
+      : type === 'STAFF_LOAN'
+      ? 'STAFF_LOAN'
+      : 'EMPLOYEE';
 
     let activeSessionDate: Date | undefined;
     let availMap = new Map<string, any>();
@@ -151,23 +161,33 @@ export class LoansService {
       customerIdentifier = `${namePart}${phonePart}${prodSummary}${jsonMeta}${notesPart}`;
     }
 
+    let loanUserId = userId;
+    if (isOwnerLoan && !loanUserId) {
+      const ownerUser = await prisma.user.findFirst({ where: { role: 'OWNER' } });
+      if (ownerUser) loanUserId = ownerUser.id;
+    }
+
     if (isCustomerLoan && !customerIdentifier?.trim()) {
       return { error: 'Customer name / entityId required for customer credit', status: 400 };
     }
-    if (!isCustomerLoan && !userId) {
+    if (!isCustomerLoan && !isOwnerLoan && !loanUserId) {
       return { error: 'userId required for employee loan or salary advance', status: 400 };
     }
 
     const amount = decimalToNum(totalAmount);
-    const initialStatus = isCustomerLoan ? 'OPEN' : 'PENDING_APPROVAL';
+    const initialStatus = isCustomerLoan || isOwnerLoan ? 'OPEN' : 'PENDING_APPROVAL';
     const loanDate = date ? businessDateFromYmdString(date) : (activeSessionDate ?? undefined);
 
     const loan = await prisma.loan.create({
       data: {
         branchId: bid,
         type: finalType as any,
-        entityId: isCustomerLoan ? customerIdentifier?.trim() : null,
-        userId: !isCustomerLoan ? userId ?? undefined : null,
+        entityId: isCustomerLoan
+          ? customerIdentifier?.trim()
+          : isOwnerLoan
+          ? (body.notes || body.reason || entityId || 'Owner Personal Loan').trim()
+          : null,
+        userId: !isCustomerLoan ? loanUserId ?? undefined : null,
         totalAmount: amount,
         remainingBalance: amount,
         date: loanDate ?? undefined,

@@ -73,6 +73,7 @@ enum LoanType {
   STAFF_LOAN
   EMPLOYEE
   CUSTOMER
+  OWNER_LOAN
 }
 
 enum LoanStatus {
