@@ -123,23 +123,23 @@ async function main() {
   console.log('🍞 [4/8] Seeding Products & Price Catalog...');
   const productsData = [
     { catName: 'Bread (Machine)', name: 'Bread', flavor: 'Normal', unitType: UnitType.PIECE, basePrice: 10, buyPrice: null, revId: fcRetail.id },
-    { catName: 'Bread (Machine)', name: 'Bread', flavor: 'Barley', unitType: UnitType.PIECE, basePrice: 12, buyPrice: null, revId: fcRetail.id },
+    { catName: 'Bread (Machine)', name: 'Barley Bread', flavor: 'Barley', unitType: UnitType.PIECE, basePrice: 12, buyPrice: null, revId: fcRetail.id },
     { catName: 'Bread (Machine)', name: 'Bomboloni', flavor: null, unitType: UnitType.PIECE, basePrice: 15, buyPrice: null, revId: fcRetail.id },
     { catName: 'Bread (Machine)', name: 'Donut', flavor: 'Chocolate', unitType: UnitType.PIECE, basePrice: 20, buyPrice: null, revId: fcRetail.id },
-    { catName: 'Sambusa / Pastry / Snacks', name: 'Sambusa', flavor: 'Lentil', unitType: UnitType.PIECE, basePrice: 15, buyPrice: null, revId: fcRetail.id },
-    { catName: 'Sambusa / Pastry / Snacks', name: 'Sambusa', flavor: 'Meat', unitType: UnitType.PIECE, basePrice: 25, buyPrice: null, revId: fcRetail.id },
+    { catName: 'Sambusa / Pastry / Snacks', name: 'Lentil Sambusa', flavor: 'Lentil', unitType: UnitType.PIECE, basePrice: 15, buyPrice: null, revId: fcRetail.id },
+    { catName: 'Sambusa / Pastry / Snacks', name: 'Meat Sambusa', flavor: 'Meat', unitType: UnitType.PIECE, basePrice: 25, buyPrice: null, revId: fcRetail.id },
     { catName: 'Cakes & Sweets', name: 'Slice Cake', flavor: 'Vanilla', unitType: UnitType.PIECE, basePrice: 60, buyPrice: null, revId: fcRetail.id },
     { catName: 'Milk & Yoghurt', name: 'Fresh Milk', flavor: null, unitType: UnitType.LITER, basePrice: 60, buyPrice: 48, revId: fcResell.id },
     { catName: 'Milk & Yoghurt', name: 'Yoghurt', flavor: 'Plain', unitType: UnitType.PIECE, basePrice: 30, buyPrice: 24, revId: fcResell.id },
-    { catName: 'Injera', name: 'Injera', flavor: 'Red Teff', unitType: UnitType.PIECE, basePrice: 35, buyPrice: 28, revId: fcResell.id },
-    { catName: 'Injera', name: 'Injera', flavor: 'White Teff', unitType: UnitType.PIECE, basePrice: 40, buyPrice: 32, revId: fcResell.id },
+    { catName: 'Injera', name: 'Red Teff Injera', flavor: 'Red Teff', unitType: UnitType.PIECE, basePrice: 35, buyPrice: 28, revId: fcResell.id },
+    { catName: 'Injera', name: 'White Teff Injera', flavor: 'White Teff', unitType: UnitType.PIECE, basePrice: 40, buyPrice: 32, revId: fcResell.id },
   ];
 
   const productMap = new Map<string, string>();
   for (const p of productsData) {
     const categoryId = catMap.get(p.catName)!;
-    let prod = await prisma.product.findFirst({
-      where: { categoryId, name: p.name, flavor: p.flavor },
+    let prod = await prisma.product.findUnique({
+      where: { name: p.name },
     });
     if (!prod) {
       prod = await prisma.product.create({
@@ -157,14 +157,19 @@ async function main() {
       await prisma.product.update({
         where: { id: prod.id },
         data: {
+          flavor: p.flavor,
           basePrice: p.basePrice,
           buyPrice: p.buyPrice,
           financialCategory: { connect: { id: p.revId } },
         },
       });
     }
-    const key = `${p.name}_${p.flavor ?? 'default'}`;
-    productMap.set(key, prod.id);
+    productMap.set(p.name, prod.id);
+    productMap.set(`${p.name}_${p.flavor || 'default'}`, prod.id);
+    if (p.name === 'Bread') productMap.set('Bread_Normal', prod.id);
+    if (p.name === 'Barley Bread') productMap.set('Bread_Barley', prod.id);
+    if (p.name === 'White Teff Injera') productMap.set('Injera_White Teff', prod.id);
+    if (p.name === 'Red Teff Injera') productMap.set('Injera_Red Teff', prod.id);
   }
 
   // 5. Stock Items & Raw Materials

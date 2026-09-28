@@ -435,6 +435,18 @@ export class ProductsService {
       return { error: 'categoryId, name, unitType, basePrice required', status: 400 };
     }
 
+    const trimmedName = String(name).trim();
+    if (!trimmedName) {
+      return { error: 'Product name cannot be empty', status: 400 };
+    }
+
+    const existingName = await prisma.product.findFirst({
+      where: { name: { equals: trimmedName, mode: 'insensitive' } },
+    });
+    if (existingName) {
+      return { error: `A product with name "${trimmedName}" already exists. Product names must be unique.`, status: 400 };
+    }
+
     const fcErr = await this.validateProductFinancialCategory(financialCategoryId as string | undefined);
     if (fcErr) {
       return { error: fcErr, status: 400 };
@@ -447,7 +459,7 @@ export class ProductsService {
           financialCategoryId != null && String(financialCategoryId).trim() !== ''
             ? String(financialCategoryId)
             : null,
-        name: String(name).trim(),
+        name: trimmedName,
         flavor: flavor ? String(flavor).trim() : null,
         unitType: unitType as any,
         basePrice: decimalToNum(basePrice) ?? 0,
@@ -473,7 +485,22 @@ export class ProductsService {
 
     const data: Record<string, unknown> = {};
     if (categoryId != null) data.categoryId = categoryId;
-    if (name != null) data.name = String(name).trim();
+    if (name != null) {
+      const trimmedName = String(name).trim();
+      if (!trimmedName) {
+        return { error: 'Product name cannot be empty', status: 400 };
+      }
+      const existingName = await prisma.product.findFirst({
+        where: {
+          name: { equals: trimmedName, mode: 'insensitive' },
+          id: { not: id },
+        },
+      });
+      if (existingName) {
+        return { error: `A product with name "${trimmedName}" already exists. Product names must be unique.`, status: 400 };
+      }
+      data.name = trimmedName;
+    }
     if (flavor !== undefined) data.flavor = flavor ? String(flavor).trim() : null;
     if (unitType != null) data.unitType = unitType;
     if (basePrice != null) data.basePrice = decimalToNum(basePrice);
