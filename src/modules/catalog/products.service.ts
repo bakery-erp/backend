@@ -77,8 +77,9 @@ export class ProductsService {
 
     const stockMap = await this.calculateHouseStockMap(branchId);
 
-    // Compute cumulative metrics (produced, delivered, sold, damaged) for reference
-    const [producedAgg, deliveredAgg, conversionsToAgg, conversionsFromAgg, salesAgg, damagedAgg] = await Promise.all([
+    // Compute cumulative metrics (produced, delivered, sold, damaged) in small batches
+    // to avoid connection pool exhaustion on serverless databases
+    const [producedAgg, deliveredAgg] = await Promise.all([
       prisma.productionItem.groupBy({
         by: ['productId'],
         _sum: { quantityProduced: true },
@@ -94,6 +95,9 @@ export class ProductsService {
         _sum: { quantityReceived: true, returnedQuantity: true },
         where: branchId ? { supplier: { branchId } } : {},
       }),
+    ]);
+
+    const [conversionsToAgg, conversionsFromAgg] = await Promise.all([
       prisma.productConversion.groupBy({
         by: ['toProductId'],
         _sum: { toQuantity: true },
@@ -104,6 +108,9 @@ export class ProductsService {
         _sum: { fromQuantity: true },
         where: branchId ? { branchId } : {},
       }),
+    ]);
+
+    const [salesAgg, damagedAgg] = await Promise.all([
       prisma.saleItem.groupBy({
         by: ['productId'],
         _sum: { quantity: true },
@@ -180,8 +187,8 @@ export class ProductsService {
       });
 
       if (!latestSession) {
-        // Fallback for brand new branch with no session yet
-        const [producedAgg, deliveredAgg, convToAgg, convFromAgg, salesAgg, damagedAgg] = await Promise.all([
+        // Fallback for brand new branch with no session yet (batch queries in pairs)
+        const [producedAgg, deliveredAgg] = await Promise.all([
           prisma.productionItem.groupBy({
             by: ['productId'],
             _sum: { quantityProduced: true },
@@ -192,6 +199,9 @@ export class ProductsService {
             _sum: { quantityReceived: true, returnedQuantity: true },
             where: { supplier: { branchId: b.id } },
           }),
+        ]);
+
+        const [convToAgg, convFromAgg] = await Promise.all([
           prisma.productConversion.groupBy({
             by: ['toProductId'],
             _sum: { toQuantity: true },
@@ -202,6 +212,9 @@ export class ProductsService {
             _sum: { fromQuantity: true },
             where: { branchId: b.id },
           }),
+        ]);
+
+        const [salesAgg, damagedAgg] = await Promise.all([
           prisma.saleItem.groupBy({
             by: ['productId'],
             _sum: { quantity: true },
@@ -259,7 +272,7 @@ export class ProductsService {
           }
         }
 
-        const [actProdAgg, actDelivAgg, actConvToAgg, actConvFromAgg, actSaleAgg, actDamAgg] = await Promise.all([
+        const [actProdAgg, actDelivAgg] = await Promise.all([
           prisma.productionItem.groupBy({
             by: ['productId'],
             _sum: { quantityProduced: true },
@@ -281,6 +294,9 @@ export class ProductsService {
               ],
             },
           }),
+        ]);
+
+        const [actConvToAgg, actConvFromAgg] = await Promise.all([
           prisma.productConversion.groupBy({
             by: ['toProductId'],
             _sum: { toQuantity: true },
@@ -291,24 +307,21 @@ export class ProductsService {
             _sum: { fromQuantity: true },
             where: { branchId: b.id, createdAt: { gte: latestSession.date } },
           }),
-          prisma.saleItem.groupBy({
-            by: ['productId'],
-            _sum: { quantity: true },
-            where: { sale: { sessionId: latestSession.id } },
-          }),
-          prisma.leftoverRecord.groupBy({
-            by: ['productId'],
-            _sum: { damagedQuantity: true },
-            where: { sessionId: latestSession.id },
-          }),
         ]);
+
+        const actSaleAgg = await prisma.saleItem.groupBy({
+          by: ['productId'],
+          _sum: { quantity: true },
+          where: { sale: { sessionId: latestSession.id } },
+        });
 
         const actProd = new Map(actProdAgg.map(a => [a.productId, a._sum.quantityProduced || 0]));
         const actDeliv = new Map(actDelivAgg.map(a => [a.productId, Math.max(0, (a._sum.quantityReceived || 0) - (a._sum.returnedQuantity || 0))]));
         const actConvTo = new Map(actConvToAgg.map(a => [a.toProductId, a._sum.toQuantity || 0]));
         const actConvFrom = new Map(actConvFromAgg.map(a => [a.fromProductId, a._sum.fromQuantity || 0]));
         const actSale = new Map(actSaleAgg.map(a => [a.productId, a._sum.quantity || 0]));
-        const actDam = new Map(actDamAgg.map(a => [a.productId, a._sum.damagedQuantity || 0]));
+        // Damaged quantity is already included in-memory within latestSession.leftoverRecords:
+        const actDam = new Map((latestSession.leftoverRecords || []).map(r => [r.productId, r.damagedQuantity || 0]));
 
         const allProdIds = new Set([
           ...Object.keys(openingMap),
@@ -356,7 +369,7 @@ export class ProductsService {
     const stockMap = await this.calculateHouseStockMap(branchId);
     const currentHouseStock = stockMap.get(id) ?? 0;
 
-    const [producedAgg, deliveredAgg, convToAgg, convFromAgg, salesAgg, damagedAgg] = await Promise.all([
+    const [producedAgg, deliveredAgg] = await Promise.all([
       prisma.productionItem.aggregate({
         where: {
           productId: id,
@@ -374,6 +387,9 @@ export class ProductsService {
         },
         _sum: { quantityReceived: true, returnedQuantity: true },
       }),
+    ]);
+
+    const [convToAgg, convFromAgg] = await Promise.all([
       prisma.productConversion.aggregate({
         where: {
           toProductId: id,
@@ -388,6 +404,9 @@ export class ProductsService {
         },
         _sum: { fromQuantity: true },
       }),
+    ]);
+
+    const [salesAgg, damagedAgg] = await Promise.all([
       prisma.saleItem.aggregate({
         where: {
           productId: id,
