@@ -347,13 +347,19 @@ export class DailySessionsService {
   async createDailySession(body: any, userBranchId?: string | null): ServiceResult {
     const { branchId, date, label } = body;
     let bid = branchId || userBranchId;
+    if (bid) {
+      const branchExists = await prisma.branch.findUnique({ where: { id: bid } });
+      if (!branchExists) {
+        bid = null;
+      }
+    }
     if (!bid) {
       const defaultBranch = await prisma.branch.findFirst({ where: { isActive: true } });
       bid = defaultBranch?.id || null;
     }
 
     if (!bid || !date) {
-      return { error: 'branchId and date required', status: 400 };
+      return { error: 'Valid branchId and date required', status: 400 };
     }
 
     // Enforce constraint: No 2 active sessions (OPEN or PAUSED) at the same time
@@ -462,6 +468,9 @@ export class DailySessionsService {
           return { data: reopened };
         }
         return { error: 'Session already exists for this branch and date', status: 400 };
+      }
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003') {
+        return { error: 'Specified branch does not exist in this database. Please re-login or select an active branch.', status: 400 };
       }
       throw e;
     }
