@@ -6,6 +6,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "prisma generate && tsc",
     "start": "node dist/index.js",
+    "db:setup": "prisma db push && prisma generate && tsx prisma/seed.ts",
+    "db:reset": "prisma db push --force-reset && prisma generate && tsx prisma/seed.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",

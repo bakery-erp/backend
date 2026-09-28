@@ -1,77 +1,69 @@
-# Bakery ERP — API server
+# Bakery ERP — API Server
 
-Express + TypeScript + Prisma (MySQL). Serves REST JSON for web, mobile, and Swagger UI.
+Express + TypeScript + Prisma (PostgreSQL). Serves REST JSON for web, mobile, and Swagger UI.
 
 ## Requirements
 
 - Node.js 18+
-- MySQL 8+
+- PostgreSQL 14+ (Neon Cloud DB or Local PostgreSQL)
 
-## Setup
+## Quick Start (1-Command Database Setup)
 
-```bash
-cp .env.example .env
-# Edit .env: DATABASE_URL, JWT_SECRET, PORT
-npm install
-npx prisma migrate deploy   # see "Migrations & P3005" below if this errors
-npm run dev
-```
+1. **Configure Environment**:
+   ```bash
+   cp .env.example .env
+   ```
+   Set your `DATABASE_URL` in `server/.env` (e.g. Neon connection string or local PostgreSQL URL).
+
+2. **Initialize Database & Seed Everything**:
+   ```bash
+   npm run db:setup
+   ```
+   *This single command automatically syncs all tables to your PostgreSQL database, generates the Prisma client, and seeds all core entities with realistic test data (sessions, sales, production, expenses, and credits).*
+
+3. **Start the Development Server**:
+   ```bash
+   npm run dev
+   ```
 
 - API: `http://localhost:3001` (default `PORT`)
 - Health: `GET /api/health`
-- Swagger: `http://localhost:3001/api-docs`
+- Swagger Docs: `http://localhost:3001/api-docs`
 
-## Migrations & error **P3005** (database not empty)
+---
 
-This appears when the DB **already has tables** (e.g. you used `prisma db push` before) but **`_prisma_migrations`** has no history. Prisma will not run `migrate deploy` until you **baseline** or **apply SQL then mark applied**.
+## Default Login Credentials
 
-### Option A — Schema already matches `schema.prisma` (e.g. after `db push`)
+All seeded accounts use password: `password123`
 
-Tell Prisma the existing migrations are already satisfied (no SQL run):
+| Role | Phone | Access Level |
+|:-----|:------|:-------------|
+| **OWNER** | `0912345678` | Full system access, unified ledger, printable executive financial reports |
+| **ADMIN** | `0910000001` | Inventory, stock adjustments, staff management, approvals |
+| **CASHIER** | `0910000002` | POS sales, opening/closing daily sessions, customer credits |
+| **BAKER** | `0910000003` | Daily production batch logging, ingredient usage |
+| **SAMBUSA** | `0910000004` | Sambusa and pastry production |
+| **CAKE** | `0910000005` | Cake worker production |
+| **EMPLOYEE**| `0910000006` | Self-service profile, personal salary, loans, penalties |
 
-```bash
-npx prisma migrate resolve --applied 20260307183000_add_query_indexes
-npx prisma migrate resolve --applied 20260308120000_financial_categories_and_expense_refactor
-npx prisma migrate deploy   # should say "No pending migrations"
-```
+---
 
-If a **new** migration appears later, `migrate deploy` will apply only that one.
-
-### Option B — DB is old; migration changes are NOT applied yet
-
-1. Run each `prisma/migrations/*/migration.sql` against MySQL (e.g. `mysql -u... bakery_erp < prisma/migrations/.../migration.sql`), **or** use `npx prisma db push` once to align the schema.
-2. Then mark those migrations as applied (same `migrate resolve --applied ...` as in Option A).
-
-### Option C — Dev only: start clean
-
-Drop/recreate the database, then:
-
-```bash
-npx prisma migrate deploy
-npm run db:seed
-```
-
-## Scripts
+## Database Commands
 
 | Command | Description |
-|--------|-------------|
-| `npm run dev` | Watch mode (tsx) |
-| `npm run build` | Compile to `dist/` |
-| `npm start` | Run compiled server |
-| `npm run db:generate` | Regenerate Prisma client |
-| `npm run db:migrate` | Create/apply migrations (dev) |
-| `npm run db:push` | Push schema without migration files (quick dev) |
-| `npm run db:seed` | Run seed |
+|:--------|:------------|
+| `npm run db:setup` | **Recommended for new DBs**: Pushes schema, generates client, and seeds test data in 1 step. |
+| `npm run db:push` | Synchronizes `schema.prisma` directly to your PostgreSQL database without migration locks. |
+| `npm run db:seed` | Runs the idempotent seed script (`prisma/seed.ts`). Safe to re-run at any time. |
+| `npm run db:reset` | **Fresh Start**: Wipes the DB, pushes the latest schema, and re-seeds clean test data. |
+| `npm run db:generate` | Regenerates the Prisma Client TypeScript definitions. |
+| `npm run db:studio` | Opens Prisma Studio GUI in the browser. |
 
-## Environment variables
+---
 
-| Variable | Required | Notes |
-|----------|----------|--------|
-| `DATABASE_URL` | Yes | MySQL connection string |
-| `JWT_SECRET` | Yes in production | Must not be `dev-secret` or placeholder in `NODE_ENV=production` |
-| `PORT` | No | Default `3001` |
-| `NODE_ENV` | No | `production` enables stricter JWT checks at startup |
+## Switching Databases
 
-## Remote
-
-Pushes go to: `https://github.com/bakery-erp/backend.git` (configure `git remote` if needed).
+Whenever you switch to a new database (e.g., from local PostgreSQL to Neon Cloud, or a new cloud database branch):
+1. Update `DATABASE_URL` in `server/.env`.
+2. Run `npm run db:setup`.
+3. That's it! Your tables, schema, and sample data will be ready immediately.
