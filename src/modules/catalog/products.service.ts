@@ -471,6 +471,12 @@ export class ProductsService {
       return { error: fcErr, status: 400 };
     }
 
+    const category = await prisma.productCategory.findUnique({
+      where: { id: categoryId as string },
+      select: { type: true },
+    });
+    const isResell = category?.type === 'RESELL';
+
     const product = await prisma.product.create({
       data: {
         categoryId: categoryId as string,
@@ -482,7 +488,8 @@ export class ProductsService {
         flavor: flavor ? String(flavor).trim() : null,
         unitType: unitType as any,
         basePrice: decimalToNum(basePrice) ?? 0,
-        buyPrice: buyPrice != null ? decimalToNum(buyPrice) ?? null : null,
+        // Buying cost is only available for RESELL products, never for in-house PRODUCED products
+        buyPrice: isResell && buyPrice != null ? decimalToNum(buyPrice) ?? null : null,
         imageUrl: imageUrl ? String(imageUrl).trim() : null,
       },
       include: { category: true, financialCategory: true },
@@ -523,7 +530,25 @@ export class ProductsService {
     if (flavor !== undefined) data.flavor = flavor ? String(flavor).trim() : null;
     if (unitType != null) data.unitType = unitType;
     if (basePrice != null) data.basePrice = decimalToNum(basePrice);
-    if (buyPrice !== undefined) data.buyPrice = buyPrice != null ? decimalToNum(buyPrice) : null;
+
+    // Resolve category to enforce buyPrice availability strictly for RESELL items
+    const targetCatId = (categoryId != null
+      ? categoryId
+      : (await prisma.product.findUnique({ where: { id }, select: { categoryId: true } }))?.categoryId) as string | undefined;
+
+    let isResell = false;
+    if (targetCatId) {
+      const cat = await prisma.productCategory.findUnique({ where: { id: targetCatId }, select: { type: true } });
+      isResell = cat?.type === 'RESELL';
+    }
+
+    if (!isResell) {
+      // Produced products NEVER have a buyPrice
+      data.buyPrice = null;
+    } else if (buyPrice !== undefined) {
+      data.buyPrice = buyPrice != null ? decimalToNum(buyPrice) : null;
+    }
+
     if (imageUrl !== undefined) data.imageUrl = imageUrl ? String(imageUrl).trim() : null;
     if (typeof isActive === 'boolean') data.isActive = isActive;
     if (financialCategoryId !== undefined) {
