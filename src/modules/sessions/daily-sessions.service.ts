@@ -1469,8 +1469,13 @@ export class DailySessionsService {
           console.log(`[AutoOpen] Automatically opened new session for branch ${branch.name} (${branch.id}) for date ${ethDateStr} with opening float ${carriedFloat}`);
         }
       }
-    } catch (err) {
-      console.error('[AutoClose/AutoOpen] Error during midnight session rollover:', err);
+    } catch (err: any) {
+      if (err.code === 'P1017' || err.message?.includes('closed the connection')) {
+        try {
+          await prisma.$connect();
+        } catch (_) {}
+      }
+      console.warn('[AutoClose/AutoOpen] Notice during midnight session rollover:', err.message || err);
     }
   }
 
