@@ -1358,25 +1358,80 @@ export class DailySessionsService {
       if (!parts) return;
       const todayUtcNoon = businessDateUtcNoon(parts.y, parts.mo, parts.day);
 
-      // 1. Auto-close any open/paused session prior to today
+      // 1. Auto-close any open/paused/pending session prior to today
       const expired = await prisma.dailySession.findMany({
         where: {
-          status: { in: ['OPEN', 'PAUSED'] },
+          status: { in: ['OPEN', 'PAUSED', 'CLOSE_PENDING'] },
           date: { lt: todayUtcNoon },
+        },
+        include: {
+          leftoverRecords: true,
+          expenses: true,
+          sales: true,
         },
       });
 
+      const service = new DailySessionsService();
+
       for (const sess of expired) {
-        await prisma.dailySession.update({
-          where: { id: sess.id },
-          data: {
-            status: 'CLOSED',
+        // Find a responsible user ID for this branch
+        const defaultUser =
+          (await prisma.user.findFirst({
+            where: { branchId: sess.branchId, isActive: true },
+            orderBy: { role: 'asc' }, // OWNER or ADMIN preferred
+          })) || (await prisma.user.findFirst({ where: { isActive: true } }));
+
+        const userId = defaultUser?.id || sess.sales[0]?.userId;
+
+        if (userId) {
+          const finalizeBody = {
+            cashLeftoverAmount: sess.cashLeftoverAmount != null ? decimalToNum(sess.cashLeftoverAmount) : undefined,
+            actualCashAmount: sess.actualCashAmount != null ? decimalToNum(sess.actualCashAmount) : undefined,
+            actualCbeAmount: sess.actualCbeAmount != null ? decimalToNum(sess.actualCbeAmount) : undefined,
+            actualTelebirrAmount: sess.actualTelebirrAmount != null ? decimalToNum(sess.actualTelebirrAmount) : undefined,
             notes: sess.notes
-              ? `${sess.notes}\n[System Auto-Closed at Midnight]`
-              : '[System Auto-Closed at Midnight]',
-          },
-        });
-        console.log(`[AutoClose] Automatically closed expired daily session ${sess.id}`);
+              ? `${sess.notes}\n[System Auto-Finalized at Midnight using recorded draft]`
+              : '[System Auto-Finalized at Midnight using recorded draft]',
+            label: sess.label || undefined,
+            draftExchangeLogs: sess.draftExchangeLogs || undefined,
+            leftoverRecords: (sess.leftoverRecords || []).map((r) => ({
+              productId: r.productId,
+              quantityRemaining: r.quantityRemaining,
+              damagedQuantity: r.damagedQuantity,
+              damageReason: r.damageReason,
+            })),
+            expenses: (sess.expenses || []).map((e) => ({
+              id: e.id,
+              amount: decimalToNum(e.amount),
+              category: e.category,
+              description: e.description,
+            })),
+          };
+
+          const res = await service.finalizeDailySession(sess.id, finalizeBody, userId);
+          if (res.error) {
+            console.error(`[AutoClose] Error auto-finalizing session ${sess.id}:`, res.error);
+            // Fallback simple close so it does not stay open forever
+            await prisma.dailySession.update({
+              where: { id: sess.id },
+              data: {
+                status: 'CLOSED',
+                notes: sess.notes ? `${sess.notes}\n[System Auto-Closed at Midnight]` : '[System Auto-Closed at Midnight]',
+              },
+            });
+          } else {
+            console.log(`[AutoClose] Successfully auto-finalized expired daily session ${sess.id} with draft leftovers & sales`);
+          }
+        } else {
+          // If no user exists, fallback close
+          await prisma.dailySession.update({
+            where: { id: sess.id },
+            data: {
+              status: 'CLOSED',
+              notes: sess.notes ? `${sess.notes}\n[System Auto-Closed at Midnight]` : '[System Auto-Closed at Midnight]',
+            },
+          });
+        }
       }
 
       // 2. Auto-open a new session for today for each active branch if none exists
