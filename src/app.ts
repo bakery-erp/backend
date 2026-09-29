@@ -35,16 +35,35 @@ if (!fs.existsSync(uploadsDir)) {
 // Serve uploaded media / documents statically
 app.use('/uploads', express.static(uploadsDir));
 
+// Universal CORS & Preflight handler (guarantees preflight always succeeds with 200)
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-branch-id, x-tenant-id');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
+
 app.use(
   cors({
-    origin: (origin, callback) => {
+    origin: (_origin, callback) => {
       // Allow any requesting origin (including local dev, mobile web, production domains, and curl)
       callback(null, true);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'x-branch-id'],
-    optionsSuccessStatus: 204,
+    allowedHeaders: ['Origin', 'Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'x-branch-id', 'x-tenant-id'],
+    optionsSuccessStatus: 200,
   })
 );
 
@@ -54,6 +73,9 @@ app.options('*', cors());
 app.use(compression());
 app.use(express.json());
 
+app.get('/', (_req, res) => res.json({ ok: true, service: 'Koket Bakery ERP Backend API' }));
+app.get('/api', (_req, res) => res.json({ ok: true, service: 'Koket Bakery ERP Backend API' }));
+app.get('/api/health', (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.get('/api-docs.json', (_req, res) => res.json(swaggerSpec));

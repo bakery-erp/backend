@@ -2,10 +2,12 @@
   "name": "bakery-erp-server",
   "version": "1.0.0",
   "type": "module",
+  "main": "app.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "prisma generate && tsc",
     "start": "node dist/index.js",
+    "postinstall": "prisma generate",
     "db:setup": "prisma db push && prisma generate && tsx prisma/seed.ts",
     "db:reset": "prisma db push --force-reset && prisma generate && tsx prisma/seed.ts",
     "db:generate": "prisma generate",
