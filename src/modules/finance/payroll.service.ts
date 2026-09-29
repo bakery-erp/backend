@@ -22,11 +22,12 @@ export class PayrollService {
     return { data: list };
   }
 
-  async getPayroll(userId?: string, month?: string, year?: string): ServiceResult {
+  async getPayroll(userId?: string, month?: string, year?: string, branchId?: string): ServiceResult {
     const where: any = {};
     if (userId) where.userId = userId;
     if (month) where.month = parseInt(month, 10);
     if (year) where.year = parseInt(year, 10);
+    if (branchId) where.user = { branchId };
     const list = await prisma.payrollRecord.findMany({
       where,
       include: { user: { select: { id: true, fullName: true, phone: true, role: true } } },

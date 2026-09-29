@@ -16,7 +16,7 @@ loansRouter.get('/my', async (req: AuthRequest, res: Response) => {
 });
 
 loansRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res: Response) => {
-  let branchId: string | undefined = (req.query.branchId as string) || req.user?.branchId;
+  let branchId: string | undefined = (req.query.branchId as string) || req.user?.branchId || undefined;
   if (req.query.branchId === 'ALL' || req.query.branchId === '' || (req.query.type === 'OWNER_LOAN' && !req.query.branchId)) {
     branchId = undefined;
   }

@@ -19,7 +19,8 @@ payrollRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req, res: Response)
   const userId = req.query.userId as string | undefined;
   const month = req.query.month as string | undefined;
   const year = req.query.year as string | undefined;
-  const result = await payrollService.getPayroll(userId, month, year);
+  const branchId = req.query.branchId as string | undefined;
+  const result = await payrollService.getPayroll(userId, month, year, branchId);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

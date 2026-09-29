@@ -32,4 +32,5 @@ coverage/
 
 # Uploads
 uploads/
+*.zip
 

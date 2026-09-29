@@ -50,38 +50,99 @@ export class UsersService {
   }
 
   async getEmployeeDashboard(userId: string): ServiceResult {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { ...userSelect, branch: { select: { id: true, name: true } } },
-    });
-    if (!user) {
-      return { error: 'User not found', status: 404 };
+    try {
+      const rows: any = await prisma.$queryRaw`
+        SELECT 
+          (
+            SELECT row_to_json(u)
+            FROM (
+              SELECT 
+                usr.id, usr."fullName", usr.phone, usr.role, usr."branchId", usr."isActive", 
+                usr."createdAt", usr.salary, usr."startDate", usr."lastPaidDate", usr.shift, usr."filesUrl",
+                CASE WHEN b.id IS NOT NULL THEN json_build_object('id', b.id, 'name', b.name) ELSE NULL END AS branch
+              FROM "User" usr
+              LEFT JOIN "Branch" b ON b.id = usr."branchId"
+              WHERE usr.id = ${userId}
+            ) u
+          ) AS user,
+          (
+            SELECT COALESCE(json_agg(pr ORDER BY pr.year DESC, pr.month DESC), '[]'::json)
+            FROM "PayrollRecord" pr
+            WHERE pr."userId" = ${userId}
+          ) AS "payrollRecords",
+          (
+            SELECT COALESCE(json_agg(l ORDER BY l."createdAt" DESC), '[]'::json)
+            FROM (
+              SELECT 
+                ln.id, ln."branchId", ln.type, ln."entityId", ln."userId", ln."totalAmount", 
+                ln."remainingBalance", ln.status, ln.date, ln."createdAt", ln."updatedAt",
+                COALESCE(
+                  (
+                    SELECT json_agg(lp ORDER BY lp."createdAt" DESC)
+                    FROM "LoanPayment" lp
+                    WHERE lp."loanId" = ln.id
+                  ),
+                  '[]'::json
+                ) AS payments
+              FROM "Loan" ln
+              WHERE ln."userId" = ${userId}
+            ) l
+          ) AS loans,
+          (
+            SELECT COALESCE(json_agg(p ORDER BY p.date DESC), '[]'::json)
+            FROM "Penalty" p
+            WHERE p."userId" = ${userId}
+          ) AS penalties
+      `;
+
+      const result = rows?.[0];
+      if (!result?.user) {
+        return { error: 'User not found', status: 404 };
+      }
+
+      return {
+        data: {
+          user: result.user,
+          payrollRecords: result.payrollRecords || [],
+          loans: result.loans || [],
+          penalties: result.penalties || [],
+        },
+      };
+    } catch {
+      // Fallback to concurrent Prisma queries
+      const [user, payrollRecords, loans, penalties] = await Promise.all([
+        prisma.user.findUnique({
+          where: { id: userId },
+          select: { ...userSelect, branch: { select: { id: true, name: true } } },
+        }),
+        prisma.payrollRecord.findMany({
+          where: { userId },
+          orderBy: [{ year: 'desc' }, { month: 'desc' }],
+        }),
+        prisma.loan.findMany({
+          where: { userId },
+          include: { payments: { orderBy: { createdAt: 'desc' } } },
+          orderBy: { createdAt: 'desc' },
+        }),
+        prisma.penalty.findMany({
+          where: { userId },
+          orderBy: { date: 'desc' },
+        }),
+      ]);
+
+      if (!user) {
+        return { error: 'User not found', status: 404 };
+      }
+
+      return {
+        data: {
+          user,
+          payrollRecords,
+          loans,
+          penalties,
+        },
+      };
     }
-
-    const [payrollRecords, loans, penalties] = await Promise.all([
-      prisma.payrollRecord.findMany({
-        where: { userId },
-        orderBy: [{ year: 'desc' }, { month: 'desc' }],
-      }),
-      prisma.loan.findMany({
-        where: { userId },
-        include: { payments: { orderBy: { createdAt: 'desc' } } },
-        orderBy: { createdAt: 'desc' },
-      }),
-      prisma.penalty.findMany({
-        where: { userId },
-        orderBy: { date: 'desc' },
-      }),
-    ]);
-
-    return {
-      data: {
-        user,
-        payrollRecords,
-        loans,
-        penalties,
-      },
-    };
   }
 
   async createUser(body: any, fileUrl?: string): ServiceResult {

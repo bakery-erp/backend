@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './config/swagger.js';
 import { authRouter } from './modules/auth/auth.controller.js';
@@ -50,6 +51,7 @@ app.use(
 // Respond to preflight OPTIONS requests across all routes
 app.options('*', cors());
 
+app.use(compression());
 app.use(express.json());
 
 
