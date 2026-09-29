@@ -1,6 +1,7 @@
 import { Router } from 'express';
-import { PaymentMethod, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
+import { PaymentMethod } from '../lib/paymentMethod.js';
 import { authMiddleware, requireRole, type AuthRequest } from '../middleware/auth.js';
 import { asyncHandler } from '../lib/routeUtils.js';
 

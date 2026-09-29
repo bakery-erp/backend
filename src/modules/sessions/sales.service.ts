@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
-import { PaymentMethod, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { PaymentMethod } from '../../lib/paymentMethod.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
 function decimalToNum(v: unknown): number {
