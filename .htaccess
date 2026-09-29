@@ -38,5 +38,5 @@ PassengerAppRoot "/home/koketbcd/erp-backend.koket-bakery.com"
 PassengerBaseURI "/"
 PassengerNodejs "/home/koketbcd/nodevenv/erp-backend.koket-bakery.com/20/bin/node"
 PassengerAppType node
-PassengerStartupFile app.js
+PassengerStartupFile dist/index.js
 # DO NOT REMOVE. CLOUDLINUX PASSENGER CONFIGURATION END
