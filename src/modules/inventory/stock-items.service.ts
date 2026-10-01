@@ -259,7 +259,8 @@ export class StockItemsService {
     userId: string, 
     quantityToAdd: number, 
     reason?: string,
-    loanInfo?: { isLoan?: boolean; paidAmount?: number; supplierName?: string }
+    loanInfo?: { isLoan?: boolean; paidAmount?: number; supplierName?: string },
+    newUnitPrice?: number | string
   ): ServiceResult {
     const qty = Number(quantityToAdd);
     if (isNaN(qty) || qty <= 0) {
@@ -271,13 +272,23 @@ export class StockItemsService {
       return { error: 'Stock item not found', status: 404 };
     }
 
-    const price = Number(item.unitPrice ?? 0);
+    const parsedPrice = newUnitPrice !== undefined && newUnitPrice !== null && newUnitPrice !== ''
+      ? Number(newUnitPrice)
+      : undefined;
+    const price = (parsedPrice !== undefined && !isNaN(parsedPrice) && parsedPrice >= 0)
+      ? parsedPrice
+      : Number(item.unitPrice ?? 0);
     const totalValue = qty * price;
 
     const result = await prisma.$transaction(async (tx) => {
+      const updateData: any = { currentQuantity: { increment: qty } };
+      if (parsedPrice !== undefined && !isNaN(parsedPrice) && parsedPrice >= 0) {
+        updateData.unitPrice = parsedPrice;
+      }
+
       const updatedItem = await tx.stockItem.update({
         where: { id },
-        data: { currentQuantity: { increment: qty } },
+        data: updateData,
       });
 
       const movement = await tx.stockMovement.create({

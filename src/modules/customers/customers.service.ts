@@ -5,7 +5,17 @@ import type { ServiceResult } from '../../types/service-response.js';
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
   if (typeof v === 'number') return v;
-  if (typeof v === 'string') return parseFloat(v);
+  if (typeof v === 'string') {
+    const parsed = parseFloat(v);
+    return isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof v === 'object' && v !== null) {
+    if ('toNumber' in v && typeof (v as any).toNumber === 'function') {
+      return (v as any).toNumber();
+    }
+    const parsed = parseFloat(String(v));
+    return isNaN(parsed) ? 0 : parsed;
+  }
   return 0;
 }
 
@@ -242,7 +252,19 @@ export class CustomersService {
       orderBy: { date: 'desc' },
     });
 
-    return { data: credits };
+    const reconciledCredits = credits.map((c) => {
+      const totalPaid = (c.payments || []).reduce((sum, p) => sum + decimalToNum(p.amount), 0);
+      const totalAmt = decimalToNum(c.amount);
+      const computedRemaining = Math.max(0, totalAmt - totalPaid);
+      return {
+        ...c,
+        paidAmount: totalPaid,
+        remainingBalance: computedRemaining,
+        status: computedRemaining <= 0.001 ? ('PAID' as const) : ('OPEN' as const),
+      };
+    });
+
+    return { data: reconciledCredits };
   }
 
   async getCreditById(id: string): ServiceResult {
@@ -255,7 +277,19 @@ export class CustomersService {
       },
     });
     if (!credit) return { error: 'Credit transaction not found', status: 404 };
-    return { data: credit };
+
+    const totalPaid = (credit.payments || []).reduce((sum, p) => sum + decimalToNum(p.amount), 0);
+    const totalAmt = decimalToNum(credit.amount);
+    const computedRemaining = Math.max(0, totalAmt - totalPaid);
+
+    return {
+      data: {
+        ...credit,
+        paidAmount: totalPaid,
+        remainingBalance: computedRemaining,
+        status: computedRemaining <= 0.001 ? 'PAID' : 'OPEN',
+      },
+    };
   }
 
   async createCredit(
@@ -359,11 +393,12 @@ export class CustomersService {
     const payAmount = decimalToNum(body.amount);
     if (payAmount <= 0) return { error: 'Payment amount must be greater than zero', status: 400 };
 
-    const credit = await prisma.customerCredit.findUnique({ where: { id } });
+    const credit = await prisma.customerCredit.findUnique({
+      where: { id },
+      include: { payments: true },
+    });
     if (!credit) return { error: 'Credit transaction not found', status: 404 };
 
-    const remaining = decimalToNum(credit.remainingBalance) - payAmount;
-    const newPaidAmount = decimalToNum(credit.paidAmount) + payAmount;
     const paymentDate = (body.date ? businessDateFromYmdString(body.date) : new Date()) || new Date();
 
     const payment = await prisma.customerCreditPayment.create({
@@ -376,13 +411,17 @@ export class CustomersService {
       },
     });
 
-    const newStatus = remaining <= 0 ? 'PAID' : 'OPEN';
+    const allPayments = [...(credit.payments || []), payment];
+    const totalPaid = allPayments.reduce((sum, p) => sum + decimalToNum(p.amount), 0);
+    const totalCreditAmount = decimalToNum(credit.amount);
+    const remaining = Math.max(0, totalCreditAmount - totalPaid);
+    const newStatus = remaining <= 0.001 ? 'PAID' : 'OPEN';
 
     const updated = await prisma.customerCredit.update({
       where: { id: credit.id },
       data: {
-        paidAmount: newPaidAmount,
-        remainingBalance: Math.max(0, remaining),
+        paidAmount: totalPaid,
+        remainingBalance: remaining,
         status: newStatus,
       },
       include: {

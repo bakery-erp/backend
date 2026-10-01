@@ -6,7 +6,17 @@ import { DailySessionsService } from '../sessions/daily-sessions.service.js';
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
   if (typeof v === 'number') return v;
-  if (typeof v === 'string') return parseFloat(v);
+  if (typeof v === 'string') {
+    const parsed = parseFloat(v);
+    return isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof v === 'object' && v !== null) {
+    if ('toNumber' in v && typeof (v as any).toNumber === 'function') {
+      return (v as any).toNumber();
+    }
+    const parsed = parseFloat(String(v));
+    return isNaN(parsed) ? 0 : parsed;
+  }
   return 0;
 }
 
