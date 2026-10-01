@@ -22,14 +22,25 @@ import fs from 'fs';
 export const app = express();
 
 // Midnight Session Auto-Closer Scheduled Job (runs on startup & every 60 seconds)
-DailySessionsService.autoCloseExpiredSessions();
-setInterval(() => {
-  DailySessionsService.autoCloseExpiredSessions();
+try {
+  DailySessionsService.autoCloseExpiredSessions().catch(() => {});
+} catch {
+  // ignore
+}
+const autoCloseInterval = setInterval(() => {
+  DailySessionsService.autoCloseExpiredSessions().catch(() => {});
 }, 60 * 1000);
+if (autoCloseInterval && typeof autoCloseInterval.unref === 'function') {
+  autoCloseInterval.unref();
+}
 
-const uploadsDir = path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : path.join(process.cwd(), 'uploads');
+try {
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+} catch (e) {
+  console.warn('[Uploads Directory]', e);
 }
 
 // Serve uploaded media / documents statically
