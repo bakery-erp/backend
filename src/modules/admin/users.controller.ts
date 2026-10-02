@@ -65,10 +65,42 @@ const profilePictureUpload = multer({
     if (allowed.includes(file.mimetype.toLowerCase())) {
       cb(null, true);
     } else {
-      cb(new Error('Unsupported file format. Please upload a JPG, PNG, or WebP image.'));
+      cb(new Error('Unsupported image format. Please upload a JPG, PNG, or WebP image.'));
     }
   },
 });
+
+const pdfDocumentUpload = multer({
+  storage,
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const isPdfMime = file.mimetype.toLowerCase() === 'application/pdf';
+    const isPdfExt = file.originalname.toLowerCase().endsWith('.pdf');
+    if (isPdfMime || isPdfExt) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid document format. Identification document must be a PDF (.pdf) file.'));
+    }
+  },
+});
+
+function handlePdfUpload(req: any, res: any, next: any) {
+  pdfDocumentUpload.single('file')(req, res, (err: any) => {
+    if (err) {
+      return res.status(400).json({ error: err.message || 'File upload error' });
+    }
+    next();
+  });
+}
+
+function handleProfilePictureUpload(req: any, res: any, next: any) {
+  profilePictureUpload.single('file')(req, res, (err: any) => {
+    if (err) {
+      return res.status(400).json({ error: err.message || 'Profile picture upload error' });
+    }
+    next();
+  });
+}
 
 usersRouter.get('/roles', requireRole('OWNER', 'ADMIN'), (_req, res) => {
   res.json(['OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER', 'SAMBUSA_WORKER', 'EMPLOYEE']);
@@ -95,7 +127,7 @@ usersRouter.post('/me/change-password', async (req: AuthRequest, res: Response) 
   res.json(result.data);
 });
 
-usersRouter.post('/me/profile-picture', profilePictureUpload.single('file'), async (req: AuthRequest, res: Response) => {
+usersRouter.post('/me/profile-picture', handleProfilePictureUpload, async (req: AuthRequest, res: Response) => {
   if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   await saveUploadedFile(req.file);
@@ -127,9 +159,9 @@ usersRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response
   res.json(result.data);
 });
 
-usersRouter.post('/', requireRole('OWNER', 'ADMIN'), upload.single('file'), async (req: AuthRequest, res: Response) => {
+usersRouter.post('/', requireRole('OWNER', 'ADMIN'), handlePdfUpload, async (req: AuthRequest, res: Response) => {
   if (!req.file && !req.body.filesUrl) {
-    return res.status(400).json({ error: 'Identification document is mandatory when creating a new user.' });
+    return res.status(400).json({ error: 'Identification document (PDF) is mandatory when creating a new user.' });
   }
   if (req.file) {
     await saveUploadedFile(req.file);
@@ -142,7 +174,7 @@ usersRouter.post('/', requireRole('OWNER', 'ADMIN'), upload.single('file'), asyn
   res.status(201).json(result.data);
 });
 
-usersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), upload.single('file'), async (req: AuthRequest, res: Response) => {
+usersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), handlePdfUpload, async (req: AuthRequest, res: Response) => {
   if (req.file) {
     await saveUploadedFile(req.file);
   }

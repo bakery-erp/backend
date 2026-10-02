@@ -8,6 +8,7 @@ export type AuthUserDto = {
   role: Role;
   branchId: string | null;
   branch: { id: string; name: string } | null;
+  avatarUrl?: string | null;
   filesUrl?: string | null;
   shift?: string | null;
   salary?: any;
@@ -22,6 +23,7 @@ type UserWithBranch = {
   role: Role;
   branchId: string | null;
   branch: Pick<Branch, 'id' | 'name'> | null;
+  avatarUrl?: string | null;
   filesUrl?: string | null;
   shift?: string | null;
   salary?: any;
@@ -37,6 +39,7 @@ export function toAuthUserDto(user: UserWithBranch): AuthUserDto {
     role: user.role,
     branchId: user.branchId,
     branch: user.branch ? { id: user.branch.id, name: user.branch.name } : null,
+    avatarUrl: user.avatarUrl,
     filesUrl: user.filesUrl,
     shift: user.shift,
     salary: user.salary,

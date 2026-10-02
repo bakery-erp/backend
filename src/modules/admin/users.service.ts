@@ -14,6 +14,7 @@ const userSelect = {
   startDate: true,
   lastPaidDate: true,
   shift: true,
+  avatarUrl: true,
   filesUrl: true,
 } as const;
 
@@ -58,7 +59,8 @@ export class UsersService {
             FROM (
               SELECT 
                 usr.id, usr."fullName", usr.phone, usr.role, usr."branchId", usr."isActive", 
-                usr."createdAt", usr.salary, usr."startDate", usr."lastPaidDate", usr.shift, usr."filesUrl",
+                usr."createdAt", usr.salary, usr."startDate", usr."lastPaidDate", usr.shift, 
+                usr."avatarUrl", usr."filesUrl",
                 CASE WHEN b.id IS NOT NULL THEN json_build_object('id', b.id, 'name', b.name) ELSE NULL END AS branch
               FROM "User" usr
               LEFT JOIN "Branch" b ON b.id = usr."branchId"
@@ -157,6 +159,7 @@ export class UsersService {
       lastPaidDate,
       shift,
       filesUrl: bodyFilesUrl,
+      avatarUrl,
     } = body;
 
     const finalFilesUrl = fileUrl || bodyFilesUrl;
@@ -195,6 +198,7 @@ export class UsersService {
         startDate: startDate ? new Date(startDate) : undefined,
         lastPaidDate: lastPaidDate ? new Date(lastPaidDate) : undefined,
         shift: shift === 'DAY' || shift === 'NIGHT' ? shift : undefined,
+        avatarUrl: typeof avatarUrl === 'string' ? avatarUrl.trim() || undefined : undefined,
         filesUrl: finalFilesUrl?.trim() || undefined,
       },
       select: { ...userSelect, branch: { select: { name: true } } },
@@ -216,6 +220,7 @@ export class UsersService {
       lastPaidDate,
       shift,
       filesUrl: bodyFilesUrl,
+      avatarUrl,
     } = body;
 
     const finalFilesUrl = fileUrl !== undefined ? fileUrl : bodyFilesUrl;
@@ -241,6 +246,9 @@ export class UsersService {
     if (lastPaidDate !== undefined) data.lastPaidDate = lastPaidDate ? new Date(lastPaidDate as string) : null;
     if (shift === 'DAY' || shift === 'NIGHT') data.shift = shift;
     else if (shift === null || shift === '') data.shift = null;
+    if (avatarUrl !== undefined) {
+      data.avatarUrl = typeof avatarUrl === 'string' ? avatarUrl.trim() || null : null;
+    }
     if (finalFilesUrl !== undefined) {
       data.filesUrl = typeof finalFilesUrl === 'string' ? finalFilesUrl.trim() || null : null;
     }
@@ -280,7 +288,7 @@ export class UsersService {
     if (!fileUrl) return { error: 'File is required', status: 400 };
     const user = await prisma.user.update({
       where: { id: userId },
-      data: { filesUrl: fileUrl },
+      data: { avatarUrl: fileUrl },
       select: { ...userSelect, branch: { select: { name: true } } },
     });
     return { data: user };

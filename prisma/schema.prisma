@@ -158,7 +158,8 @@ model User {
   startDate     DateTime?
   lastPaidDate  DateTime?
   shift         Shift?
-  filesUrl      String?
+  avatarUrl     String?   // User profile picture / avatar (image)
+  filesUrl      String?   // Identification document (PDF)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   branch        Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)

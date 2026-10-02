@@ -93,6 +93,7 @@ export class AuthService {
         role: true,
         branchId: true,
         branch: { select: { id: true, name: true } },
+        avatarUrl: true,
         filesUrl: true,
         shift: true,
         salary: true,
