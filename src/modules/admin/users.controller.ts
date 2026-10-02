@@ -49,16 +49,18 @@ async function saveUploadedFile(file?: Express.Multer.File, subfolder: 'avatars'
   });
 }
 
-// Multer storage with dynamic destination based on field name
+// Multer storage with dynamic destination based on field name or route
 const userDiskStorage = multer.diskStorage({
-  destination: (_req, file, cb) => {
-    const dest = file.fieldname === 'avatar' ? avatarsDir : documentsDir;
+  destination: (req: any, file, cb) => {
+    const isAvatar = file.fieldname === 'avatar' || (req.originalUrl && req.originalUrl.includes('profile-picture'));
+    const dest = isAvatar ? avatarsDir : documentsDir;
     cb(null, dest);
   },
-  filename: (_req, file, cb) => {
+  filename: (req: any, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const rawExt = path.extname(file.originalname).toLowerCase();
-    const fallbackExt = file.fieldname === 'avatar' ? '.jpg' : '.pdf';
+    const isAvatar = file.fieldname === 'avatar' || (req.originalUrl && req.originalUrl.includes('profile-picture'));
+    const fallbackExt = isAvatar ? '.jpg' : '.pdf';
     cb(null, uniqueSuffix + (rawExt || fallbackExt));
   }
 });
@@ -66,8 +68,9 @@ const userDiskStorage = multer.diskStorage({
 const userUpload = multer({
   storage: userDiskStorage,
   limits: { fileSize: 15 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    if (file.fieldname === 'avatar') {
+  fileFilter: (req: any, file, cb) => {
+    const isAvatar = file.fieldname === 'avatar' || (req.originalUrl && req.originalUrl.includes('profile-picture'));
+    if (isAvatar) {
       const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
       const isImgExt = file.originalname.match(/\.(jpe?g|png|webp)$/i);
       if (allowed.includes(file.mimetype.toLowerCase()) || isImgExt) {
