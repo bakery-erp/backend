@@ -72,11 +72,23 @@ app.get(['/uploads/*', '/api/uploads/*'], async (req, res) => {
       where: { filename: relativePath },
     });
 
-    // 2. Fallback to bare basename if legacy record was stored without folder prefix
+    // 2. Fallback to bare basename if record was requested with folder prefix but stored bare
     if (!fileRecord && relativePath.includes('/')) {
       const bareName = path.basename(relativePath);
       fileRecord = await prisma.uploadedFile.findUnique({
         where: { filename: bareName },
+      });
+    }
+
+    // 3. Fallback to subfolders if requested bare but stored under documents/ or avatars/
+    if (!fileRecord && !relativePath.includes('/')) {
+      fileRecord = await prisma.uploadedFile.findFirst({
+        where: {
+          OR: [
+            { filename: `documents/${relativePath}` },
+            { filename: `avatars/${relativePath}` },
+          ],
+        },
       });
     }
 
