@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import multer from 'multer';
 import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/auth.js';
 import { UsersService } from './users.service.js';
+import { prisma } from '../../lib/prisma.js';
 
 import path from 'path';
 import fs from 'fs';
@@ -30,6 +31,31 @@ const storage = multer.diskStorage({
   }
 });
 const upload = multer({ storage });
+
+async function saveUploadedFile(file?: Express.Multer.File) {
+  if (!file) return;
+  try {
+    const dataBuffer = file.buffer || (file.path && fs.existsSync(file.path) ? fs.readFileSync(file.path) : null);
+    if (dataBuffer) {
+      await prisma.uploadedFile.upsert({
+        where: { filename: file.filename },
+        create: {
+          filename: file.filename,
+          mimeType: file.mimetype || 'application/octet-stream',
+          size: file.size || dataBuffer.length,
+          data: dataBuffer,
+        },
+        update: {
+          mimeType: file.mimetype || 'application/octet-stream',
+          size: file.size || dataBuffer.length,
+          data: dataBuffer,
+        },
+      });
+    }
+  } catch (err) {
+    console.warn('[UploadedFile DB Save Warning]:', err);
+  }
+}
 
 const profilePictureUpload = multer({
   storage,
@@ -72,6 +98,7 @@ usersRouter.post('/me/change-password', async (req: AuthRequest, res: Response) 
 usersRouter.post('/me/profile-picture', profilePictureUpload.single('file'), async (req: AuthRequest, res: Response) => {
   if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  await saveUploadedFile(req.file);
   const fileUrl = `/uploads/${req.file.filename}`;
   const result = await usersService.updateProfilePicture(req.user.id, fileUrl);
   if (result.error) {
@@ -104,6 +131,9 @@ usersRouter.post('/', requireRole('OWNER', 'ADMIN'), upload.single('file'), asyn
   if (!req.file && !req.body.filesUrl) {
     return res.status(400).json({ error: 'Identification document is mandatory when creating a new user.' });
   }
+  if (req.file) {
+    await saveUploadedFile(req.file);
+  }
   const fileUrl = req.file ? `/uploads/${req.file.filename}` : req.body.filesUrl;
   const result = await usersService.createUser(req.body, fileUrl);
   if (result.error) {
@@ -113,6 +143,9 @@ usersRouter.post('/', requireRole('OWNER', 'ADMIN'), upload.single('file'), asyn
 });
 
 usersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), upload.single('file'), async (req: AuthRequest, res: Response) => {
+  if (req.file) {
+    await saveUploadedFile(req.file);
+  }
   const fileUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
   const result = await usersService.updateUser(req.params.id, req.body, fileUrl);
   if (result.error) {

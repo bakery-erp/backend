@@ -642,3 +642,15 @@ model CustomerCreditPayment {
 
   @@index([creditId])
 }
+
+model UploadedFile {
+  id        String   @id @default(cuid())
+  filename  String   @unique
+  mimeType  String
+  size      Int
+  data      Bytes
+  createdAt DateTime @default(now())
+
+  @@index([filename])
+}
+

@@ -16,6 +16,7 @@ import { suppliersRouter, supplierDeliveriesRouter } from './modules/procurement
 import { financialCategoriesRouter, expensesRouter, loansRouter, penaltiesRouter, payrollRouter } from './modules/finance/index.js';
 import { analyticsRouter, dashboardRouter, financialReportsRouter } from './modules/reporting/index.js';
 import { customersRouter } from './modules/customers/customers.controller.js';
+import { prisma } from './lib/prisma.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -43,8 +44,35 @@ try {
   console.warn('[Uploads Directory]', e);
 }
 
-// Serve uploaded media / documents statically
+// Serve uploaded media / documents statically and fallback to DB for serverless
 app.use('/uploads', express.static(uploadsDir));
+
+app.get(['/uploads/:filename', '/api/uploads/:filename'], async (req, res) => {
+  const { filename } = req.params;
+  const localPath = path.join(uploadsDir, filename);
+  if (fs.existsSync(localPath)) {
+    return res.sendFile(localPath);
+  }
+  try {
+    const fileRecord = await prisma.uploadedFile.findUnique({
+      where: { filename },
+    });
+    if (fileRecord) {
+      try {
+        if (!fs.existsSync(localPath)) {
+          fs.writeFileSync(localPath, fileRecord.data);
+        }
+      } catch {}
+      res.setHeader('Content-Type', fileRecord.mimeType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      return res.end(fileRecord.data);
+    }
+  } catch (err) {
+    console.error('[Uploads Serve Error]', err);
+  }
+  return res.status(404).send('Cannot GET ' + req.originalUrl);
+});
 
 // Universal CORS & Preflight handler (guarantees preflight always succeeds with 200)
 app.use((req, res, next) => {
