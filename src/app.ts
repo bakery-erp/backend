@@ -22,17 +22,19 @@ import fs from 'fs';
 
 export const app = express();
 
-// Midnight Session Auto-Closer Scheduled Job (runs on startup & every 60 seconds)
+// Midnight Session Auto-Closer Scheduled Job (runs on startup, and every 60s in persistent environments)
 try {
   DailySessionsService.autoCloseExpiredSessions().catch(() => {});
 } catch {
   // ignore
 }
-const autoCloseInterval = setInterval(() => {
-  DailySessionsService.autoCloseExpiredSessions().catch(() => {});
-}, 60 * 1000);
-if (autoCloseInterval && typeof autoCloseInterval.unref === 'function') {
-  autoCloseInterval.unref();
+if (!process.env.VERCEL) {
+  const autoCloseInterval = setInterval(() => {
+    DailySessionsService.autoCloseExpiredSessions().catch(() => {});
+  }, 60 * 1000);
+  if (autoCloseInterval && typeof autoCloseInterval.unref === 'function') {
+    autoCloseInterval.unref();
+  }
 }
 
 const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : path.join(process.cwd(), 'uploads');

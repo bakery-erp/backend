@@ -34,27 +34,24 @@ const upload = multer({ storage });
 
 async function saveUploadedFile(file?: Express.Multer.File) {
   if (!file) return;
-  try {
-    const dataBuffer = file.buffer || (file.path && fs.existsSync(file.path) ? fs.readFileSync(file.path) : null);
-    if (dataBuffer) {
-      await prisma.uploadedFile.upsert({
-        where: { filename: file.filename },
-        create: {
-          filename: file.filename,
-          mimeType: file.mimetype || 'application/octet-stream',
-          size: file.size || dataBuffer.length,
-          data: dataBuffer,
-        },
-        update: {
-          mimeType: file.mimetype || 'application/octet-stream',
-          size: file.size || dataBuffer.length,
-          data: dataBuffer,
-        },
-      });
-    }
-  } catch (err) {
-    console.warn('[UploadedFile DB Save Warning]:', err);
+  const dataBuffer = file.buffer || (file.path && fs.existsSync(file.path) ? fs.readFileSync(file.path) : null);
+  if (!dataBuffer) {
+    throw new Error('Unable to read uploaded file data buffer');
   }
+  await prisma.uploadedFile.upsert({
+    where: { filename: file.filename },
+    create: {
+      filename: file.filename,
+      mimeType: file.mimetype || 'application/octet-stream',
+      size: file.size || dataBuffer.length,
+      data: dataBuffer,
+    },
+    update: {
+      mimeType: file.mimetype || 'application/octet-stream',
+      size: file.size || dataBuffer.length,
+      data: dataBuffer,
+    },
+  });
 }
 
 const profilePictureUpload = multer({
