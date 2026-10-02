@@ -38,41 +38,68 @@ if (!process.env.VERCEL) {
 }
 
 const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : path.join(process.cwd(), 'uploads');
-try {
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
+const avatarsDir = path.join(uploadsDir, 'avatars');
+const documentsDir = path.join(uploadsDir, 'documents');
+
+for (const dir of [uploadsDir, avatarsDir, documentsDir]) {
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  } catch (e) {
+    console.warn('[Uploads Directory]', e);
   }
-} catch (e) {
-  console.warn('[Uploads Directory]', e);
 }
 
 // Serve uploaded media / documents statically and fallback to DB for serverless
 app.use('/uploads', express.static(uploadsDir));
 
-app.get(['/uploads/:filename', '/api/uploads/:filename'], async (req, res) => {
-  const { filename } = req.params;
-  const localPath = path.join(uploadsDir, filename);
+app.get(['/uploads/*', '/api/uploads/*'], async (req, res) => {
+  const match = req.path.match(/^\/(?:api\/)?uploads\/(.+)$/);
+  if (!match) {
+    return res.status(404).send('Cannot GET ' + req.originalUrl);
+  }
+  const relativePath = decodeURIComponent(match[1]); // e.g. "avatars/xxx.jpg", "documents/yyy.pdf", or "zzz.png"
+  const localPath = path.join(uploadsDir, relativePath);
+
   if (fs.existsSync(localPath)) {
     return res.sendFile(localPath);
   }
+
   try {
-    const fileRecord = await prisma.uploadedFile.findUnique({
-      where: { filename },
+    // 1. Try exact relative path in database (e.g. "avatars/xxx.jpg" or "documents/yyy.pdf")
+    let fileRecord = await prisma.uploadedFile.findUnique({
+      where: { filename: relativePath },
     });
+
+    // 2. Fallback to bare basename if legacy record was stored without folder prefix
+    if (!fileRecord && relativePath.includes('/')) {
+      const bareName = path.basename(relativePath);
+      fileRecord = await prisma.uploadedFile.findUnique({
+        where: { filename: bareName },
+      });
+    }
+
     if (fileRecord) {
       try {
+        const fileDir = path.dirname(localPath);
+        if (!fs.existsSync(fileDir)) {
+          fs.mkdirSync(fileDir, { recursive: true });
+        }
         if (!fs.existsSync(localPath)) {
           fs.writeFileSync(localPath, fileRecord.data);
         }
       } catch {}
+
       res.setHeader('Content-Type', fileRecord.mimeType || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      res.setHeader('Content-Disposition', `inline; filename="${path.basename(relativePath)}"`);
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       return res.end(fileRecord.data);
     }
   } catch (err) {
     console.error('[Uploads Serve Error]', err);
   }
+
   return res.status(404).send('Cannot GET ' + req.originalUrl);
 });
 

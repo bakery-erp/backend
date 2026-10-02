@@ -13,35 +13,30 @@ const usersService = new UsersService();
 usersRouter.use(authMiddleware);
 
 const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : path.join(process.cwd(), 'uploads');
-try {
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
+const avatarsDir = path.join(uploadsDir, 'avatars');
+const documentsDir = path.join(uploadsDir, 'documents');
+
+for (const dir of [uploadsDir, avatarsDir, documentsDir]) {
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  } catch (e) {
+    console.warn('[Uploads Directory]', e);
   }
-} catch (e) {
-  console.warn('[Uploads Directory]', e);
 }
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (_req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + '.' + (file.originalname.split('.').pop() || 'png'));
-  }
-});
-const upload = multer({ storage });
-
-async function saveUploadedFile(file?: Express.Multer.File) {
+async function saveUploadedFile(file?: Express.Multer.File, subfolder: 'avatars' | 'documents' = 'documents') {
   if (!file) return;
   const dataBuffer = file.buffer || (file.path && fs.existsSync(file.path) ? fs.readFileSync(file.path) : null);
   if (!dataBuffer) {
     throw new Error('Unable to read uploaded file data buffer');
   }
+  const key = `${subfolder}/${file.filename}`;
   await prisma.uploadedFile.upsert({
-    where: { filename: file.filename },
+    where: { filename: key },
     create: {
-      filename: file.filename,
+      filename: key,
       mimeType: file.mimetype || 'application/octet-stream',
       size: file.size || dataBuffer.length,
       data: dataBuffer,
@@ -54,46 +49,61 @@ async function saveUploadedFile(file?: Express.Multer.File) {
   });
 }
 
-const profilePictureUpload = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
-    if (allowed.includes(file.mimetype.toLowerCase())) {
-      cb(null, true);
-    } else {
-      cb(new Error('Unsupported image format. Please upload a JPG, PNG, or WebP image.'));
-    }
+// Multer storage with dynamic destination based on field name
+const userDiskStorage = multer.diskStorage({
+  destination: (_req, file, cb) => {
+    const dest = file.fieldname === 'avatar' ? avatarsDir : documentsDir;
+    cb(null, dest);
   },
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const rawExt = path.extname(file.originalname).toLowerCase();
+    const fallbackExt = file.fieldname === 'avatar' ? '.jpg' : '.pdf';
+    cb(null, uniqueSuffix + (rawExt || fallbackExt));
+  }
 });
 
-const pdfDocumentUpload = multer({
-  storage,
+const userUpload = multer({
+  storage: userDiskStorage,
   limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const isPdfMime = file.mimetype.toLowerCase() === 'application/pdf';
-    const isPdfExt = file.originalname.toLowerCase().endsWith('.pdf');
-    if (isPdfMime || isPdfExt) {
-      cb(null, true);
+    if (file.fieldname === 'avatar') {
+      const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+      const isImgExt = file.originalname.match(/\.(jpe?g|png|webp)$/i);
+      if (allowed.includes(file.mimetype.toLowerCase()) || isImgExt) {
+        cb(null, true);
+      } else {
+        cb(new Error('Unsupported avatar format. Please upload a JPG, PNG, or WebP image.'));
+      }
     } else {
-      cb(new Error('Invalid document format. Identification document must be a PDF (.pdf) file.'));
+      // User data file: Allow BOTH PDF and Images (ID card scan, Kebele ID, passport, driving license, contract)
+      const allowedMimes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+      const isAllowedExt = file.originalname.match(/\.(pdf|jpe?g|png|webp)$/i);
+      if (allowedMimes.includes(file.mimetype.toLowerCase()) || isAllowedExt) {
+        cb(null, true);
+      } else {
+        cb(new Error('Invalid document format. Identification file must be a PDF document or an image (JPG, PNG, WebP).'));
+      }
     }
   },
 });
 
-function handlePdfUpload(req: any, res: any, next: any) {
-  pdfDocumentUpload.single('file')(req, res, (err: any) => {
+function handleProfilePictureUpload(req: any, res: any, next: any) {
+  userUpload.single('file')(req, res, (err: any) => {
     if (err) {
-      return res.status(400).json({ error: err.message || 'File upload error' });
+      return res.status(400).json({ error: err.message || 'Profile picture upload error' });
     }
     next();
   });
 }
 
-function handleProfilePictureUpload(req: any, res: any, next: any) {
-  profilePictureUpload.single('file')(req, res, (err: any) => {
+function handleUserFormUpload(req: any, res: any, next: any) {
+  userUpload.fields([
+    { name: 'file', maxCount: 1 },    // User data document (PDF or Image)
+    { name: 'avatar', maxCount: 1 },  // Profile picture (Image)
+  ])(req, res, (err: any) => {
     if (err) {
-      return res.status(400).json({ error: err.message || 'Profile picture upload error' });
+      return res.status(400).json({ error: err.message || 'File upload error' });
     }
     next();
   });
@@ -127,8 +137,8 @@ usersRouter.post('/me/change-password', async (req: AuthRequest, res: Response) 
 usersRouter.post('/me/profile-picture', handleProfilePictureUpload, async (req: AuthRequest, res: Response) => {
   if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  await saveUploadedFile(req.file);
-  const fileUrl = `/uploads/${req.file.filename}`;
+  await saveUploadedFile(req.file, 'avatars');
+  const fileUrl = `/uploads/avatars/${req.file.filename}`;
   const result = await usersService.updateProfilePicture(req.user.id, fileUrl);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -156,27 +166,52 @@ usersRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response
   res.json(result.data);
 });
 
-usersRouter.post('/', requireRole('OWNER', 'ADMIN'), handlePdfUpload, async (req: AuthRequest, res: Response) => {
-  if (!req.file && !req.body.filesUrl) {
-    return res.status(400).json({ error: 'Identification document (PDF) is mandatory when creating a new user.' });
+usersRouter.post('/', requireRole('OWNER', 'ADMIN'), handleUserFormUpload, async (req: AuthRequest, res: Response) => {
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+  const docFile = files?.file?.[0];
+  const avatarFile = files?.avatar?.[0];
+
+  if (!docFile && !req.body.filesUrl) {
+    return res.status(400).json({ error: 'Identification document (PDF or Image) is mandatory when creating a new user.' });
   }
-  if (req.file) {
-    await saveUploadedFile(req.file);
+
+  let docFileUrl: string | undefined = req.body.filesUrl;
+  if (docFile) {
+    await saveUploadedFile(docFile, 'documents');
+    docFileUrl = `/uploads/documents/${docFile.filename}`;
   }
-  const fileUrl = req.file ? `/uploads/${req.file.filename}` : req.body.filesUrl;
-  const result = await usersService.createUser(req.body, fileUrl);
+
+  let avatarUrl: string | undefined = req.body.avatarUrl;
+  if (avatarFile) {
+    await saveUploadedFile(avatarFile, 'avatars');
+    avatarUrl = `/uploads/avatars/${avatarFile.filename}`;
+  }
+
+  const result = await usersService.createUser({ ...req.body, avatarUrl }, docFileUrl);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
   res.status(201).json(result.data);
 });
 
-usersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), handlePdfUpload, async (req: AuthRequest, res: Response) => {
-  if (req.file) {
-    await saveUploadedFile(req.file);
+usersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), handleUserFormUpload, async (req: AuthRequest, res: Response) => {
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+  const docFile = files?.file?.[0];
+  const avatarFile = files?.avatar?.[0];
+
+  let docFileUrl: string | undefined = undefined;
+  if (docFile) {
+    await saveUploadedFile(docFile, 'documents');
+    docFileUrl = `/uploads/documents/${docFile.filename}`;
   }
-  const fileUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
-  const result = await usersService.updateUser(req.params.id, req.body, fileUrl);
+
+  const bodyData = { ...req.body };
+  if (avatarFile) {
+    await saveUploadedFile(avatarFile, 'avatars');
+    bodyData.avatarUrl = `/uploads/avatars/${avatarFile.filename}`;
+  }
+
+  const result = await usersService.updateUser(req.params.id, bodyData, docFileUrl);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
