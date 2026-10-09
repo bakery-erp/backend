@@ -393,13 +393,7 @@ export class DailySessionsService {
     });
 
     if (existing) {
-      if (existing.status === 'CLOSED') {
-        return {
-          error: "Session for today has already been closed. A new session can only be opened on the next calendar day.",
-          status: 400,
-        };
-      }
-      if (existing.status === 'PAUSED') {
+      if (existing.status === 'CLOSED' || existing.status === 'PAUSED') {
         const reopened = await prisma.dailySession.update({
           where: { id: existing.id },
           data: { status: 'OPEN', ...(label ? { label: label.trim() } : {}) },
