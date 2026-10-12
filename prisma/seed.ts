@@ -124,6 +124,7 @@ export async function seed8Days() {
     { phone: '0920000001', fullName: 'Tadesse Baker', role: Role.BAKER, salary: 18500, shift: Shift.DAY },
     { phone: '0920000002', fullName: 'Meron Cashier', role: Role.CASHIER, salary: 13500, shift: Shift.DAY },
     { phone: '0920000003', fullName: 'Fatima Pastry', role: Role.SAMBUSA_WORKER, salary: 12000, shift: Shift.DAY },
+    { phone: '0920000005', fullName: 'Hanna Cake', role: Role.CAKE_WORKER, salary: 16000, shift: Shift.DAY },
     { phone: '0920000004', fullName: 'Kassahun Cleaner', role: Role.EMPLOYEE, salary: 8500, shift: Shift.DAY },
   ];
 
@@ -159,10 +160,21 @@ export async function seed8Days() {
   const fcUtilities = await prisma.financialCategory.create({ data: { name: 'Utilities (Electricity & Water)', type: 'EXPENSE' } });
   const fcPackaging = await prisma.financialCategory.create({ data: { name: 'Packaging & Logistics', type: 'EXPENSE' } });
 
-  const catBread = await prisma.productCategory.create({ data: { name: 'Bread (Machine)', type: CategoryType.PRODUCED } });
-  const catPastry = await prisma.productCategory.create({ data: { name: 'Pastry & Snacks', type: CategoryType.PRODUCED } });
-  const catDairy = await prisma.productCategory.create({ data: { name: 'Dairy', type: CategoryType.RESELL } });
-  const catInjera = await prisma.productCategory.create({ data: { name: 'Injera', type: CategoryType.RESELL } });
+  const catBread = await prisma.productCategory.create({
+    data: { name: 'Bread (Machine)', type: CategoryType.PRODUCED, productionRole: Role.BAKER },
+  });
+  const catPastry = await prisma.productCategory.create({
+    data: { name: 'Pastry & Snacks', type: CategoryType.PRODUCED, productionRole: Role.SAMBUSA_WORKER },
+  });
+  const catCake = await prisma.productCategory.create({
+    data: { name: 'Cakes & Desserts', type: CategoryType.PRODUCED, productionRole: Role.CAKE_WORKER },
+  });
+  const catDairy = await prisma.productCategory.create({
+    data: { name: 'Dairy', type: CategoryType.RESELL },
+  });
+  const catInjera = await prisma.productCategory.create({
+    data: { name: 'Injera', type: CategoryType.RESELL },
+  });
 
   // 4. Products Catalog
   console.log('🍞 [4/8] Seeding Product Catalog...');
@@ -176,6 +188,7 @@ export async function seed8Days() {
       categoryId: catBread.id,
       financialCategoryId: fcRetail.id,
       imageUrl: 'https://www.melskitchencafe.com/wp-content/uploads/french-bread1.webp',
+      branchIds: [branchMegenagna.id, branchPiassa.id],
     },
     {
       name: 'Special Loaf Bread',
@@ -186,6 +199,7 @@ export async function seed8Days() {
       categoryId: catBread.id,
       financialCategoryId: fcRetail.id,
       imageUrl: 'https://www.thespruceeats.com/thmb/j4mujy24lcmnyW_a7VS1sVP4Mw4=/750x0/filters:no_upscale():max_bytes(150000):strip_icc():format(webp)/loaf-of-bread-182835505-58a7008c5f9b58a3c91c9a14.jpg',
+      branchIds: [branchMegenagna.id], // Megenagna only
     },
     {
       name: 'Lentil Sambusa',
@@ -196,6 +210,18 @@ export async function seed8Days() {
       categoryId: catPastry.id,
       financialCategoryId: fcRetail.id,
       imageUrl: 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=600&q=80',
+      branchIds: [branchMegenagna.id, branchPiassa.id],
+    },
+    {
+      name: 'Strawberry Cream Cake',
+      flavor: 'Strawberry Vanilla',
+      unitType: UnitType.PIECE,
+      basePrice: 85,
+      buyPrice: null,
+      categoryId: catCake.id,
+      financialCategoryId: fcRetail.id,
+      imageUrl: 'https://images.unsplash.com/photo-1578985545062-69928b1d9587?auto=format&fit=crop&w=600&q=80',
+      branchIds: [branchMegenagna.id, branchPiassa.id],
     },
     {
       name: 'Fresh Milk',
@@ -206,6 +232,7 @@ export async function seed8Days() {
       categoryId: catDairy.id,
       financialCategoryId: fcResell.id,
       imageUrl: 'https://images.unsplash.com/photo-1550583724-b2692b85b150?auto=format&fit=crop&w=600&q=80',
+      branchIds: [branchMegenagna.id, branchPiassa.id],
     },
     {
       name: 'White Teff Injera',
@@ -216,6 +243,7 @@ export async function seed8Days() {
       categoryId: catInjera.id,
       financialCategoryId: fcResell.id,
       imageUrl: 'https://images.unsplash.com/photo-1541544741938-0af808871cc0?auto=format&fit=crop&w=600&q=80',
+      branchIds: [branchPiassa.id], // Piassa only
     },
   ];
 
