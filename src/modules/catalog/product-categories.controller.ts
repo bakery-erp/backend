@@ -9,9 +9,11 @@ productCategoriesRouter.use(authMiddleware);
 
 // GET /api/product-categories?tree=true  — full nested tree
 // GET /api/product-categories            — flat list with parent info
+// GET /api/product-categories?role=BAKER  — filtered by production role
 productCategoriesRouter.get('/', async (req, res: Response) => {
   const tree = req.query.tree === 'true';
-  const result = await productCategoriesService.getCategories(tree);
+  const role = (req.query.role as string) || undefined;
+  const result = await productCategoriesService.getCategories(tree, role);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -36,7 +38,7 @@ productCategoriesRouter.get('/:id', async (req, res: Response) => {
   res.json(result.data);
 });
 
-productCategoriesRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+productCategoriesRouter.post('/', requireRole('OWNER'), async (req, res: Response) => {
   const result = await productCategoriesService.createCategory(req.body);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -44,7 +46,7 @@ productCategoriesRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res
   res.status(201).json(result.data);
 });
 
-productCategoriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+productCategoriesRouter.patch('/:id', requireRole('OWNER'), async (req, res: Response) => {
   const result = await productCategoriesService.updateCategory(req.params.id, req.body);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -52,7 +54,7 @@ productCategoriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req,
   res.json(result.data);
 });
 
-productCategoriesRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+productCategoriesRouter.delete('/:id', requireRole('OWNER'), async (req, res: Response) => {
   const result = await productCategoriesService.deleteCategory(req.params.id);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });

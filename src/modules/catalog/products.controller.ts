@@ -41,7 +41,7 @@ productsRouter.get('/:id', async (req, res: Response) => {
   }
 });
 
-productsRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+productsRouter.post('/', requireRole('OWNER'), async (req, res: Response) => {
   try {
     const result = await productsService.createProduct(req.body);
     if (result.error) {
@@ -53,7 +53,7 @@ productsRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res: Respons
   }
 });
 
-productsRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+productsRouter.patch('/:id', requireRole('OWNER'), async (req, res: Response) => {
   try {
     const result = await productsService.updateProduct(req.params.id, req.body);
     if (result.error) {
@@ -66,7 +66,7 @@ productsRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Res
 });
 
 // DELETE /api/products/:id — soft-deactivates if product has history, hard-deletes if clean
-productsRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+productsRouter.delete('/:id', requireRole('OWNER'), async (req, res: Response) => {
   try {
     const result = await productsService.deleteProduct(req.params.id);
     if (result.error) {
