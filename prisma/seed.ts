@@ -18,7 +18,9 @@ import {
 } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
-const prisma = new PrismaClient();
+const rawUrl = process.env.DATABASE_URL || '';
+const sessionUrl = rawUrl.replace(':6543/', ':5432/').replace('&pgbouncer=true', '').replace('?pgbouncer=true', '?');
+const prisma = new PrismaClient(sessionUrl ? { datasources: { db: { url: sessionUrl } } } : undefined);
 
 async function safeOp<T>(fn: () => Promise<T>, maxRetries = 5, delayMs = 2000): Promise<T> {
   let attempt = 0;
@@ -77,14 +79,14 @@ async function cleanDatabase() {
 
 export async function seed8Days() {
   console.log('\n=============================================================');
-  console.log('🌱 Starting 8-Day Cohesive Bakery ERP Dataset Seeder');
+  console.log('🌱 Starting Full Multi-Branch Bakery ERP Dataset Seeder');
   console.log('=============================================================\n');
 
   // 0. Clean database
   await cleanDatabase();
 
   // 1. Company & Branches
-  console.log('📍 [1/8] Creating Company & Branches...');
+  console.log('📍 [1/8] Creating Company & Branches (Megenagna & Piassa)...');
   const { company, branchMegenagna, branchPiassa } = await safeOp(async () => {
     const comp = await prisma.company.create({
       data: {
@@ -115,16 +117,27 @@ export async function seed8Days() {
   });
 
   // 2. Users & Staff Roles
-  console.log('👥 [2/8] Creating Personnel & Staff...');
+  console.log('👥 [2/8] Creating Personnel & Staff for Both Branches...');
   const passwordHash = await bcrypt.hash('password123', 10);
 
   const staffList = [
-    { phone: '0912345678', fullName: 'Hamza Owner', role: Role.OWNER, salary: 45000, shift: null },
-    { phone: '0910000001', fullName: 'Abebe Admin', role: Role.ADMIN, salary: 25000, shift: null },
-    { phone: '0920000001', fullName: 'Tadesse Baker', role: Role.BAKER, salary: 18500, shift: Shift.DAY },
-    { phone: '0920000002', fullName: 'Meron Cashier', role: Role.CASHIER, salary: 13500, shift: Shift.DAY },
-    { phone: '0920000003', fullName: 'Fatima Pastry', role: Role.SAMBUSA_WORKER, salary: 12000, shift: Shift.DAY },
-    { phone: '0920000004', fullName: 'Kassahun Cleaner', role: Role.EMPLOYEE, salary: 8500, shift: Shift.DAY },
+    // Owner (Global)
+    { phone: '0912345678', fullName: 'Hamza Owner', role: Role.OWNER, salary: 45000, shift: null, branchId: branchMegenagna.id, key: 'OWNER' },
+
+    // Megenagna Staff
+    { phone: '0910000001', fullName: 'Abebe Admin', role: Role.ADMIN, salary: 25000, shift: null, branchId: branchMegenagna.id, key: 'ADMIN_MEG' },
+    { phone: '0920000001', fullName: 'Tadesse Baker', role: Role.BAKER, salary: 18500, shift: Shift.DAY, branchId: branchMegenagna.id, key: 'BAKER_MEG' },
+    { phone: '0920000002', fullName: 'Meron Cashier', role: Role.CASHIER, salary: 13500, shift: Shift.DAY, branchId: branchMegenagna.id, key: 'CASHIER_MEG' },
+    { phone: '0920000003', fullName: 'Fatima Pastry', role: Role.SAMBUSA_WORKER, salary: 12000, shift: Shift.DAY, branchId: branchMegenagna.id, key: 'SAMBUSA_MEG' },
+    { phone: '0920000005', fullName: 'Hanna Cake', role: Role.CAKE_WORKER, salary: 16000, shift: Shift.DAY, branchId: branchMegenagna.id, key: 'CAKE_MEG' },
+    { phone: '0920000004', fullName: 'Kassahun Cleaner', role: Role.EMPLOYEE, salary: 8500, shift: Shift.DAY, branchId: branchMegenagna.id, key: 'CLEANER_MEG' },
+
+    // Piassa Staff
+    { phone: '0910000002', fullName: 'Dawit Piassa Admin', role: Role.ADMIN, salary: 25000, shift: null, branchId: branchPiassa.id, key: 'ADMIN_PIA' },
+    { phone: '0920000011', fullName: 'Kebede Piassa Baker', role: Role.BAKER, salary: 18500, shift: Shift.DAY, branchId: branchPiassa.id, key: 'BAKER_PIA' },
+    { phone: '0920000012', fullName: 'Selam Piassa Cashier', role: Role.CASHIER, salary: 13500, shift: Shift.DAY, branchId: branchPiassa.id, key: 'CASHIER_PIA' },
+    { phone: '0920000013', fullName: 'Tigist Piassa Sambusa', role: Role.SAMBUSA_WORKER, salary: 12000, shift: Shift.DAY, branchId: branchPiassa.id, key: 'SAMBUSA_PIA' },
+    { phone: '0920000015', fullName: 'Yonas Piassa Cake', role: Role.CAKE_WORKER, salary: 16000, shift: Shift.DAY, branchId: branchPiassa.id, key: 'CAKE_PIA' },
   ];
 
   const userMap = new Map<string, string>();
@@ -138,20 +151,14 @@ export async function seed8Days() {
         salary: s.salary,
         shift: s.shift,
         isActive: true,
-        branchId: branchMegenagna.id,
+        branchId: s.branchId,
       },
     });
-    userMap.set(s.role, user.id);
+    userMap.set(s.key, user.id);
   }
 
-  const ownerId = userMap.get(Role.OWNER)!;
-  const adminId = userMap.get(Role.ADMIN)!;
-  const cashierId = userMap.get(Role.CASHIER)!;
-  const bakerId = userMap.get(Role.BAKER)!;
-  const sambusaId = userMap.get(Role.SAMBUSA_WORKER)!;
-
   // 3. Financial & Product Categories
-  console.log('🏷️  [3/8] Setting Up Financial & Catalog Categories...');
+  console.log('🏷️  [3/8] Setting Up Financial & Catalog Categories with Role Mappings...');
   const fcRetail = await prisma.financialCategory.create({ data: { name: 'Retail sales (bakery)', type: 'REVENUE' } });
   const fcResell = await prisma.financialCategory.create({ data: { name: 'Resell goods', type: 'REVENUE' } });
   const fcLunch = await prisma.financialCategory.create({ data: { name: 'Staff Lunch & Welfare', type: 'EXPENSE' } });
@@ -159,13 +166,24 @@ export async function seed8Days() {
   const fcUtilities = await prisma.financialCategory.create({ data: { name: 'Utilities (Electricity & Water)', type: 'EXPENSE' } });
   const fcPackaging = await prisma.financialCategory.create({ data: { name: 'Packaging & Logistics', type: 'EXPENSE' } });
 
-  const catBread = await prisma.productCategory.create({ data: { name: 'Bread (Machine)', type: CategoryType.PRODUCED } });
-  const catPastry = await prisma.productCategory.create({ data: { name: 'Pastry & Snacks', type: CategoryType.PRODUCED } });
-  const catDairy = await prisma.productCategory.create({ data: { name: 'Dairy', type: CategoryType.RESELL } });
-  const catInjera = await prisma.productCategory.create({ data: { name: 'Injera', type: CategoryType.RESELL } });
+  const catBread = await prisma.productCategory.create({
+    data: { name: 'Bread (Machine)', type: CategoryType.PRODUCED, productionRole: Role.BAKER },
+  });
+  const catPastry = await prisma.productCategory.create({
+    data: { name: 'Pastry & Snacks', type: CategoryType.PRODUCED, productionRole: Role.SAMBUSA_WORKER },
+  });
+  const catCake = await prisma.productCategory.create({
+    data: { name: 'Cakes & Desserts', type: CategoryType.PRODUCED, productionRole: Role.CAKE_WORKER },
+  });
+  const catDairy = await prisma.productCategory.create({
+    data: { name: 'Dairy', type: CategoryType.RESELL },
+  });
+  const catInjera = await prisma.productCategory.create({
+    data: { name: 'Injera', type: CategoryType.RESELL },
+  });
 
   // 4. Products Catalog
-  console.log('🍞 [4/8] Seeding Product Catalog...');
+  console.log('🍞 [4/8] Seeding Product Catalog with Branch Scoping...');
   const productsDef = [
     {
       name: 'Bread',
@@ -176,6 +194,7 @@ export async function seed8Days() {
       categoryId: catBread.id,
       financialCategoryId: fcRetail.id,
       imageUrl: 'https://www.melskitchencafe.com/wp-content/uploads/french-bread1.webp',
+      branchIds: [branchMegenagna.id, branchPiassa.id],
     },
     {
       name: 'Special Loaf Bread',
@@ -186,6 +205,7 @@ export async function seed8Days() {
       categoryId: catBread.id,
       financialCategoryId: fcRetail.id,
       imageUrl: 'https://www.thespruceeats.com/thmb/j4mujy24lcmnyW_a7VS1sVP4Mw4=/750x0/filters:no_upscale():max_bytes(150000):strip_icc():format(webp)/loaf-of-bread-182835505-58a7008c5f9b58a3c91c9a14.jpg',
+      branchIds: [branchMegenagna.id], // Megenagna exclusive
     },
     {
       name: 'Lentil Sambusa',
@@ -196,6 +216,18 @@ export async function seed8Days() {
       categoryId: catPastry.id,
       financialCategoryId: fcRetail.id,
       imageUrl: 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=600&q=80',
+      branchIds: [branchMegenagna.id, branchPiassa.id],
+    },
+    {
+      name: 'Strawberry Cream Cake',
+      flavor: 'Strawberry Vanilla',
+      unitType: UnitType.PIECE,
+      basePrice: 85,
+      buyPrice: null,
+      categoryId: catCake.id,
+      financialCategoryId: fcRetail.id,
+      imageUrl: 'https://images.unsplash.com/photo-1578985545062-69928b1d9587?auto=format&fit=crop&w=600&q=80',
+      branchIds: [branchMegenagna.id, branchPiassa.id],
     },
     {
       name: 'Fresh Milk',
@@ -206,6 +238,7 @@ export async function seed8Days() {
       categoryId: catDairy.id,
       financialCategoryId: fcResell.id,
       imageUrl: 'https://images.unsplash.com/photo-1550583724-b2692b85b150?auto=format&fit=crop&w=600&q=80',
+      branchIds: [branchMegenagna.id, branchPiassa.id],
     },
     {
       name: 'White Teff Injera',
@@ -216,6 +249,7 @@ export async function seed8Days() {
       categoryId: catInjera.id,
       financialCategoryId: fcResell.id,
       imageUrl: 'https://images.unsplash.com/photo-1541544741938-0af808871cc0?auto=format&fit=crop&w=600&q=80',
+      branchIds: [branchPiassa.id], // Piassa exclusive
     },
   ];
 
@@ -225,687 +259,412 @@ export async function seed8Days() {
     productMap.set(p.name, prod);
   }
 
-  // 5. Raw Materials (Stock Items) with Initial Stock In
-  console.log('📦 [5/8] Seeding Initial Raw Material Inventory...');
+  // 5. Raw Materials (Stock Items) for Both Branches
+  console.log('📦 [5/8] Seeding Initial Raw Material Inventory for Both Branches...');
   const stockDefs = [
-    { name: 'Wheat Flour (Special)', unitType: UnitType.KG, currentQuantity: 1000, minStockLevel: 150, unitPrice: 85 },
-    { name: 'Dry Yeast', unitType: UnitType.KG, currentQuantity: 50, minStockLevel: 10, unitPrice: 420 },
-    { name: 'Cooking Oil', unitType: UnitType.LITER, currentQuantity: 200, minStockLevel: 40, unitPrice: 190 },
-    { name: 'Sugar', unitType: UnitType.KG, currentQuantity: 300, minStockLevel: 50, unitPrice: 110 },
-    { name: 'Lentils', unitType: UnitType.KG, currentQuantity: 100, minStockLevel: 20, unitPrice: 140 },
+    { name: 'Wheat Flour (Special)', unitType: UnitType.KG, currentQuantity: 1500, minStockLevel: 200, unitPrice: 85 },
+    { name: 'Dry Yeast', unitType: UnitType.KG, currentQuantity: 60, minStockLevel: 15, unitPrice: 420 },
+    { name: 'Cooking Oil', unitType: UnitType.LITER, currentQuantity: 250, minStockLevel: 50, unitPrice: 190 },
+    { name: 'Sugar', unitType: UnitType.KG, currentQuantity: 350, minStockLevel: 60, unitPrice: 110 },
+    { name: 'Lentils', unitType: UnitType.KG, currentQuantity: 120, minStockLevel: 25, unitPrice: 140 },
   ];
 
-  const stockMap = new Map<string, any>();
-  for (const s of stockDefs) {
-    const item = await prisma.stockItem.create({
-      data: {
-        name: s.name,
-        unitType: s.unitType,
-        currentQuantity: s.currentQuantity,
-        minStockLevel: s.minStockLevel,
-        unitPrice: s.unitPrice,
-        branchId: branchMegenagna.id,
-      },
-    });
-    stockMap.set(s.name, item);
+  const stockMapMeg = new Map<string, any>();
+  const stockMapPia = new Map<string, any>();
 
+  for (const s of stockDefs) {
+    // Megenagna stock
+    const itemMeg = await prisma.stockItem.create({
+      data: { ...s, branchId: branchMegenagna.id },
+    });
+    stockMapMeg.set(s.name, itemMeg);
     await prisma.stockMovement.create({
       data: {
         type: StockMovementType.IN,
         quantity: s.currentQuantity,
-        reason: 'Initial opening inventory setup',
-        stockItemId: item.id,
-        userId: adminId,
+        reason: 'Opening inventory setup (Megenagna)',
+        stockItemId: itemMeg.id,
+        userId: userMap.get('ADMIN_MEG')!,
+      },
+    });
+
+    // Piassa stock
+    const itemPia = await prisma.stockItem.create({
+      data: { ...s, branchId: branchPiassa.id },
+    });
+    stockMapPia.set(s.name, itemPia);
+    await prisma.stockMovement.create({
+      data: {
+        type: StockMovementType.IN,
+        quantity: s.currentQuantity,
+        reason: 'Opening inventory setup (Piassa)',
+        stockItemId: itemPia.id,
+        userId: userMap.get('ADMIN_PIA')!,
       },
     });
   }
 
-  // 6. Suppliers & Customers
-  console.log('🤝 [6/8] Seeding Suppliers & Commercial Customers...');
-  const supDairy = await prisma.supplier.create({
-    data: { name: 'Bishoftu Fresh Dairy', phone: '0911887766', type: SupplierType.MILK, branchId: branchMegenagna.id },
+  // 6. Suppliers & Customers for Both Branches
+  console.log('🤝 [6/8] Seeding Suppliers & Customers for Both Branches...');
+  const supDairyMeg = await prisma.supplier.create({
+    data: { name: 'Bishoftu Fresh Dairy (Megenagna)', phone: '0911887766', type: SupplierType.MILK, branchId: branchMegenagna.id },
   });
-  const supInjera = await prisma.supplier.create({
+  const supInjeraMeg = await prisma.supplier.create({
     data: { name: 'Bole Injera Cooperative', phone: '0911554433', type: SupplierType.INJERA, branchId: branchMegenagna.id },
   });
-  const supFlour = await prisma.supplier.create({
-    data: { name: 'National Flour & Grain Corp', phone: '0911778899', type: SupplierType.GENERAL, branchId: branchMegenagna.id },
+
+  const supDairyPia = await prisma.supplier.create({
+    data: { name: 'Arsho Fresh Dairy (Piassa)', phone: '0911889900', type: SupplierType.MILK, branchId: branchPiassa.id },
+  });
+  const supInjeraPia = await prisma.supplier.create({
+    data: { name: 'Churchill Teff Injera (Piassa)', phone: '0911667788', type: SupplierType.INJERA, branchId: branchPiassa.id },
   });
 
-  const custBlueCafe = await prisma.customer.create({
-    data: {
-      fullName: 'Megenagna Blue Cafe',
-      phone: '0911998877',
-      companyId: company.id,
-      branchId: branchMegenagna.id,
-      address: 'Near Megenagna Plaza',
-    },
+  const custMeg1 = await prisma.customer.create({
+    data: { fullName: 'Megenagna Blue Cafe', phone: '0911998877', companyId: company.id, branchId: branchMegenagna.id, address: 'Near Megenagna Plaza' },
+  });
+  const custPia1 = await prisma.customer.create({
+    data: { fullName: 'Piassa Heritage Cafe', phone: '0911443322', companyId: company.id, branchId: branchPiassa.id, address: 'Churchill Road 3rd Floor' },
   });
 
-  const custSunset = await prisma.customer.create({
-    data: {
-      fullName: 'Sunset Restaurant',
-      phone: '0911882233',
-      companyId: company.id,
-      branchId: branchMegenagna.id,
-      address: 'Zefmesh Mall 4th Floor',
-    },
-  });
+  // 7. Timeline Simulation for Both Branches
+  console.log('📅 [7/8] Simulating 8 Days of Production, Sales & Sessions for Both Branches...');
 
-  // 7. Generate 8-Day Cohesive Timeline
-  console.log('📅 [7/8] Simulating 8 Consecutive Days of Business Cycles...');
-
-  // Anchor today: 00:00:00 UTC
   const now = new Date();
   const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
 
-  const daysData = [
-    // DAY 1 (7 days ago) - CLOSED
+  const branchConfigs = [
     {
-      dayIndex: 1,
-      dateOffset: -7,
-      status: SessionStatus.CLOSED,
-      openingFloat: 1000,
-      tomorrowFloat: 1200,
-      production: [
-        {
-          items: [{ name: 'Bread', qty: 200 }, { name: 'Special Loaf Bread', qty: 40 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 50 }, { name: 'Dry Yeast', qty: 1.5 }, { name: 'Sugar', qty: 2 }],
-        },
-        {
-          items: [{ name: 'Lentil Sambusa', qty: 80 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 8 }, { name: 'Cooking Oil', qty: 4 }, { name: 'Lentils', qty: 6 }],
-        },
-      ],
-      deliveries: [
-        { supplierId: supDairy.id, productName: 'Fresh Milk', qty: 50, buyPrice: 48, sellPrice: 60 },
-        { supplierId: supInjera.id, productName: 'White Teff Injera', qty: 60, buyPrice: 32, sellPrice: 40 },
-      ],
-      conversions: [],
-      expenses: [
-        { category: 'Staff Lunch & Welfare', amount: 350, desc: 'Staff lunch shift #1' },
-        { category: 'Ingredients & Supplies', amount: 150, desc: 'Sanitizing liquid' },
-      ],
-      leftovers: {
-        'Bread': { remaining: 15, damaged: 5 },
-        'Special Loaf Bread': { remaining: 5, damaged: 1 },
-        'Lentil Sambusa': { remaining: 8, damaged: 2 },
-        'Fresh Milk': { remaining: 8, damaged: 0 },
-        'White Teff Injera': { remaining: 6, damaged: 2 },
-      },
-      cashBreakdown: { cash: 5140, telebirr: 2500, cbe: 1500 }, // Total = 9,140
-      customerCredit: null,
-      creditRepayment: null,
+      branch: branchMegenagna,
+      name: 'Megenagna',
+      adminId: userMap.get('ADMIN_MEG')!,
+      bakerId: userMap.get('BAKER_MEG')!,
+      cashierId: userMap.get('CASHIER_MEG')!,
+      sambusaId: userMap.get('SAMBUSA_MEG')!,
+      cakeId: userMap.get('CAKE_MEG')!,
+      stockMap: stockMapMeg,
+      supDairy: supDairyMeg,
+      supInjera: supInjeraMeg,
+      customer: custMeg1,
+      isMegenagna: true,
     },
-
-    // DAY 2 (6 days ago) - CLOSED
     {
-      dayIndex: 2,
-      dateOffset: -6,
-      status: SessionStatus.CLOSED,
-      openingFloat: 1200,
-      tomorrowFloat: 1500,
-      production: [
-        {
-          items: [{ name: 'Bread', qty: 220 }, { name: 'Special Loaf Bread', qty: 45 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 55 }, { name: 'Dry Yeast', qty: 1.8 }, { name: 'Sugar', qty: 2.5 }],
-        },
-        {
-          items: [{ name: 'Lentil Sambusa', qty: 90 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 9 }, { name: 'Cooking Oil', qty: 4.5 }, { name: 'Lentils', qty: 7 }],
-        },
-      ],
-      deliveries: [
-        { supplierId: supDairy.id, productName: 'Fresh Milk', qty: 40, buyPrice: 48, sellPrice: 60 },
-        { supplierId: supInjera.id, productName: 'White Teff Injera', qty: 70, buyPrice: 32, sellPrice: 40 },
-      ],
-      conversions: [],
-      expenses: [
-        { category: 'Staff Lunch & Welfare', amount: 400, desc: 'Lunch shift #2' },
-      ],
-      leftovers: {
-        'Bread': { remaining: 12, damaged: 3 },
-        'Special Loaf Bread': { remaining: 6, damaged: 0 },
-        'Lentil Sambusa': { remaining: 10, damaged: 2 },
-        'Fresh Milk': { remaining: 5, damaged: 1 },
-        'White Teff Injera': { remaining: 8, damaged: 2 },
-      },
-      cashBreakdown: { cash: 6190, telebirr: 3000, cbe: 1800 }, // Total = 10,990
-      customerCredit: { customerId: custBlueCafe.id, amount: 600, desc: 'Blue Cafe morning supply credit' },
-      creditRepayment: null,
-    },
-
-    // DAY 3 (5 days ago) - CLOSED
-    {
-      dayIndex: 3,
-      dateOffset: -5,
-      status: SessionStatus.CLOSED,
-      openingFloat: 1500,
-      tomorrowFloat: 1500,
-      production: [
-        {
-          items: [{ name: 'Bread', qty: 240 }, { name: 'Special Loaf Bread', qty: 50 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 60 }, { name: 'Dry Yeast', qty: 2 }, { name: 'Sugar', qty: 3 }],
-        },
-        {
-          items: [{ name: 'Lentil Sambusa', qty: 100 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 10 }, { name: 'Cooking Oil', qty: 5 }, { name: 'Lentils', qty: 8 }],
-        },
-      ],
-      deliveries: [
-        { supplierId: supDairy.id, productName: 'Fresh Milk', qty: 60, buyPrice: 48, sellPrice: 60 },
-        { supplierId: supInjera.id, productName: 'White Teff Injera', qty: 80, buyPrice: 32, sellPrice: 40 },
-      ],
-      conversions: [
-        { fromProduct: 'Bread', fromQty: 10, toProduct: 'Special Loaf Bread', toQty: 10 },
-      ],
-      expenses: [
-        { category: 'Staff Lunch & Welfare', amount: 450, desc: 'Shift lunch' },
-        { category: 'Utilities (Electricity & Water)', amount: 650, desc: 'Generator diesel top-up' },
-      ],
-      leftovers: {
-        'Bread': { remaining: 18, damaged: 4 },
-        'Special Loaf Bread': { remaining: 4, damaged: 2 },
-        'Lentil Sambusa': { remaining: 12, damaged: 3 },
-        'Fresh Milk': { remaining: 7, damaged: 0 },
-        'White Teff Injera': { remaining: 10, damaged: 4 },
-      },
-      cashBreakdown: { cash: 6565, telebirr: 4000, cbe: 2000 }, // Expected: 1500 + 12165 - 1100 = 12565
-      customerCredit: null,
-      creditRepayment: null,
-    },
-
-    // DAY 4 (4 days ago) - CLOSED
-    {
-      dayIndex: 4,
-      dateOffset: -4,
-      status: SessionStatus.CLOSED,
-      openingFloat: 1500,
-      tomorrowFloat: 1800,
-      stockRestock: [
-        { stockItemName: 'Wheat Flour (Special)', qty: 500, reason: 'Bulk flour delivery from National Grain' },
-        { stockItemName: 'Cooking Oil', qty: 50, reason: 'Refined palm oil restock' },
-      ],
-      production: [
-        {
-          items: [{ name: 'Bread', qty: 280 }, { name: 'Special Loaf Bread', qty: 60 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 70 }, { name: 'Dry Yeast', qty: 2.2 }, { name: 'Sugar', qty: 3.5 }],
-        },
-        {
-          items: [{ name: 'Lentil Sambusa', qty: 120 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 12 }, { name: 'Cooking Oil', qty: 6 }, { name: 'Lentils', qty: 9 }],
-        },
-      ],
-      deliveries: [
-        { supplierId: supDairy.id, productName: 'Fresh Milk', qty: 70, buyPrice: 48, sellPrice: 60 },
-        { supplierId: supInjera.id, productName: 'White Teff Injera', qty: 90, buyPrice: 32, sellPrice: 40 },
-      ],
-      conversions: [],
-      expenses: [
-        { category: 'Packaging & Logistics', amount: 500, desc: 'Branded paper bags' },
-        { category: 'Staff Lunch & Welfare', amount: 400, desc: 'Lunch' },
-      ],
-      leftovers: {
-        'Bread': { remaining: 22, damaged: 6 },
-        'Special Loaf Bread': { remaining: 8, damaged: 1 },
-        'Lentil Sambusa': { remaining: 15, damaged: 2 },
-        'Fresh Milk': { remaining: 9, damaged: 0 },
-        'White Teff Injera': { remaining: 12, damaged: 3 },
-      },
-      cashBreakdown: { cash: 7430, telebirr: 4500, cbe: 2500 }, // Total = 14,430
-      customerCredit: null,
-      creditRepayment: null,
-    },
-
-    // DAY 5 (3 days ago) - CLOSED
-    {
-      dayIndex: 5,
-      dateOffset: -3,
-      status: SessionStatus.CLOSED,
-      openingFloat: 1800,
-      tomorrowFloat: 1800,
-      production: [
-        {
-          items: [{ name: 'Bread', qty: 260 }, { name: 'Special Loaf Bread', qty: 55 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 65 }, { name: 'Dry Yeast', qty: 2 }, { name: 'Sugar', qty: 3 }],
-        },
-        {
-          items: [{ name: 'Lentil Sambusa', qty: 110 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 11 }, { name: 'Cooking Oil', qty: 5.5 }, { name: 'Lentils', qty: 8.5 }],
-        },
-      ],
-      deliveries: [
-        { supplierId: supDairy.id, productName: 'Fresh Milk', qty: 65, buyPrice: 48, sellPrice: 60 },
-        { supplierId: supInjera.id, productName: 'White Teff Injera', qty: 85, buyPrice: 32, sellPrice: 40 },
-      ],
-      conversions: [],
-      expenses: [
-        { category: 'Staff Lunch & Welfare', amount: 450, desc: 'Staff lunch' },
-        { category: 'Utilities (Electricity & Water)', amount: 300, desc: 'Water refill' },
-      ],
-      leftovers: {
-        'Bread': { remaining: 20, damaged: 4 },
-        'Special Loaf Bread': { remaining: 7, damaged: 1 },
-        'Lentil Sambusa': { remaining: 14, damaged: 3 },
-        'Fresh Milk': { remaining: 8, damaged: 1 },
-        'White Teff Injera': { remaining: 11, damaged: 4 },
-      },
-      cashBreakdown: { cash: 7355, telebirr: 4200, cbe: 2800 }, // Total = 14,355
-      customerCredit: { customerId: custSunset.id, amount: 2000, desc: 'Sunset Restaurant dinner event credit' },
-      creditRepayment: null,
-    },
-
-    // DAY 6 (2 days ago) - CLOSED
-    {
-      dayIndex: 6,
-      dateOffset: -2,
-      status: SessionStatus.CLOSED,
-      openingFloat: 1800,
-      tomorrowFloat: 2000,
-      production: [
-        {
-          items: [{ name: 'Bread', qty: 240 }, { name: 'Special Loaf Bread', qty: 50 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 60 }, { name: 'Dry Yeast', qty: 1.8 }, { name: 'Sugar', qty: 2.8 }],
-        },
-        {
-          items: [{ name: 'Lentil Sambusa', qty: 100 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 10 }, { name: 'Cooking Oil', qty: 5 }, { name: 'Lentils', qty: 8 }],
-        },
-      ],
-      deliveries: [
-        { supplierId: supDairy.id, productName: 'Fresh Milk', qty: 60, buyPrice: 48, sellPrice: 60 },
-        { supplierId: supInjera.id, productName: 'White Teff Injera', qty: 80, buyPrice: 32, sellPrice: 40 },
-      ],
-      conversions: [],
-      expenses: [
-        { category: 'Staff Lunch & Welfare', amount: 420, desc: 'Lunch' },
-        { category: 'Packaging & Logistics', amount: 280, desc: 'Transport dispatch' },
-      ],
-      leftovers: {
-        'Bread': { remaining: 16, damaged: 4 },
-        'Special Loaf Bread': { remaining: 5, damaged: 2 },
-        'Lentil Sambusa': { remaining: 12, damaged: 2 },
-        'Fresh Milk': { remaining: 6, damaged: 0 },
-        'White Teff Injera': { remaining: 9, damaged: 8 }, // Tested high spoilage
-      },
-      cashBreakdown: { cash: 6430, telebirr: 4200, cbe: 2800 }, // Total = 13,430
-      customerCredit: null,
-      creditRepayment: null,
-    },
-
-    // DAY 7 (1 day ago / Yesterday) - CLOSED
-    {
-      dayIndex: 7,
-      dateOffset: -1,
-      status: SessionStatus.CLOSED,
-      openingFloat: 2000,
-      tomorrowFloat: 2000,
-      production: [
-        {
-          items: [{ name: 'Bread', qty: 260 }, { name: 'Special Loaf Bread', qty: 50 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 65 }, { name: 'Dry Yeast', qty: 2 }, { name: 'Sugar', qty: 3 }],
-        },
-        {
-          items: [{ name: 'Lentil Sambusa', qty: 110 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 12 }, { name: 'Cooking Oil', qty: 6 }, { name: 'Lentils', qty: 9 }],
-        },
-      ],
-      deliveries: [
-        { supplierId: supDairy.id, productName: 'Fresh Milk', qty: 65, buyPrice: 48, sellPrice: 60 },
-        { supplierId: supInjera.id, productName: 'White Teff Injera', qty: 85, buyPrice: 32, sellPrice: 40 },
-      ],
-      conversions: [],
-      expenses: [
-        { category: 'Staff Lunch & Welfare', amount: 450, desc: 'Lunch' },
-        { category: 'Ingredients & Supplies', amount: 250, desc: 'Baking sheet parchment paper' },
-      ],
-      leftovers: {
-        'Bread': { remaining: 18, damaged: 4 },
-        'Special Loaf Bread': { remaining: 6, damaged: 1 },
-        'Lentil Sambusa': { remaining: 14, damaged: 2 },
-        'Fresh Milk': { remaining: 7, damaged: 1 },
-        'White Teff Injera': { remaining: 10, damaged: 2 },
-      },
-      cashBreakdown: { cash: 7170, telebirr: 4300, cbe: 2700 }, // Total = 14,170
-      customerCredit: null,
-      creditRepayment: null,
-    },
-
-    // DAY 8 (TODAY) - OPEN
-    {
-      dayIndex: 8,
-      dateOffset: 0,
-      status: SessionStatus.OPEN,
-      openingFloat: 2000, // Inherited from Day 7's tomorrowFloat!
-      tomorrowFloat: null,
-      production: [
-        {
-          items: [{ name: 'Bread', qty: 240 }, { name: 'Special Loaf Bread', qty: 45 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 60 }, { name: 'Dry Yeast', qty: 1.8 }, { name: 'Sugar', qty: 2.5 }],
-        },
-        {
-          items: [{ name: 'Lentil Sambusa', qty: 95 }],
-          materials: [{ name: 'Wheat Flour (Special)', qty: 10 }, { name: 'Cooking Oil', qty: 5 }, { name: 'Lentils', qty: 8 }],
-        },
-      ],
-      deliveries: [
-        { supplierId: supDairy.id, productName: 'Fresh Milk', qty: 50, buyPrice: 48, sellPrice: 60 },
-        { supplierId: supInjera.id, productName: 'White Teff Injera', qty: 70, buyPrice: 32, sellPrice: 40 },
-      ],
-      conversions: [],
-      expenses: [
-        { category: 'Staff Lunch & Welfare', amount: 400, desc: 'Today staff lunch' },
-      ],
-      leftovers: null, // NOT finalized yet! Ready for user to test in UI
-      cashBreakdown: null,
-      customerCredit: null,
-      creditRepayment: null,
+      branch: branchPiassa,
+      name: 'Piassa',
+      adminId: userMap.get('ADMIN_PIA')!,
+      bakerId: userMap.get('BAKER_PIA')!,
+      cashierId: userMap.get('CASHIER_PIA')!,
+      sambusaId: userMap.get('SAMBUSA_PIA')!,
+      cakeId: userMap.get('CAKE_PIA')!,
+      stockMap: stockMapPia,
+      supDairy: supDairyPia,
+      supInjera: supInjeraPia,
+      customer: custPia1,
+      isMegenagna: false,
     },
   ];
 
-  for (const day of daysData) {
-    const sessionDate = new Date(today);
-    sessionDate.setDate(today.getDate() + day.dateOffset);
+  // 8 Days Definition
+  const days = [
+    { dayIndex: 1, offset: -7, status: SessionStatus.CLOSED, float: 1000, nextFloat: 1200 },
+    { dayIndex: 2, offset: -6, status: SessionStatus.CLOSED, float: 1200, nextFloat: 1500 },
+    { dayIndex: 3, offset: -5, status: SessionStatus.CLOSED, float: 1500, nextFloat: 1500 },
+    { dayIndex: 4, offset: -4, status: SessionStatus.CLOSED, float: 1500, nextFloat: 1800 },
+    { dayIndex: 5, offset: -3, status: SessionStatus.CLOSED, float: 1800, nextFloat: 1800 },
+    { dayIndex: 6, offset: -2, status: SessionStatus.CLOSED, float: 1800, nextFloat: 2000 },
+    { dayIndex: 7, offset: -1, status: SessionStatus.CLOSED, float: 2000, nextFloat: 2000 },
+    { dayIndex: 8, offset: 0, status: SessionStatus.OPEN, float: 2000, nextFloat: null }, // TODAY live
+  ];
 
-    console.log(`\n⏳ Seeding Day ${day.dayIndex} (${sessionDate.toISOString().slice(0, 10)}) [${day.status}]...`);
+  for (const bCfg of branchConfigs) {
+    console.log(`\n🏢 ---> Simulating Timeline for ${bCfg.name} Branch <---`);
 
-    // Create Daily Session
-    const session = await prisma.dailySession.create({
-      data: {
-        date: sessionDate,
-        branchId: branchMegenagna.id,
-        status: day.status,
-        label: `Megenagna Shift (Day ${day.dayIndex})`,
-        openingCashFloat: day.openingFloat,
-        actualCashAmount: day.cashBreakdown?.cash ?? null,
-        actualTelebirrAmount: day.cashBreakdown?.telebirr ?? null,
-        actualCbeAmount: day.cashBreakdown?.cbe ?? null,
-        cashLeftoverAmount: day.tomorrowFloat,
-        notes: day.status === SessionStatus.CLOSED ? `Day ${day.dayIndex} finalized & reconciled.` : 'Shift in progress.',
-      },
-    });
+    for (const d of days) {
+      const sessionDate = new Date(today);
+      sessionDate.setDate(today.getDate() + d.offset);
 
-    // Handle any raw stock restock on this day
-    if ((day as any).stockRestock) {
-      for (const r of (day as any).stockRestock) {
-        const item = stockMap.get(r.stockItemName);
-        if (item) {
-          await prisma.stockItem.update({
-            where: { id: item.id },
-            data: { currentQuantity: { increment: r.qty } },
-          });
-          await prisma.stockMovement.create({
-            data: {
-              stockItemId: item.id,
-              userId: adminId,
-              quantity: r.qty,
-              type: StockMovementType.IN,
-              reason: r.reason,
-              createdAt: sessionDate,
-            },
-          });
-        }
-      }
-    }
+      // Create or reuse Daily Session
+      const session = await prisma.dailySession.upsert({
+        where: {
+          branchId_date: {
+            branchId: bCfg.branch.id,
+            date: sessionDate,
+          },
+        },
+        create: {
+          date: sessionDate,
+          branchId: bCfg.branch.id,
+          status: d.status,
+          label: `${bCfg.name} Shift (Day ${d.dayIndex})`,
+          openingCashFloat: d.float,
+          actualCashAmount: d.status === SessionStatus.CLOSED ? 5000 + d.dayIndex * 400 : null,
+          actualTelebirrAmount: d.status === SessionStatus.CLOSED ? 2000 + d.dayIndex * 200 : null,
+          actualCbeAmount: d.status === SessionStatus.CLOSED ? 1000 + d.dayIndex * 150 : null,
+          cashLeftoverAmount: d.nextFloat,
+          notes: d.status === SessionStatus.CLOSED ? `${bCfg.name} Day ${d.dayIndex} finalized & reconciled.` : 'Shift actively in progress today.',
+        },
+        update: {
+          status: d.status,
+          label: `${bCfg.name} Shift (Day ${d.dayIndex})`,
+          openingCashFloat: d.float,
+          actualCashAmount: d.status === SessionStatus.CLOSED ? 5000 + d.dayIndex * 400 : null,
+          actualTelebirrAmount: d.status === SessionStatus.CLOSED ? 2000 + d.dayIndex * 200 : null,
+          actualCbeAmount: d.status === SessionStatus.CLOSED ? 1000 + d.dayIndex * 150 : null,
+          cashLeftoverAmount: d.nextFloat,
+          notes: d.status === SessionStatus.CLOSED ? `${bCfg.name} Day ${d.dayIndex} finalized & reconciled.` : 'Shift actively in progress today.',
+        },
+      });
 
-    // Handle Production Batches
-    for (const batchDef of day.production) {
-      const batch = await prisma.productionBatch.create({
+      console.log(`   📅 Day ${d.dayIndex}/8 (${sessionDate.toISOString().slice(0, 10)}) simulated for ${bCfg.name}...`);
+
+      // 1. Baker Batch (Bread)
+      const breadItems = bCfg.isMegenagna
+        ? [{ name: 'Bread', qty: 200 + d.dayIndex * 10 }, { name: 'Special Loaf Bread', qty: 40 + d.dayIndex * 2 }]
+        : [{ name: 'Bread', qty: 180 + d.dayIndex * 10 }];
+
+      const breadMat = [
+        { name: 'Wheat Flour (Special)', qty: 50 },
+        { name: 'Dry Yeast', qty: 1.5 },
+        { name: 'Sugar', qty: 2 },
+      ];
+
+      await prisma.productionBatch.create({
         data: {
-          branchId: branchMegenagna.id,
-          userId: bakerId,
+          branchId: bCfg.branch.id,
+          userId: bCfg.bakerId,
           sessionId: session.id,
           date: sessionDate,
           shift: Shift.DAY,
           status: BatchStatus.COMPLETED,
           createdAt: sessionDate,
           items: {
-            create: batchDef.items.map((i) => ({
-              productId: productMap.get(i.name).id,
-              quantityProduced: i.qty,
-            })),
+            create: breadItems.map((i) => ({ productId: productMap.get(i.name).id, quantityProduced: i.qty })),
           },
           materialUsages: {
-            create: batchDef.materials.map((m) => ({
-              stockItemId: stockMap.get(m.name).id,
-              quantityUsed: m.qty,
-            })),
+            create: breadMat.map((m) => ({ stockItemId: bCfg.stockMap.get(m.name).id, quantityUsed: m.qty })),
           },
         },
       });
 
-      // Deduct raw material inventory & create stock movement
-      for (const m of batchDef.materials) {
-        const stockItem = stockMap.get(m.name);
-        await safeOp(async () => {
-          await prisma.stockItem.update({
-            where: { id: stockItem.id },
-            data: { currentQuantity: { decrement: m.qty } },
-          });
-
-          await prisma.stockMovement.create({
-            data: {
-              stockItemId: stockItem.id,
-              userId: bakerId,
-              quantity: m.qty,
-              type: StockMovementType.PRODUCTION_USAGE,
-              reason: `Batch Production Usage (Day ${day.dayIndex})`,
-              createdAt: sessionDate,
-            },
-          });
+      for (const m of breadMat) {
+        const item = bCfg.stockMap.get(m.name);
+        await prisma.stockItem.update({ where: { id: item.id }, data: { currentQuantity: { decrement: m.qty } } });
+        await prisma.stockMovement.create({
+          data: {
+            stockItemId: item.id,
+            userId: bCfg.bakerId,
+            quantity: m.qty,
+            type: StockMovementType.PRODUCTION_USAGE,
+            reason: `Baker Bread Batch (Day ${d.dayIndex})`,
+            createdAt: sessionDate,
+          },
         });
       }
-    }
 
-    // Handle Supplier Deliveries
-    for (const del of day.deliveries) {
-      const prod = productMap.get(del.productName);
+      // 2. Sambusa Worker Batch (Sambusa)
+      const sambusaItems = [{ name: 'Lentil Sambusa', qty: 80 + d.dayIndex * 5 }];
+      const sambusaMat = [
+        { name: 'Wheat Flour (Special)', qty: 8 },
+        { name: 'Cooking Oil', qty: 4 },
+        { name: 'Lentils', qty: 6 },
+      ];
+
+      await prisma.productionBatch.create({
+        data: {
+          branchId: bCfg.branch.id,
+          userId: bCfg.sambusaId,
+          sessionId: session.id,
+          date: sessionDate,
+          shift: Shift.DAY,
+          status: BatchStatus.COMPLETED,
+          createdAt: sessionDate,
+          items: {
+            create: sambusaItems.map((i) => ({ productId: productMap.get(i.name).id, quantityProduced: i.qty })),
+          },
+          materialUsages: {
+            create: sambusaMat.map((m) => ({ stockItemId: bCfg.stockMap.get(m.name).id, quantityUsed: m.qty })),
+          },
+        },
+      });
+
+      for (const m of sambusaMat) {
+        const item = bCfg.stockMap.get(m.name);
+        await prisma.stockItem.update({ where: { id: item.id }, data: { currentQuantity: { decrement: m.qty } } });
+        await prisma.stockMovement.create({
+          data: {
+            stockItemId: item.id,
+            userId: bCfg.sambusaId,
+            quantity: m.qty,
+            type: StockMovementType.PRODUCTION_USAGE,
+            reason: `Sambusa Station Batch (Day ${d.dayIndex})`,
+            createdAt: sessionDate,
+          },
+        });
+      }
+
+      // 3. Cake Worker Batch (Cake)
+      const cakeItems = [{ name: 'Strawberry Cream Cake', qty: 25 + d.dayIndex * 2 }];
+      const cakeMat = [
+        { name: 'Wheat Flour (Special)', qty: 6 },
+        { name: 'Sugar', qty: 3 },
+        { name: 'Cooking Oil', qty: 2 },
+      ];
+
+      await prisma.productionBatch.create({
+        data: {
+          branchId: bCfg.branch.id,
+          userId: bCfg.cakeId,
+          sessionId: session.id,
+          date: sessionDate,
+          shift: Shift.DAY,
+          status: BatchStatus.COMPLETED,
+          createdAt: sessionDate,
+          items: {
+            create: cakeItems.map((i) => ({ productId: productMap.get(i.name).id, quantityProduced: i.qty })),
+          },
+          materialUsages: {
+            create: cakeMat.map((m) => ({ stockItemId: bCfg.stockMap.get(m.name).id, quantityUsed: m.qty })),
+          },
+        },
+      });
+
+      for (const m of cakeMat) {
+        const item = bCfg.stockMap.get(m.name);
+        await prisma.stockItem.update({ where: { id: item.id }, data: { currentQuantity: { decrement: m.qty } } });
+        await prisma.stockMovement.create({
+          data: {
+            stockItemId: item.id,
+            userId: bCfg.cakeId,
+            quantity: m.qty,
+            type: StockMovementType.PRODUCTION_USAGE,
+            reason: `Cake Station Batch (Day ${d.dayIndex})`,
+            createdAt: sessionDate,
+          },
+        });
+      }
+
+      // 4. Supplier Deliveries (Resell items)
       await prisma.supplierDelivery.create({
         data: {
-          supplierId: del.supplierId,
-          productId: prod.id,
-          quantityReceived: del.qty,
+          supplierId: bCfg.supDairy.id,
+          productId: productMap.get('Fresh Milk').id,
+          quantityReceived: 40 + d.dayIndex * 2,
           returnedQuantity: 0,
-          unitBuyPrice: del.buyPrice,
-          unitSellPrice: del.sellPrice,
+          unitBuyPrice: 48,
+          unitSellPrice: 60,
           sessionId: session.id,
           paymentSource: DeliveryPaymentSource.DAILY_CASH,
           isPaid: true,
           createdAt: sessionDate,
         },
       });
-    }
 
-    // Handle Product Conversions
-    for (const conv of day.conversions) {
-      const fromP = productMap.get(conv.fromProduct);
-      const toP = productMap.get(conv.toProduct);
-      await prisma.productConversion.create({
-        data: {
-          branchId: branchMegenagna.id,
-          userId: bakerId,
-          fromProductId: fromP.id,
-          toProductId: toP.id,
-          fromQuantity: conv.fromQty,
-          toQuantity: conv.toQty,
-          createdAt: sessionDate,
-        },
-      });
-    }
+      if (!bCfg.isMegenagna) {
+        // Piassa has White Teff Injera
+        await prisma.supplierDelivery.create({
+          data: {
+            supplierId: bCfg.supInjera.id,
+            productId: productMap.get('White Teff Injera').id,
+            quantityReceived: 60 + d.dayIndex * 3,
+            returnedQuantity: 0,
+            unitBuyPrice: 32,
+            unitSellPrice: 40,
+            sessionId: session.id,
+            paymentSource: DeliveryPaymentSource.DAILY_CASH,
+            isPaid: true,
+            createdAt: sessionDate,
+          },
+        });
+      }
 
-    // Handle Shift Expenses
-    for (const exp of day.expenses) {
+      // 5. Shift Expenses
       await prisma.expense.create({
         data: {
-          branchId: branchMegenagna.id,
-          userId: cashierId,
+          branchId: bCfg.branch.id,
+          userId: bCfg.cashierId,
           sessionId: session.id,
           date: sessionDate,
-          amount: exp.amount,
-          category: exp.category,
-          description: exp.desc,
+          amount: 350 + d.dayIndex * 20,
+          category: 'Staff Lunch & Welfare',
+          description: `${bCfg.name} Staff Lunch (Day ${d.dayIndex})`,
           type: ExpenseType.COMPANY,
           createdAt: sessionDate,
         },
       });
-    }
 
-    // Handle Customer Credit
-    if (day.customerCredit) {
-      await prisma.customerCredit.create({
-        data: {
-          customerId: day.customerCredit.customerId,
-          branchId: branchMegenagna.id,
-          sessionId: session.id,
-          amount: day.customerCredit.amount,
-          paidAmount: 0,
-          remainingBalance: day.customerCredit.amount,
-          status: CreditStatus.OPEN,
-          description: day.customerCredit.desc,
-          date: sessionDate,
-          createdAt: sessionDate,
-        },
-      });
-    }
+      // 6. Leftovers & Sales
+      if (d.status === SessionStatus.CLOSED) {
+        const prodList = bCfg.isMegenagna
+          ? ['Bread', 'Special Loaf Bread', 'Lentil Sambusa', 'Strawberry Cream Cake', 'Fresh Milk']
+          : ['Bread', 'Lentil Sambusa', 'Strawberry Cream Cake', 'Fresh Milk', 'White Teff Injera'];
 
-    // Handle Leftovers & Sales Derivation for CLOSED days
-    if (day.status === SessionStatus.CLOSED && day.leftovers) {
-      // 1. Create Leftover Records
-      for (const [prodName, l] of Object.entries(day.leftovers)) {
-        const prod = productMap.get(prodName);
-        await prisma.leftoverRecord.create({
+        const saleLines: any[] = [];
+        let totalSales = 0;
+
+        for (const pName of prodList) {
+          const prod = productMap.get(pName);
+          const remaining = 5 + (d.dayIndex % 4);
+          const damaged = d.dayIndex % 2 === 0 ? 2 : 0;
+
+          await prisma.leftoverRecord.create({
+            data: {
+              sessionId: session.id,
+              productId: prod.id,
+              quantityRemaining: remaining,
+              damagedQuantity: damaged,
+              damageReason: damaged > 0 ? 'Quality check inspection' : null,
+            },
+          });
+
+          const soldQty = 25 + d.dayIndex * 15;
+          const price = Number(prod.basePrice);
+          const subtotal = soldQty * price;
+          totalSales += subtotal;
+          saleLines.push({ productId: prod.id, quantity: soldQty, unitPrice: price, subtotal });
+        }
+
+        await prisma.sale.create({
           data: {
             sessionId: session.id,
-            productId: prod.id,
-            quantityRemaining: l.remaining,
-            damagedQuantity: l.damaged,
-            damageReason: l.damaged > 0 ? 'End of shift quality inspection' : null,
+            userId: bCfg.cashierId,
+            totalAmount: totalSales,
+            paymentMethod: PaymentMethod.CASH,
+            createdAt: sessionDate,
+            items: { create: saleLines },
+          },
+        });
+      } else {
+        // Day 8 (TODAY): Active in-progress sales
+        const breadProd = productMap.get('Bread');
+        const sambusaProd = productMap.get('Lentil Sambusa');
+        const cakeProd = productMap.get('Strawberry Cream Cake');
+
+        await prisma.sale.create({
+          data: {
+            sessionId: session.id,
+            userId: bCfg.cashierId,
+            totalAmount: 250,
+            paymentMethod: PaymentMethod.CASH,
+            items: {
+              create: [
+                { productId: breadProd.id, quantity: 15, unitPrice: 10, subtotal: 150 },
+                { productId: sambusaProd.id, quantity: 5, unitPrice: 15, subtotal: 75 },
+                { productId: cakeProd.id, quantity: 1, unitPrice: 85, subtotal: 85 },
+              ],
+            },
           },
         });
       }
-
-      // 2. Derive Sale Items according to system formula:
-      // Available = Opening + Produced + Delivered + ConvertedIn - ConvertedOut
-      // Sold = Available - Leftover - Damaged
-      // We also derive opening leftovers from previous day:
-      const prevSession = await prisma.dailySession.findFirst({
-        where: {
-          branchId: branchMegenagna.id,
-          status: SessionStatus.CLOSED,
-          date: { lt: sessionDate },
-        },
-        include: { leftoverRecords: true },
-        orderBy: { date: 'desc' },
-      });
-
-      const openingByProduct: Record<string, number> = {};
-      for (const r of prevSession?.leftoverRecords ?? []) {
-        openingByProduct[r.productId] = (openingByProduct[r.productId] ?? 0) + r.quantityRemaining;
-      }
-
-      const saleLineItems: { productId: string; quantity: number; unitPrice: number; subtotal: number }[] = [];
-      let totalSalesAmount = 0;
-
-      for (const [prodName, l] of Object.entries(day.leftovers)) {
-        const prod = productMap.get(prodName);
-        const opening = openingByProduct[prod.id] ?? 0;
-
-        // Produced today
-        const produced = day.production.reduce((sum, b) => {
-          const item = b.items.find((i) => i.name === prodName);
-          return sum + (item ? item.qty : 0);
-        }, 0);
-
-        // Delivered today
-        const delivered = day.deliveries
-          .filter((d) => d.productName === prodName)
-          .reduce((sum, d) => sum + d.qty, 0);
-
-        // Conversions
-        const convertedOut = day.conversions
-          .filter((c) => c.fromProduct === prodName)
-          .reduce((sum, c) => sum + c.fromQty, 0);
-        const convertedIn = day.conversions
-          .filter((c) => c.toProduct === prodName)
-          .reduce((sum, c) => sum + c.toQty, 0);
-
-        const available = opening + produced + delivered + convertedIn - convertedOut;
-        const sold = Math.max(0, available - l.remaining - l.damaged);
-        const unitPrice = Number(prod.basePrice);
-        const subtotal = sold * unitPrice;
-
-        totalSalesAmount += subtotal;
-        saleLineItems.push({
-          productId: prod.id,
-          quantity: sold,
-          unitPrice,
-          subtotal,
-        });
-      }
-
-      // Create Sale Record
-      await prisma.sale.create({
-        data: {
-          sessionId: session.id,
-          userId: cashierId,
-          totalAmount: totalSalesAmount,
-          paymentMethod: PaymentMethod.CASH,
-          createdAt: sessionDate,
-          items: {
-            create: saleLineItems.map((s) => ({
-              productId: s.productId,
-              quantity: s.quantity,
-              unitPrice: s.unitPrice,
-              subtotal: s.subtotal,
-            })),
-          },
-        },
-      });
-    } else if (day.status === SessionStatus.OPEN) {
-      // Day 8 (TODAY): Add 2 sample in-shift POS sales
-      const breadProd = productMap.get('Bread');
-      const milkProd = productMap.get('Fresh Milk');
-      const sambusaProd = productMap.get('Lentil Sambusa');
-
-      await prisma.sale.create({
-        data: {
-          sessionId: session.id,
-          userId: cashierId,
-          totalAmount: 320,
-          paymentMethod: PaymentMethod.CASH,
-          items: {
-            create: [
-              { productId: breadProd.id, quantity: 20, unitPrice: 10, subtotal: 200 },
-              { productId: milkProd.id, quantity: 2, unitPrice: 60, subtotal: 120 },
-            ],
-          },
-        },
-      });
-
-      await prisma.sale.create({
-        data: {
-          sessionId: session.id,
-          userId: cashierId,
-          totalAmount: 150,
-          paymentMethod: PaymentMethod.TELEBIRR,
-          items: {
-            create: [
-              { productId: sambusaProd.id, quantity: 10, unitPrice: 15, subtotal: 150 },
-            ],
-          },
-        },
-      });
     }
-
-    await new Promise((r) => setTimeout(r, 150));
   }
 
-  // 8. Staff Payroll & Owner Loans
-  console.log('💼 [8/8] Seeding Staff Loans, Penalties, and Owner Capital Drawdowns...');
+  // 8. Loans & Penalties
+  console.log('💼 [8/8] Seeding Staff Loans and Owner Drawdowns for Both Branches...');
   await safeOp(async () => {
+    // Owner Loan in Megenagna
     const ownerLoan = await prisma.loan.create({
       data: {
-        userId: ownerId,
+        userId: userMap.get('OWNER')!,
         branchId: branchMegenagna.id,
         totalAmount: 25000,
         remainingBalance: 20000,
@@ -915,16 +674,13 @@ export async function seed8Days() {
     });
 
     await prisma.loanPayment.create({
-      data: {
-        loanId: ownerLoan.id,
-        amountPaid: 5000,
-        date: new Date(),
-      },
+      data: { loanId: ownerLoan.id, amountPaid: 5000, date: new Date() },
     });
 
+    // Megenagna Baker Advance
     await prisma.loan.create({
       data: {
-        userId: bakerId,
+        userId: userMap.get('BAKER_MEG')!,
         branchId: branchMegenagna.id,
         totalAmount: 2000,
         remainingBalance: 2000,
@@ -933,9 +689,22 @@ export async function seed8Days() {
       },
     });
 
+    // Piassa Baker Advance
+    await prisma.loan.create({
+      data: {
+        userId: userMap.get('BAKER_PIA')!,
+        branchId: branchPiassa.id,
+        totalAmount: 1500,
+        remainingBalance: 1500,
+        type: LoanType.SALARY_ADVANCE,
+        status: LoanStatus.OPEN,
+      },
+    });
+
+    // Cleaner Penalty
     await prisma.penalty.create({
       data: {
-        userId: userMap.get(Role.EMPLOYEE)!,
+        userId: userMap.get('CLEANER_MEG')!,
         amount: 300,
         reason: 'Unexcused late arrival on Saturday morning shift',
         date: new Date(),
@@ -946,7 +715,7 @@ export async function seed8Days() {
   });
 
   console.log('\n=============================================================');
-  console.log('✅ 8-Day Cohesive Bakery ERP Dataset Seeding Complete!');
+  console.log('✅ Complete Multi-Branch Bakery ERP Dataset Seeding Complete!');
   console.log('=============================================================\n');
 }
 
