@@ -56,6 +56,17 @@ export class ProductsService {
         { flavor: { contains: search.trim() } },
       ];
     }
+    if (branchId) {
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { branchIds: { isEmpty: true } },
+            { branchIds: { has: branchId } },
+          ],
+        },
+      ];
+    }
 
     const list = await prisma.product.findMany({
       where,
@@ -448,7 +459,7 @@ export class ProductsService {
   }
 
   async createProduct(body: Record<string, unknown>): ServiceResult {
-    const { categoryId, name, flavor, unitType, basePrice, buyPrice, imageUrl, financialCategoryId } = body;
+    const { categoryId, name, flavor, unitType, basePrice, buyPrice, imageUrl, financialCategoryId, branchIds } = body;
     
     if (!categoryId || !name || !unitType || basePrice == null) {
       return { error: 'categoryId, name, unitType, basePrice required', status: 400 };
@@ -477,6 +488,10 @@ export class ProductsService {
     });
     const isResell = category?.type === 'RESELL';
 
+    const branchIdsArray = Array.isArray(branchIds)
+      ? branchIds.filter((b): b is string => typeof b === 'string' && b.trim().length > 0)
+      : [];
+
     const product = await prisma.product.create({
       data: {
         categoryId: categoryId as string,
@@ -491,6 +506,7 @@ export class ProductsService {
         // Buying cost is only available for RESELL products, never for in-house PRODUCED products
         buyPrice: isResell && buyPrice != null ? decimalToNum(buyPrice) ?? null : null,
         imageUrl: imageUrl ? String(imageUrl).trim() : null,
+        branchIds: branchIdsArray,
       },
       include: { category: true, financialCategory: true },
     });
@@ -498,7 +514,7 @@ export class ProductsService {
   }
 
   async updateProduct(id: string, body: Record<string, unknown>): ServiceResult {
-    const { categoryId, name, flavor, unitType, basePrice, buyPrice, imageUrl, isActive, financialCategoryId } = body;
+    const { categoryId, name, flavor, unitType, basePrice, buyPrice, imageUrl, isActive, financialCategoryId, branchIds } = body;
     
     if (financialCategoryId !== undefined) {
       const fcErr = await this.validateProductFinancialCategory(
@@ -551,6 +567,11 @@ export class ProductsService {
 
     if (imageUrl !== undefined) data.imageUrl = imageUrl ? String(imageUrl).trim() : null;
     if (typeof isActive === 'boolean') data.isActive = isActive;
+    if (branchIds !== undefined) {
+      data.branchIds = Array.isArray(branchIds)
+        ? branchIds.filter((b): b is string => typeof b === 'string' && b.trim().length > 0)
+        : [];
+    }
     if (financialCategoryId !== undefined) {
       data.financialCategoryId =
         financialCategoryId === null || financialCategoryId === '' ? null : String(financialCategoryId);

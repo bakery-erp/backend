@@ -2,8 +2,17 @@ import { prisma } from '../../lib/prisma.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
 export class ProductCategoriesService {
-  async getCategories(tree?: boolean): ServiceResult {
+  async getCategories(tree?: boolean, role?: string): ServiceResult {
+    const where: any = {};
+    if (role && role !== 'OWNER' && role !== 'ADMIN') {
+      where.OR = [
+        { productionRole: role as any },
+        { productionRole: null },
+      ];
+    }
+
     const list = await prisma.productCategory.findMany({
+      where,
       orderBy: [{ parentId: 'asc' }, { name: 'asc' }],
       include: {
         parent: { select: { id: true, name: true, type: true } },
@@ -46,8 +55,8 @@ export class ProductCategoriesService {
     return { data: cat };
   }
 
-  async createCategory(body: { name: string; type: string; parentId?: string | null }): ServiceResult {
-    const { name, type, parentId } = body;
+  async createCategory(body: { name: string; type: string; parentId?: string | null; productionRole?: any }): ServiceResult {
+    const { name, type, parentId, productionRole } = body;
     if (!name?.trim() || !type) {
       return { error: 'name and type (PRODUCED|RESELL) required', status: 400 };
     }
@@ -74,6 +83,7 @@ export class ProductCategoriesService {
           name: trimmedName,
           type: type as any,
           parentId: parent ? parent.id : null,
+          productionRole: productionRole ? (productionRole as any) : null,
         },
         include: {
           parent: { select: { id: true, name: true, type: true } },
@@ -89,13 +99,13 @@ export class ProductCategoriesService {
     }
   }
 
-  async updateCategory(id: string, body: { name?: string; type?: string; parentId?: string | null }): ServiceResult {
+  async updateCategory(id: string, body: { name?: string; type?: string; parentId?: string | null; productionRole?: any }): ServiceResult {
     const existing = await prisma.productCategory.findUnique({ where: { id } });
     if (!existing) {
       return { error: 'Category not found', status: 404 };
     }
 
-    const { name, type, parentId } = body;
+    const { name, type, parentId, productionRole } = body;
     const trimmedName = name !== undefined ? name.trim() : undefined;
 
     if (trimmedName && trimmedName.toLowerCase() !== existing.name.toLowerCase()) {
@@ -128,6 +138,7 @@ export class ProductCategoriesService {
           ...(trimmedName !== undefined && { name: trimmedName }),
           ...(type !== undefined && { type: type as any }),
           ...(parentId !== undefined && { parentId: parent ? parent.id : null }),
+          ...(productionRole !== undefined && { productionRole: productionRole ? (productionRole as any) : null }),
         },
         include: {
           parent: { select: { id: true, name: true, type: true } },

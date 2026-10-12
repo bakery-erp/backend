@@ -179,13 +179,14 @@ model User {
 }
 
 model ProductCategory {
-  id        String           @id @default(cuid())
-  name      String           @unique
-  type      CategoryType
-  parentId  String?
-  parent    ProductCategory? @relation("ProductCategoryChildren", fields: [parentId], references: [id], onDelete: SetNull)
-  children  ProductCategory[] @relation("ProductCategoryChildren")
-  products Product[]
+  id             String           @id @default(cuid())
+  name           String           @unique
+  type           CategoryType
+  productionRole Role?
+  parentId       String?
+  parent         ProductCategory? @relation("ProductCategoryChildren", fields: [parentId], references: [id], onDelete: SetNull)
+  children       ProductCategory[] @relation("ProductCategoryChildren")
+  products       Product[]
 
   @@index([parentId])
 }
@@ -215,6 +216,7 @@ model Product {
   buyPrice              Decimal?           @db.Decimal(12, 2)
   imageUrl              String?
   isActive              Boolean            @default(true)
+  branchIds             String[]           @default([])
   createdAt             DateTime           @default(now())
   productionItems       ProductionItem[]
   saleItems             SaleItem[]

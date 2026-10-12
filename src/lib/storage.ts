@@ -26,7 +26,7 @@ async function ensureBucket(supabase: SupabaseClient) {
   if (bucketChecked) return;
   try {
     const { data: buckets } = await supabase.storage.listBuckets();
-    const exists = buckets?.some((b) => b.name === BUCKET_NAME);
+    const exists = buckets?.some((b: any) => b.name === BUCKET_NAME);
     if (!exists) {
       const { error } = await supabase.storage.createBucket(BUCKET_NAME, {
         public: true,
