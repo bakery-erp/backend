@@ -9,13 +9,21 @@ function decimalToNum(v: unknown) {
 }
 
 export class ProductsService {
+  private static stockMapCache = new Map<string, { timestamp: number; data: Map<string, number> }>();
+  private static readonly CACHE_TTL_MS = 30 * 1000; // 30 seconds
+
+  public static clearCache() {
+    ProductsService.stockMapCache.clear();
+  }
+
   async getProducts(
     categoryId?: string,
     includeSubcategories?: boolean,
     search?: string,
     type?: string,
     isActive?: boolean,
-    branchId?: string
+    branchId?: string,
+    includeMetrics: boolean = true
   ): ServiceResult {
     try {
       let categoryIds: string[] | undefined;
@@ -85,6 +93,10 @@ export class ProductsService {
       },
       orderBy: [{ category: { name: 'asc' } }, { name: 'asc' }],
     });
+
+    if (!includeMetrics) {
+      return { data: list };
+    }
 
     const stockMap = await this.calculateHouseStockMap(branchId);
 
@@ -184,6 +196,13 @@ export class ProductsService {
    *    Fallback to lifetime produced + delivered - sold.
    */
   private async calculateHouseStockMap(branchId?: string): Promise<Map<string, number>> {
+    const cacheKey = branchId || 'ALL';
+    const cached = ProductsService.stockMapCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && (now - cached.timestamp) < ProductsService.CACHE_TTL_MS) {
+      return cached.data;
+    }
+
     const stockMap = new Map<string, number>();
 
     const branches = branchId
@@ -358,6 +377,7 @@ export class ProductsService {
       }
     }
 
+    ProductsService.stockMapCache.set(cacheKey, { timestamp: Date.now(), data: stockMap });
     return stockMap;
   }
 
@@ -510,6 +530,7 @@ export class ProductsService {
       },
       include: { category: true, financialCategory: true },
     });
+    ProductsService.clearCache();
     return { data: product };
   }
 
@@ -582,6 +603,7 @@ export class ProductsService {
       data: data as any,
       include: { category: true, financialCategory: true },
     });
+    ProductsService.clearCache();
     return { data: product };
   }
 
@@ -598,6 +620,7 @@ export class ProductsService {
       product._count.leftoverRecords +
       product._count.supplierDeliveries;
 
+    ProductsService.clearCache();
     if (usageCount > 0) {
       // Soft-delete: mark inactive instead of hard delete
       await prisma.product.update({ where: { id }, data: { isActive: false } });
