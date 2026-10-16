@@ -160,11 +160,6 @@ export class ProductionBatchesService {
       };
     }
 
-    // Check creator role for automatic approval vs pending approval
-    const creator = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
-    const isAutoApproved = creator?.role === 'OWNER' || creator?.role === 'ADMIN';
-    const initialStatus = isAutoApproved ? 'COMPLETED' : 'PENDING_APPROVAL';
-
     // Pre-fetch product names for human readable stock movement reason
     const itemProductIds = items.map((i: any) => i.productId);
     const itemProducts = await prisma.product.findMany({
@@ -172,6 +167,16 @@ export class ProductionBatchesService {
       select: { id: true, name: true },
     });
     const productNamesSummary = itemProducts.map((p) => p.name).join(', ') || 'Batch';
+
+    // Creator seen timestamp
+    const creator = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+    const now = new Date();
+    const seenData: any = {};
+    if (creator?.role === 'ADMIN') {
+      seenData.adminSeenAt = now;
+    } else if (creator?.role === 'OWNER') {
+      seenData.ownerSeenAt = now;
+    }
 
     // Execute atomic transaction for batch creation
     const result = await prisma.$transaction(async (tx) => {
@@ -182,7 +187,8 @@ export class ProductionBatchesService {
           sessionId: activeSession?.id || null,
           date: batchDate,
           shift: (shift as any) || null,
-          status: initialStatus,
+          status: 'COMPLETED',
+          ...seenData,
           items: {
             create: items.map((i: any) => ({
               productId: i.productId,
@@ -205,24 +211,22 @@ export class ProductionBatchesService {
         },
       });
 
-      // Deduct stock & log movement ledger ONLY if auto-approved by Owner/Admin
-      if (isAutoApproved) {
-        for (const m of materialUsages || []) {
-          const used = decimalToNum(m.quantityUsed);
-          await tx.stockItem.update({
-            where: { id: m.stockItemId },
-            data: { currentQuantity: { decrement: used } },
-          });
-          await tx.stockMovement.create({
-            data: {
-              stockItemId: m.stockItemId,
-              userId,
-              quantity: used,
-              type: 'PRODUCTION_USAGE',
-              reason: `Production Usage (${productNamesSummary})`,
-            },
-          });
-        }
+      // Deduct stock & log movement ledger immediately upon creation
+      for (const m of materialUsages || []) {
+        const used = decimalToNum(m.quantityUsed);
+        await tx.stockItem.update({
+          where: { id: m.stockItemId },
+          data: { currentQuantity: { decrement: used } },
+        });
+        await tx.stockMovement.create({
+          data: {
+            stockItemId: m.stockItemId,
+            userId,
+            quantity: used,
+            type: 'PRODUCTION_USAGE',
+            reason: `Production Usage (${productNamesSummary})`,
+          },
+        });
       }
 
       return batch;
