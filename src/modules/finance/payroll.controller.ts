@@ -63,7 +63,7 @@ payrollRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Resp
 
 payrollRouter.post('/:id/approve', async (req: AuthRequest, res: Response) => {
   if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
-  const result = await payrollService.approvePayroll(req.params.id, req.user.id);
+  const result = await payrollService.approvePayroll(req.params.id, req.user.id, req.user.role);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -72,7 +72,7 @@ payrollRouter.post('/:id/approve', async (req: AuthRequest, res: Response) => {
 
 payrollRouter.post('/:id/reject', async (req: AuthRequest, res: Response) => {
   if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
-  const result = await payrollService.rejectPayroll(req.params.id, req.user.id);
+  const result = await payrollService.rejectPayroll(req.params.id, req.user.id, req.user.role);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

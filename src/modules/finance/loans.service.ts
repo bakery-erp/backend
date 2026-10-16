@@ -185,7 +185,8 @@ export class LoansService {
     }
 
     const amount = decimalToNum(totalAmount);
-    const initialStatus = isCustomerLoan || isOwnerLoan ? 'OPEN' : 'PENDING_APPROVAL';
+    const isSigned = body.isSigned === true || body.isSigned === 'true' || body.status === 'OPEN';
+    const initialStatus = isCustomerLoan || isOwnerLoan || isSigned ? 'OPEN' : 'PENDING_APPROVAL';
     const loanDate = date ? businessDateFromYmdString(date) : (activeSessionDate ?? undefined);
 
     const loan = await prisma.loan.create({
@@ -251,10 +252,13 @@ export class LoansService {
     return { data: undefined };
   }
 
-  async approveLoan(id: string, userId: string): ServiceResult {
+  async approveLoan(id: string, userId: string, userRole?: string): ServiceResult {
     const loan = await prisma.loan.findUnique({ where: { id } });
     if (!loan) return { error: 'Loan not found', status: 404 };
-    if (loan.userId !== userId) return { error: 'Unauthorized to approve this loan', status: 403 };
+    const isAdminOrOwner = userRole === 'OWNER' || userRole === 'ADMIN';
+    if (!isAdminOrOwner && loan.userId !== userId) {
+      return { error: 'Unauthorized to approve this loan', status: 403 };
+    }
 
     const updated = await prisma.loan.update({
       where: { id },
@@ -264,10 +268,13 @@ export class LoansService {
     return { data: updated };
   }
 
-  async rejectLoan(id: string, userId: string): ServiceResult {
+  async rejectLoan(id: string, userId: string, userRole?: string): ServiceResult {
     const loan = await prisma.loan.findUnique({ where: { id } });
     if (!loan) return { error: 'Loan not found', status: 404 };
-    if (loan.userId !== userId) return { error: 'Unauthorized to reject this loan', status: 403 };
+    const isAdminOrOwner = userRole === 'OWNER' || userRole === 'ADMIN';
+    if (!isAdminOrOwner && loan.userId !== userId) {
+      return { error: 'Unauthorized to reject this loan', status: 403 };
+    }
 
     const updated = await prisma.loan.update({
       where: { id },

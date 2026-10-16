@@ -34,18 +34,20 @@ export class PenaltiesService {
   }
 
   async createPenalty(body: any): ServiceResult {
-    const { userId, amount, reason, date } = body;
+    const { userId, amount, reason, date, isSigned, status } = body;
     if (!userId || amount == null || !reason?.trim()) {
       return { error: 'userId, amount, reason required', status: 400 };
     }
     const d = date ? new Date(date) : new Date();
     d.setHours(0, 0, 0, 0);
+    const initialStatus = isSigned === true || isSigned === 'true' || status === 'APPROVED' ? 'APPROVED' : 'PENDING_APPROVAL';
     const penalty = await prisma.penalty.create({
       data: {
         userId,
         amount: decimalToNum(amount),
         reason: reason.trim(),
         date: d,
+        status: initialStatus,
       },
       include: { user: { select: { id: true, fullName: true, phone: true } } },
     });
@@ -73,10 +75,13 @@ export class PenaltiesService {
     return { data: penalty };
   }
 
-  async approvePenalty(id: string, userId: string): ServiceResult {
+  async approvePenalty(id: string, userId: string, userRole?: string): ServiceResult {
     const penalty = await prisma.penalty.findUnique({ where: { id } });
     if (!penalty) return { error: 'Penalty not found', status: 404 };
-    if (penalty.userId !== userId) return { error: 'Unauthorized to approve this penalty', status: 403 };
+    const isAdminOrOwner = userRole === 'OWNER' || userRole === 'ADMIN';
+    if (!isAdminOrOwner && penalty.userId !== userId) {
+      return { error: 'Unauthorized to approve this penalty', status: 403 };
+    }
 
     const updated = await prisma.penalty.update({
       where: { id },
@@ -86,10 +91,13 @@ export class PenaltiesService {
     return { data: updated };
   }
 
-  async rejectPenalty(id: string, userId: string): ServiceResult {
+  async rejectPenalty(id: string, userId: string, userRole?: string): ServiceResult {
     const penalty = await prisma.penalty.findUnique({ where: { id } });
     if (!penalty) return { error: 'Penalty not found', status: 404 };
-    if (penalty.userId !== userId) return { error: 'Unauthorized to reject this penalty', status: 403 };
+    const isAdminOrOwner = userRole === 'OWNER' || userRole === 'ADMIN';
+    if (!isAdminOrOwner && penalty.userId !== userId) {
+      return { error: 'Unauthorized to reject this penalty', status: 403 };
+    }
 
     const updated = await prisma.penalty.update({
       where: { id },

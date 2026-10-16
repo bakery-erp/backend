@@ -88,7 +88,7 @@ export class PayrollService {
             penaltyDeductions: penaltyD,
             bonus: bonusNum,
             finalAmount,
-            status: 'PENDING_APPROVAL',
+            status: body.isSigned === true || body.isSigned === 'true' || body.status === 'APPROVED' ? 'APPROVED' : 'PENDING_APPROVAL',
             paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
           },
           include: { user: { select: { id: true, fullName: true, phone: true, role: true } } },
@@ -242,10 +242,13 @@ export class PayrollService {
     return { data: record };
   }
 
-  async approvePayroll(id: string, userId: string): ServiceResult {
+  async approvePayroll(id: string, userId: string, userRole?: string): ServiceResult {
     const record = await prisma.payrollRecord.findUnique({ where: { id } });
     if (!record) return { error: 'Payroll record not found', status: 404 };
-    if (record.userId !== userId) return { error: 'Unauthorized to approve this payroll record', status: 403 };
+    const isAdminOrOwner = userRole === 'OWNER' || userRole === 'ADMIN';
+    if (!isAdminOrOwner && record.userId !== userId) {
+      return { error: 'Unauthorized to approve this payroll record', status: 403 };
+    }
 
     const updated = await prisma.payrollRecord.update({
       where: { id },
@@ -255,10 +258,13 @@ export class PayrollService {
     return { data: updated };
   }
 
-  async rejectPayroll(id: string, userId: string): ServiceResult {
+  async rejectPayroll(id: string, userId: string, userRole?: string): ServiceResult {
     const record = await prisma.payrollRecord.findUnique({ where: { id } });
     if (!record) return { error: 'Payroll record not found', status: 404 };
-    if (record.userId !== userId) return { error: 'Unauthorized to reject this payroll record', status: 403 };
+    const isAdminOrOwner = userRole === 'OWNER' || userRole === 'ADMIN';
+    if (!isAdminOrOwner && record.userId !== userId) {
+      return { error: 'Unauthorized to reject this payroll record', status: 403 };
+    }
 
     const updated = await prisma.payrollRecord.update({
       where: { id },
