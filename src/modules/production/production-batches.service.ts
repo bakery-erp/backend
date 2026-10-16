@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma.js';
 import { businessDateFromYmdString, businessDateUtcNoon, parseYmd } from '../../lib/businessDate.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
+import { ProductsService } from '../catalog/products.service.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -184,6 +185,7 @@ export class ProductionBatchesService {
       return batch;
     }, { maxWait: 10000, timeout: 20000 });
 
+    ProductsService.clearCache();
     return { data: result };
   }
 
@@ -259,6 +261,7 @@ export class ProductionBatchesService {
       });
     }, { maxWait: 10000, timeout: 20000 });
 
+    ProductsService.clearCache();
     return { data: updated };
   }
 
@@ -358,6 +361,7 @@ export class ProductionBatchesService {
       });
     }, { maxWait: 10000, timeout: 20000 });
 
+    ProductsService.clearCache();
     return { data: updated };
   }
 
@@ -396,6 +400,7 @@ export class ProductionBatchesService {
         });
       });
 
+      ProductsService.clearCache();
       return { data: { message: 'Production batch deleted and stock restored successfully' } };
     } catch (e: any) {
       return { error: e.message || 'Failed to delete production batch', status: 400 };

@@ -17,8 +17,10 @@ productsRouter.get('/', async (req, res: Response) => {
     const isActiveParam = req.query.isActive as string | undefined;
     const isActive = isActiveParam === 'true' ? true : isActiveParam === 'false' ? false : undefined;
     const branchId = (req.query.branchId as string) || undefined;
+    const isMinimal = req.query.minimal === 'true' || req.query.metrics === 'false';
+    const includeMetrics = !isMinimal;
 
-    const result = await productsService.getProducts(categoryId, includeSubcategories, search, type, isActive, branchId);
+    const result = await productsService.getProducts(categoryId, includeSubcategories, search, type, isActive, branchId, includeMetrics);
     if (result.error) {
       return res.status(result.status || 500).json({ error: result.error });
     }
