@@ -67,23 +67,24 @@ loansRouter.get('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req, re
 loansRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res) => {
   const { branchId, type, entityId, userId, totalAmount, date } = req.body as {
     branchId?: string;
-    type: string;
+    type?: string;
     entityId?: string;
     userId?: string;
     totalAmount: number | string;
     date?: string;
   };
   const bid = branchId || req.user?.branchId;
-  if (!bid || !type || totalAmount == null) return res.status(400).json({ error: 'branchId, type, totalAmount required' });
-  if (type === 'EMPLOYEE' && !userId) return res.status(400).json({ error: 'userId required for EMPLOYEE loan' });
-  if (type === 'CUSTOMER' && !entityId) return res.status(400).json({ error: 'entityId (customer name/phone) required for CUSTOMER loan' });
+  const loanType = type || (userId ? 'STAFF_LOAN' : (entityId ? 'CUSTOMER' : 'STAFF_LOAN'));
+  if (!bid || totalAmount == null) return res.status(400).json({ error: 'branchId, totalAmount required' });
+  if ((loanType === 'EMPLOYEE' || loanType === 'STAFF_LOAN') && !userId) return res.status(400).json({ error: 'userId required for staff loan' });
+  if (loanType === 'CUSTOMER' && !entityId) return res.status(400).json({ error: 'entityId (customer name/phone) required for CUSTOMER loan' });
   const amount = decimalToNum(totalAmount);
   const loan = await prisma.loan.create({
     data: {
       branchId: bid,
-      type: type as any,
-      entityId: type === 'CUSTOMER' ? entityId ?? '' : null,
-      userId: type === 'EMPLOYEE' ? userId ?? undefined : null,
+      type: loanType as any,
+      entityId: loanType === 'CUSTOMER' ? entityId ?? '' : null,
+      userId: loanType !== 'CUSTOMER' ? userId ?? undefined : null,
       totalAmount: amount,
       remainingBalance: amount,
       date: date ? businessDateFromYmdString(date) ?? undefined : undefined,

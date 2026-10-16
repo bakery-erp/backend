@@ -84,20 +84,19 @@ export class LoansService {
       return { error: 'branchId required', status: 400 };
     }
 
-    if (!type || totalAmount == null) {
-      return { error: 'type and totalAmount required', status: 400 };
+    const effectiveType = type || (userId ? 'STAFF_LOAN' : (entityId ? 'CUSTOMER' : 'STAFF_LOAN'));
+    if (totalAmount == null) {
+      return { error: 'totalAmount required', status: 400 };
     }
-    const isCustomerLoan = type === 'CUSTOMER' || type === 'CUSTOMER_CREDIT';
-    const isOwnerLoan = type === 'OWNER_LOAN' || type === 'OWNER';
+    const isCustomerLoan = effectiveType === 'CUSTOMER' || effectiveType === 'CUSTOMER_CREDIT';
+    const isOwnerLoan = effectiveType === 'OWNER_LOAN' || effectiveType === 'OWNER';
     const finalType = isCustomerLoan
       ? 'CUSTOMER'
       : isOwnerLoan
       ? 'OWNER_LOAN'
-      : type === 'SALARY_ADVANCE'
+      : effectiveType === 'SALARY_ADVANCE'
       ? 'SALARY_ADVANCE'
-      : type === 'STAFF_LOAN'
-      ? 'STAFF_LOAN'
-      : 'EMPLOYEE';
+      : 'STAFF_LOAN';
 
     let activeSessionDate: Date | undefined;
     let availMap = new Map<string, any>();
