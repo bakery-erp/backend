@@ -308,14 +308,21 @@ model ProductionBatch {
   session   DailySession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
   date      DateTime    @db.Date   @default(dbgenerated("CURRENT_DATE"))  // Day this production is for (flexible; can be past)
   shift     Shift?
-  status    BatchStatus @default(STARTED)
-  createdAt DateTime    @default(now())
-  items     ProductionItem[]
+  status         BatchStatus @default(STARTED)
+  adminSeenAt    DateTime?
+  ownerSeenAt    DateTime?
+  isFlagged      Boolean     @default(false)
+  flagReason     String?     @db.Text
+  flaggedBy      String?
+  flaggedAt      DateTime?
+  createdAt      DateTime    @default(now())
+  items          ProductionItem[]
   materialUsages ProductionMaterialUsage[]
 
   @@index([branchId, date])
   @@index([branchId, status])
   @@index([sessionId])
+  @@index([isFlagged])
 }
 
 model ProductionItem {

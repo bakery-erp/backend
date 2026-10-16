@@ -17,7 +17,9 @@ export class ProductionBatchesService {
     status?: string,
     shift?: string,
     role?: string,
-    userId?: string
+    userId?: string,
+    seenFilter?: string,
+    callerRole?: string
   ): ServiceResult {
     if (!branchId) {
       return { error: 'branchId required', status: 400 };
@@ -37,6 +39,22 @@ export class ProductionBatchesService {
       where.user = { role };
     }
 
+    if (seenFilter === 'FLAGGED') {
+      where.isFlagged = true;
+    } else if (seenFilter === 'UNSEEN') {
+      if (callerRole === 'ADMIN') {
+        where.adminSeenAt = null;
+      } else if (callerRole === 'OWNER') {
+        where.ownerSeenAt = null;
+      }
+    } else if (seenFilter === 'SEEN') {
+      if (callerRole === 'ADMIN') {
+        where.adminSeenAt = { not: null };
+      } else if (callerRole === 'OWNER') {
+        where.ownerSeenAt = { not: null };
+      }
+    }
+
     const list = await prisma.productionBatch.findMany({
       where,
       include: {
@@ -49,8 +67,8 @@ export class ProductionBatchesService {
     return { data: list };
   }
 
-  async getProductionBatchById(id: string): ServiceResult {
-    const batch = await prisma.productionBatch.findUnique({
+  async getProductionBatchById(id: string, user?: { id: string; role: string }): ServiceResult {
+    let batch = await prisma.productionBatch.findUnique({
       where: { id },
       include: {
         branch: true,
@@ -60,8 +78,33 @@ export class ProductionBatchesService {
       },
     });
     if (!batch) {
-      return { error: 'Batch not found', status: 404 };
+      return { error: 'Production batch not found', status: 404 };
     }
+
+    if (user?.role === 'ADMIN' && !batch.adminSeenAt) {
+      batch = await prisma.productionBatch.update({
+        where: { id },
+        data: { adminSeenAt: new Date() },
+        include: {
+          branch: true,
+          user: true,
+          items: { include: { product: true } },
+          materialUsages: { include: { stockItem: true } },
+        },
+      });
+    } else if (user?.role === 'OWNER' && !batch.ownerSeenAt) {
+      batch = await prisma.productionBatch.update({
+        where: { id },
+        data: { ownerSeenAt: new Date() },
+        include: {
+          branch: true,
+          user: true,
+          items: { include: { product: true } },
+          materialUsages: { include: { stockItem: true } },
+        },
+      });
+    }
+
     return { data: batch };
   }
 
@@ -250,9 +293,21 @@ export class ProductionBatchesService {
         });
       }
 
+      const now = new Date();
+      const seenUpdate: any = {};
+      if (adminUser?.role === 'ADMIN') {
+        seenUpdate.adminSeenAt = now;
+      } else if (adminUser?.role === 'OWNER') {
+        seenUpdate.ownerSeenAt = now;
+        if (!batch.adminSeenAt) seenUpdate.adminSeenAt = now;
+      }
+
       return await tx.productionBatch.update({
         where: { id },
-        data: { status: 'COMPLETED' },
+        data: {
+          status: 'COMPLETED',
+          ...seenUpdate,
+        },
         include: {
           user: { select: { id: true, fullName: true } },
           items: { include: { product: true } },
@@ -274,11 +329,87 @@ export class ProductionBatchesService {
       return { error: `Batch cannot be rejected because current status is ${batch.status}`, status: 400 };
     }
 
+    const adminUser = await prisma.user.findUnique({
+      where: { id: adminUserId },
+      select: { fullName: true, role: true },
+    });
+    const now = new Date();
+    const seenUpdate: any = {};
+    if (adminUser?.role === 'ADMIN') {
+      seenUpdate.adminSeenAt = now;
+    } else if (adminUser?.role === 'OWNER') {
+      seenUpdate.ownerSeenAt = now;
+    }
+
     const updated = await prisma.productionBatch.update({
       where: { id },
-      data: { status: 'REJECTED' },
+      data: {
+        status: 'REJECTED',
+        ...seenUpdate,
+      },
       include: {
         user: { select: { id: true, fullName: true } },
+        items: { include: { product: true } },
+        materialUsages: { include: { stockItem: true } },
+      },
+    });
+
+    return { data: updated };
+  }
+
+  async markBatchSeen(id: string, user: { id: string; role: string; fullName?: string }): ServiceResult {
+    const batch = await prisma.productionBatch.findUnique({ where: { id } });
+    if (!batch) {
+      return { error: 'Production batch not found', status: 404 };
+    }
+
+    const now = new Date();
+    const data: any = {};
+    if (user.role === 'ADMIN') {
+      data.adminSeenAt = now;
+    } else if (user.role === 'OWNER') {
+      data.ownerSeenAt = now;
+    } else {
+      return { data: batch };
+    }
+
+    const updated = await prisma.productionBatch.update({
+      where: { id },
+      data,
+      include: {
+        user: { select: { id: true, fullName: true, role: true } },
+        items: { include: { product: true } },
+        materialUsages: { include: { stockItem: true } },
+      },
+    });
+
+    return { data: updated };
+  }
+
+  async toggleBatchFlag(
+    id: string,
+    isFlagged: boolean,
+    reason?: string,
+    user?: { id: string; role: string; fullName?: string }
+  ): ServiceResult {
+    const batch = await prisma.productionBatch.findUnique({ where: { id } });
+    if (!batch) {
+      return { error: 'Production batch not found', status: 404 };
+    }
+
+    const now = new Date();
+    const data: any = {
+      isFlagged: Boolean(isFlagged),
+      flagReason: isFlagged ? (reason?.trim() || 'Flagged for clarification') : null,
+      flaggedBy: isFlagged ? (user?.fullName || user?.role || 'Management') : null,
+      flaggedAt: isFlagged ? now : null,
+    };
+
+    const updated = await prisma.productionBatch.update({
+      where: { id },
+      data,
+      include: {
+        user: { select: { id: true, fullName: true, role: true } },
         items: { include: { product: true } },
         materialUsages: { include: { stockItem: true } },
       },
