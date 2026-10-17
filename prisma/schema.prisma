@@ -315,6 +315,9 @@ model ProductionBatch {
   flagReason     String?     @db.Text
   flaggedBy      String?
   flaggedAt      DateTime?
+  isEdited       Boolean     @default(false)
+  editedAt       DateTime?
+  editHistory    Json?       @default("[]")
   createdAt      DateTime    @default(now())
   items          ProductionItem[]
   materialUsages ProductionMaterialUsage[]
