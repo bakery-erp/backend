@@ -424,17 +424,24 @@ export class ProductionBatchesService {
 
   async updateProductionBatch(id: string, body: any, user?: { id: string; role: string }): ServiceResult {
     const { date, shift, status, items, materialUsages } = body;
-    const existing = await prisma.productionBatch.findUnique({ where: { id } });
+    const existing = await prisma.productionBatch.findUnique({
+      where: { id },
+      include: {
+        items: { include: { product: true } },
+        materialUsages: { include: { stockItem: true } },
+      },
+    });
     if (!existing) {
       return { error: 'Production batch not found', status: 404 };
     }
 
     const isAdminOrOwner = user?.role === 'ADMIN' || user?.role === 'OWNER';
+    const isCreator = user?.id === existing.userId;
 
-    // Lockout Enforcement: Producer roles (BAKER, CAKE_WORKER, SAMBUSA_WORKER) cannot edit an approved/completed or rejected batch
-    if (!isAdminOrOwner && (existing.status === 'COMPLETED' || existing.status === 'REJECTED')) {
+    // Permissions: Only Admin/Owner or the batch creator can edit
+    if (!isAdminOrOwner && !isCreator) {
       return {
-        error: `Production batch is already ${existing.status.toLowerCase()} and cannot be modified by producer roles.`,
+        error: 'You do not have permission to edit this production batch.',
         status: 403,
       };
     }
@@ -453,7 +460,179 @@ export class ProductionBatchesService {
       if (p) batchDate = businessDateUtcNoon(p.y, p.mo, p.day);
     }
 
+    // 1. Calculate Product Changes (Before & After Diffs)
+    const productChanges: Array<{
+      productId: string;
+      productName: string;
+      unitType: string;
+      oldQty: number;
+      newQty: number;
+      diff: number;
+    }> = [];
+
+    if (items && Array.isArray(items)) {
+      const oldItemMap = new Map<string, { qty: number; name: string; unit: string }>();
+      for (const item of existing.items) {
+        oldItemMap.set(item.productId, {
+          qty: item.quantityProduced,
+          name: item.product?.name || 'Product',
+          unit: item.product?.unitType || 'unit',
+        });
+      }
+
+      const newItemMap = new Map<string, number>();
+      for (const i of items) {
+        const qty = typeof i.quantityProduced === 'number' ? i.quantityProduced : parseInt(String(i.quantityProduced), 10);
+        newItemMap.set(i.productId, qty);
+      }
+
+      for (const [prodId, oldData] of oldItemMap.entries()) {
+        const newQty = newItemMap.get(prodId) ?? 0;
+        if (oldData.qty !== newQty) {
+          productChanges.push({
+            productId: prodId,
+            productName: oldData.name,
+            unitType: oldData.unit,
+            oldQty: oldData.qty,
+            newQty,
+            diff: newQty - oldData.qty,
+          });
+        }
+      }
+
+      for (const i of items) {
+        if (!oldItemMap.has(i.productId)) {
+          const qty = typeof i.quantityProduced === 'number' ? i.quantityProduced : parseInt(String(i.quantityProduced), 10);
+          if (qty > 0) {
+            const prod = await prisma.product.findUnique({ where: { id: i.productId }, select: { name: true, unitType: true } });
+            productChanges.push({
+              productId: i.productId,
+              productName: prod?.name || 'Product',
+              unitType: prod?.unitType || 'unit',
+              oldQty: 0,
+              newQty: qty,
+              diff: qty,
+            });
+          }
+        }
+      }
+    }
+
+    // 2. Calculate Material Usage Changes (Before & After Diffs)
+    const materialChanges: Array<{
+      stockItemId: string;
+      materialName: string;
+      unitType: string;
+      oldQty: number;
+      newQty: number;
+      diff: number;
+    }> = [];
+
+    if (materialUsages && Array.isArray(materialUsages)) {
+      const oldMatMap = new Map<string, { qty: number; name: string; unit: string }>();
+      for (const usage of existing.materialUsages) {
+        oldMatMap.set(usage.stockItemId, {
+          qty: Number(usage.quantityUsed),
+          name: usage.stockItem?.name || 'Raw Material',
+          unit: usage.stockItem?.unitType || 'unit',
+        });
+      }
+
+      const newMatMap = new Map<string, number>();
+      for (const m of materialUsages) {
+        const qty = decimalToNum(m.quantityUsed);
+        newMatMap.set(m.stockItemId, qty);
+      }
+
+      for (const [stockId, oldData] of oldMatMap.entries()) {
+        const newQty = newMatMap.get(stockId) ?? 0;
+        if (oldData.qty !== newQty) {
+          materialChanges.push({
+            stockItemId: stockId,
+            materialName: oldData.name,
+            unitType: oldData.unit,
+            oldQty: oldData.qty,
+            newQty,
+            diff: Number((newQty - oldData.qty).toFixed(3)),
+          });
+        }
+      }
+
+      for (const m of materialUsages) {
+        if (!oldMatMap.has(m.stockItemId)) {
+          const qty = decimalToNum(m.quantityUsed);
+          if (qty > 0) {
+            const stock = await prisma.stockItem.findUnique({ where: { id: m.stockItemId }, select: { name: true, unitType: true } });
+            materialChanges.push({
+              stockItemId: m.stockItemId,
+              materialName: stock?.name || 'Raw Material',
+              unitType: stock?.unitType || 'unit',
+              oldQty: 0,
+              newQty: qty,
+              diff: qty,
+            });
+          }
+        }
+      }
+    }
+
+    const hasChanges = productChanges.length > 0 || materialChanges.length > 0;
+    let updatedHistory = Array.isArray(existing.editHistory) ? [...(existing.editHistory as any[])] : [];
+
+    if (hasChanges) {
+      const editor = user ? await prisma.user.findUnique({ where: { id: user.id }, select: { id: true, fullName: true, role: true } }) : null;
+      const newHistoryEntry = {
+        editedAt: new Date().toISOString(),
+        editedBy: {
+          id: editor?.id || user?.id || 'unknown',
+          fullName: editor?.fullName || 'Employee',
+          role: editor?.role || user?.role || 'BAKER',
+        },
+        productChanges,
+        materialChanges,
+      };
+      updatedHistory.unshift(newHistoryEntry);
+    }
+
     const updated = await prisma.$transaction(async (tx) => {
+      // Reconcile raw material inventory if the batch was already completed
+      if (existing.status === 'COMPLETED' && materialChanges.length > 0) {
+        for (const change of materialChanges) {
+          if (change.diff > 0) {
+            // More materials used -> deduct difference
+            await tx.stockItem.update({
+              where: { id: change.stockItemId },
+              data: { currentQuantity: { decrement: change.diff } },
+            });
+            await tx.stockMovement.create({
+              data: {
+                stockItemId: change.stockItemId,
+                userId: user?.id || existing.userId,
+                quantity: change.diff,
+                type: 'PRODUCTION_USAGE',
+                reason: `Production edit adjustment: +${change.diff} ${change.unitType} (${id})`,
+              },
+            });
+          } else if (change.diff < 0) {
+            // Less materials used -> restore difference
+            const restoreQty = Math.abs(change.diff);
+            await tx.stockItem.update({
+              where: { id: change.stockItemId },
+              data: { currentQuantity: { increment: restoreQty } },
+            });
+            await tx.stockMovement.create({
+              data: {
+                stockItemId: change.stockItemId,
+                userId: user?.id || existing.userId,
+                quantity: restoreQty,
+                type: 'IN',
+                reason: `Production edit adjustment: restored ${restoreQty} ${change.unitType} (${id})`,
+              },
+            });
+          }
+        }
+      }
+
       if (items && Array.isArray(items)) {
         await tx.productionItem.deleteMany({ where: { batchId: id } });
       }
@@ -467,6 +646,9 @@ export class ProductionBatchesService {
           ...(batchDate ? { date: batchDate } : {}),
           ...(shift ? { shift: shift as any } : {}),
           ...(status ? { status: status as any } : {}),
+          isEdited: hasChanges ? true : existing.isEdited,
+          editedAt: hasChanges ? new Date() : existing.editedAt,
+          editHistory: updatedHistory,
           ...(items && Array.isArray(items)
             ? {
               items: {
@@ -489,7 +671,7 @@ export class ProductionBatchesService {
             : {}),
         },
         include: {
-          user: { select: { id: true, fullName: true } },
+          user: { select: { id: true, fullName: true, role: true } },
           items: { include: { product: true } },
           materialUsages: { include: { stockItem: true } },
         },
