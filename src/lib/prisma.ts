@@ -1,8 +1,11 @@
 import { PrismaClient } from '@prisma/client';
 
 function getDatabaseUrl(): string | undefined {
-  let url = process.env.DATABASE_URL;
+  let url = process.env.DATABASE_URL?.trim();
   if (!url) return undefined;
+
+  // Strip wrapping double or single quotes if present
+  url = url.replace(/^["']|["']$/g, '').trim();
 
   // Supabase pooler (port 6543) requires pgbouncer=true to disable prepared statements (fixes 42P05 "prepared statement already exists")
   if ((url.includes(':6543') || url.includes('pooler')) && !url.includes('pgbouncer=')) {
