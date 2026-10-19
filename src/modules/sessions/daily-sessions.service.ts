@@ -76,6 +76,69 @@ export class DailySessionsService {
     return { data: list };
   }
 
+  async getOrCreateSessionForDate(branchId: string, dateStr: string): ServiceResult {
+    const parts = parseYmd(dateStr);
+    if (!parts) {
+      return { error: 'Invalid date format (YYYY-MM-DD)', status: 400 };
+    }
+    const d = businessDateUtcNoon(parts.y, parts.mo, parts.day);
+
+    let session = await prisma.dailySession.findFirst({
+      where: { branchId, date: d },
+      include: {
+        _count: { select: { sales: true, leftoverRecords: true } },
+      },
+    });
+
+    if (!session) {
+      const previousClosed = await prisma.dailySession.findFirst({
+        where: {
+          branchId,
+          status: 'CLOSED',
+          date: { lt: d },
+        },
+        include: { leftoverRecords: true },
+        orderBy: { date: 'desc' },
+      });
+
+      const carriedFloat = previousClosed?.cashLeftoverAmount != null
+        ? decimalToNum(previousClosed.cashLeftoverAmount)
+        : (previousClosed?.actualCashAmount != null ? decimalToNum(previousClosed.actualCashAmount) : 0);
+
+      const sessionLabel = `Closing - ${dateToYmdUtc(d)}`;
+      const createdSession = await prisma.dailySession.create({
+        data: {
+          branchId,
+          date: d,
+          status: 'OPEN',
+          label: sessionLabel,
+          openingCashFloat: carriedFloat,
+        },
+        include: {
+          _count: { select: { sales: true, leftoverRecords: true } },
+        },
+      });
+      session = createdSession;
+
+      const carryRows = (previousClosed?.leftoverRecords ?? [])
+        .filter((r) => r.quantityRemaining > 0)
+        .map((r) => ({
+          sessionId: createdSession.id,
+          productId: r.productId,
+          quantityRemaining: r.quantityRemaining,
+        }));
+
+      if (carryRows.length > 0) {
+        await prisma.leftoverRecord.createMany({
+          data: carryRows,
+          skipDuplicates: true,
+        });
+      }
+    }
+
+    return { data: session };
+  }
+
   async getDailySessionById(id: string): ServiceResult {
     const session = await prisma.dailySession.findUnique({
       where: { id },
@@ -360,21 +423,6 @@ export class DailySessionsService {
 
     if (!bid || !date) {
       return { error: 'Valid branchId and date required', status: 400 };
-    }
-
-    // Enforce constraint: No 2 active sessions (OPEN or PAUSED) at the same time
-    const existingActiveSession = await prisma.dailySession.findFirst({
-      where: {
-        branchId: bid,
-        status: { in: ['OPEN', 'PAUSED'] },
-      },
-    });
-
-    if (existingActiveSession) {
-      return {
-        error: `An active daily session is currently ${existingActiveSession.status}. There cannot be 2 sessions at the same time for a branch.`,
-        status: 400,
-      };
     }
 
     const parts = parseYmd(date);
@@ -1306,29 +1354,11 @@ export class DailySessionsService {
     if (!session) {
       return { error: 'Session not found', status: 404 };
     }
-    if (session.status === 'OPEN') {
-      return { error: 'Session is already open', status: 400 };
-    }
-
-    const existingActive = await prisma.dailySession.findFirst({
-      where: {
-        branchId: session.branchId,
-        status: { in: ['OPEN', 'PAUSED'] },
-        id: { not: id },
-      },
-    });
-
-    if (existingActive) {
-      return {
-        error: `Another daily session is currently ${existingActive.status} for this branch. There cannot be 2 active sessions at the same time.`,
-        status: 400,
-      };
-    }
-
     const updated = await prisma.dailySession.update({
       where: { id },
       data: { status: 'OPEN' },
     });
+    return { data: updated };
     return { data: updated };
   }
 
