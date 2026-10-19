@@ -451,7 +451,7 @@ export class DailySessionsService {
       return { data: existing };
     }
 
-    const sessionLabel = label?.trim() || `Session - ${dateToYmdUtc(d)}`;
+    const sessionLabel = label?.trim() || `Daily Closing - ${dateToYmdUtc(d)}`;
 
     try {
       // Find most recent closed session to seed opening float and leftover inventory
@@ -1358,7 +1358,6 @@ export class DailySessionsService {
       where: { id },
       data: { status: 'OPEN' },
     });
-    return { data: updated };
     return { data: updated };
   }
 
