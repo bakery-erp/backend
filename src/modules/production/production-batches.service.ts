@@ -143,22 +143,13 @@ export class ProductionBatchesService {
       }
     }
 
-    // Check active session status for branch
+    // Optional active session lookup (production is no longer blocked if session is closed)
     const activeSession = await prisma.dailySession.findFirst({
       where: {
         branchId: bid,
-        status: { in: ['OPEN', 'PAUSED', 'CLOSE_PENDING', 'CLOSED'] },
       },
       orderBy: { date: 'desc' },
     });
-
-    if (!activeSession || activeSession.status !== 'OPEN') {
-      const statusLabel = activeSession ? activeSession.status : 'CLOSED';
-      return {
-        error: `Daily session is currently ${statusLabel}. Production cannot be logged when a session is paused or closed.`,
-        status: 400,
-      };
-    }
 
     // Pre-fetch product names for human readable stock movement reason
     const itemProductIds = items.map((i: any) => i.productId);

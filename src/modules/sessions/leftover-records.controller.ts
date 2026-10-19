@@ -9,7 +9,9 @@ leftoverRecordsRouter.use(authMiddleware);
 
 leftoverRecordsRouter.get('/', async (req, res: Response) => {
   const sessionId = req.query.sessionId as string | undefined;
-  const result = await leftoverRecordsService.getLeftoverRecords(sessionId);
+  const branchId = req.query.branchId as string | undefined;
+  const date = req.query.date as string | undefined;
+  const result = await leftoverRecordsService.getLeftoverRecords({ sessionId, branchId, date });
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

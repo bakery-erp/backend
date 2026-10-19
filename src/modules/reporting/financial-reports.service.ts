@@ -54,6 +54,8 @@ export class FinancialReportsService {
       payroll,
       productionBatches,
       allClosedSessions,
+      sales,
+      leftoverRecords,
     ] = await Promise.all([
       prisma.dailySession.findMany({
         where: { branchId, date: { gte: fromDate, lte: toDate } },
@@ -159,10 +161,31 @@ export class FinancialReportsService {
         orderBy: { date: 'desc' },
         select: { date: true, cashLeftoverAmount: true, actualCashAmount: true },
       }),
+      prisma.sale.findMany({
+        where: {
+          OR: [
+            { branchId, date: { gte: fromDate, lte: toDate } },
+            { session: { branchId, date: { gte: fromDate, lte: toDate } } },
+          ],
+        },
+        include: { items: { include: { product: true } } },
+        orderBy: { date: 'asc' },
+      }),
+      prisma.leftoverRecord.findMany({
+        where: {
+          OR: [
+            { branchId, date: { gte: fromDate, lte: toDate } },
+            { session: { branchId, date: { gte: fromDate, lte: toDate } } },
+          ],
+        },
+        include: { product: true },
+        orderBy: { date: 'asc' },
+      }),
     ]);
 
-    const salesTotal = sessions.reduce((acc, s) => acc + s.sales.reduce((t, x) => t + Number(x.totalAmount), 0), 0);
+    const salesTotal = sales.reduce((t, x) => t + Number(x.totalAmount), 0);
     const cashLeftoverTotal = sessions.reduce((acc, s) => acc + (s.cashLeftoverAmount ? Number(s.cashLeftoverAmount) : 0), 0);
+    const openingLeftoverQuantity = leftoverRecords.reduce((sum, r) => sum + (r.quantityRemaining || 0), 0);
 
     const companyExpenseTotal = expenses.filter(e => e.type === 'COMPANY').reduce((sum, e) => sum + Number(e.amount), 0);
     const ownerExpenseTotal = expenses.filter(e => e.type === 'OWNER').reduce((sum, e) => sum + Number(e.amount), 0);
@@ -222,10 +245,7 @@ export class FinancialReportsService {
     // Net Income after Owner Personal Expenses / Withdrawals
     const netIncomeAfterOwnerDrawings = operatingNetIncome - ownerExpenseTotal;
 
-    const openingLeftoverQuantity = sessions.reduce((acc, s) => {
-      const recs = s.leftoverRecords || [];
-      return acc + recs.reduce((sum, r) => sum + (r.quantityRemaining || 0), 0);
-    }, 0);
+    // openingLeftoverQuantity already computed above from all leftoverRecords
 
 
     // Build Daily Breakdown Map
@@ -277,15 +297,21 @@ export class FinancialReportsService {
       }
       entry.yesterdayCashLeftover = yesterdayCash;
 
-      const salesSum = s.sales.reduce((t, x) => t + Number(x.totalAmount), 0);
-      entry.salesTotal += salesSum;
-
       const tomorrowCash = s.cashLeftoverAmount != null ? Number(s.cashLeftoverAmount) : 0;
       entry.tomorrowCashLeftover = tomorrowCash;
       entry.cashLeftoverTotal += tomorrowCash;
+    }
 
-      const recs = s.leftoverRecords || [];
-      entry.openingLeftoverQuantity += recs.reduce((sum, r) => sum + (r.quantityRemaining || 0), 0);
+    for (const sl of sales) {
+      const dayKey = sl.date ? new Date(sl.date).toISOString().slice(0, 10) : new Date(sl.createdAt).toISOString().slice(0, 10);
+      const entry = getOrCreateDailyEntry(dayKey);
+      entry.salesTotal += Number(sl.totalAmount);
+    }
+
+    for (const r of leftoverRecords) {
+      const dayKey = r.date ? new Date(r.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+      const entry = getOrCreateDailyEntry(dayKey);
+      entry.openingLeftoverQuantity += (r.quantityRemaining || 0);
     }
 
     for (const e of expenses) {
@@ -432,6 +458,8 @@ export class FinancialReportsService {
         netIncomeAfterOwnerDrawings: totals.netIncomeAfterOwnerDrawings,
         dailyBreakdown,
         sessions,
+        sales,
+        leftoverRecords,
         productionBatches,
         expenses,
         companyExpenses: expenses.filter(e => e.type === 'COMPANY'),

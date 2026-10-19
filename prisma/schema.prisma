@@ -141,6 +141,8 @@ model Branch {
   loans Loan[]
   customers Customer[]
   customerCredits CustomerCredit[]
+  sales Sale[]
+  leftoverRecords LeftoverRecord[]
 
   @@index([companyId])
 }
@@ -402,14 +404,21 @@ model DailySession {
 
 model Sale {
   id            String    @id @default(cuid())
-  sessionId     String
-  session       DailySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  branchId      String?
+  branch        Branch?   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  date          DateTime  @default(now()) @db.Date
+  sessionId     String?
+  session       DailySession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
   userId        String
   user          User      @relation(fields: [userId], references: [id], onDelete: Restrict)
   totalAmount   Decimal   @db.Decimal(12, 2)
   paymentMethod PaymentMethod @default(CASH)
   createdAt     DateTime  @default(now())
   items         SaleItem[]
+
+  @@index([branchId])
+  @@index([date])
+  @@index([sessionId])
   @@index([userId])
   @@index([createdAt])
 }
@@ -431,14 +440,22 @@ model SaleItem {
 
 model LeftoverRecord {
   id               String        @id @default(cuid())
-  sessionId        String
-  session          DailySession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  branchId         String?
+  branch           Branch?       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  date             DateTime      @default(now()) @db.Date
+  sessionId        String?
+  session          DailySession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
   productId        String
   product          Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
   quantityRemaining Int
   damagedQuantity   Int           @default(0)
   damageReason      String?
   recordedAt       DateTime      @default(now())
+
+  @@index([branchId])
+  @@index([date])
+  @@index([sessionId])
+  @@index([branchId, date, productId])
   @@unique([sessionId, productId])
 }
 

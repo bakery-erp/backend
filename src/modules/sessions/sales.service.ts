@@ -25,13 +25,19 @@ function moneyDecimal(n: number): Prisma.Decimal {
 }
 
 export class SalesService {
-  async getSales(sessionId?: string, branchId?: string, limit: number = 50): ServiceResult {
+  async getSales(sessionId?: string, branchId?: string, limit: number = 50, from?: string, to?: string): ServiceResult {
     const where: Record<string, unknown> = {};
     if (sessionId) where.sessionId = sessionId;
-    if (branchId) where.session = { branchId };
+    if (branchId) where.branchId = branchId;
+    if (from || to) {
+      where.date = {};
+      if (from) (where.date as Record<string, Date>).gte = new Date(from);
+      if (to) (where.date as Record<string, Date>).lte = new Date(to);
+    }
     const list = await prisma.sale.findMany({
       where,
       include: {
+        branch: { select: { id: true, name: true } },
         session: { select: { id: true, date: true, branchId: true } },
         user: { select: { id: true, fullName: true } },
         items: { include: { product: { select: { id: true, name: true, flavor: true, unitType: true } } } },
@@ -46,6 +52,7 @@ export class SalesService {
     const sale = await prisma.sale.findUnique({
       where: { id },
       include: {
+        branch: { select: { id: true, name: true } },
         session: { select: { id: true, date: true, branchId: true, status: true } },
         user: { select: { id: true, fullName: true, phone: true } },
         items: { include: { product: true } },
@@ -58,20 +65,41 @@ export class SalesService {
   }
 
   async createSale(body: any, userId: string): ServiceResult {
-    const { sessionId, totalAmount, paymentMethod, items } = body;
-    if (!sessionId) {
-      return { error: 'sessionId required', status: 400 };
+    const { sessionId, totalAmount, paymentMethod, items, branchId, date } = body;
+
+    let targetBranchId = branchId;
+    let targetSessionId = sessionId || null;
+    let targetDate = date ? new Date(date) : new Date();
+
+    if (sessionId) {
+      const session = await prisma.dailySession.findUnique({ where: { id: sessionId } });
+      if (session) {
+        targetBranchId = session.branchId;
+        targetDate = session.date;
+      }
     }
 
-    const session = await prisma.dailySession.findUnique({ where: { id: sessionId } });
-    if (!session) {
-      return { error: 'Session not found', status: 404 };
+    if (!targetBranchId) {
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      targetBranchId = user?.branchId;
     }
-    if (session.status === 'CLOSED') {
-      return { error: 'Session is closed; cannot create sale', status: 400 };
+
+    if (!targetBranchId) {
+      const defaultBranch = await prisma.branch.findFirst({ where: { isActive: true } });
+      targetBranchId = defaultBranch?.id;
     }
-    if (session.status === 'PAUSED') {
-      return { error: 'Session is currently PAUSED by Admin/Owner; cannot create sale', status: 400 };
+
+    if (!targetBranchId) {
+      return { error: 'branchId required to record a sale', status: 400 };
+    }
+
+    // If no sessionId was passed, try to attach today's session if one exists
+    if (!targetSessionId) {
+      const activeSession = await prisma.dailySession.findFirst({
+        where: { branchId: targetBranchId },
+        orderBy: { date: 'desc' },
+      });
+      targetSessionId = activeSession?.id || null;
     }
 
     const pm = parsePaymentMethod(paymentMethod);
@@ -87,7 +115,9 @@ export class SalesService {
       : [];
 
     const data: any = {
-      sessionId,
+      branchId: targetBranchId,
+      date: targetDate,
+      sessionId: targetSessionId,
       userId,
       paymentMethod: pm,
     };
@@ -101,6 +131,7 @@ export class SalesService {
     const sale = await prisma.sale.create({
       data,
       include: {
+        branch: { select: { id: true, name: true } },
         session: { select: { id: true, date: true, branchId: true } },
         user: { select: { id: true, fullName: true } },
         items: { include: { product: true } },

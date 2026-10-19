@@ -89,18 +89,11 @@ export class ExpensesService {
       return { error: 'branchId, amount, and category required', status: 400 };
     }
 
-    // Mandatory Open Daily Session Check
+    // Optional Daily Session link (does not block if session is not open)
     const activeSession = await prisma.dailySession.findFirst({
-      where: { branchId: bid, status: 'OPEN' },
-      orderBy: { createdAt: 'desc' },
+      where: { branchId: bid },
+      orderBy: { date: 'desc' },
     });
-
-    if (!activeSession) {
-      return {
-        error: 'No active open daily session found for this branch. Expenses can only be recorded during an active open session.',
-        status: 400,
-      };
-    }
 
     // Allow selecting COMPANY or OWNER expense, default to COMPANY if not specified
     const expenseType = parseExpenseType(type) || 'COMPANY';
@@ -130,7 +123,7 @@ export class ExpensesService {
         userId,
         type: expenseType,
         financialCategoryId: fCatId,
-        sessionId: activeSession.id,
+        sessionId: activeSession?.id || null,
         amount: decimalToNum(amount),
         category: finalCategory,
         description: description?.trim() || null,

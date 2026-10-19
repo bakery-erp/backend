@@ -72,22 +72,13 @@ export class ProductConversionsService {
       return { error: 'Source and target products must be different', status: 400 };
     }
 
-    // Check active session status for branch
+    // Optional active session lookup (conversions are no longer blocked if session is closed)
     const activeSession = await prisma.dailySession.findFirst({
-      where: {
-        branchId: bid,
-        status: { in: ['OPEN', 'PAUSED', 'CLOSE_PENDING', 'CLOSED'] },
-      },
+      where: { branchId: bid },
       orderBy: { date: 'desc' },
     });
 
-    if (!activeSession || activeSession.status !== 'OPEN') {
-      const statusLabel = activeSession ? activeSession.status : 'CLOSED';
-      return {
-        error: `Daily session is currently ${statusLabel}. Product conversions are disabled when a session is paused or closed.`,
-        status: 400,
-      };
-    }
+    const targetDate = activeSession ? activeSession.date : new Date();
 
     const fromQ = typeof fromQuantity === 'number' ? fromQuantity : parseInt(String(fromQuantity), 10);
     const toQ = typeof toQuantity === 'number' ? toQuantity : parseInt(String(toQuantity), 10);
@@ -112,18 +103,18 @@ export class ProductConversionsService {
     // Validate available shop stock for fromProduct
     const [sessionBatches, sessionSales, sessionDeliveries, previousConversions] = await Promise.all([
       prisma.productionBatch.findMany({
-        where: { branchId: bid, date: activeSession.date },
+        where: { branchId: bid, date: targetDate },
         include: { items: true },
       }),
       prisma.sale.findMany({
-        where: { sessionId: activeSession.id },
+        where: { branchId: bid, date: targetDate },
         include: { items: true },
       }),
       prisma.supplierDelivery.findMany({
-        where: { sessionId: activeSession.id },
+        where: activeSession ? { sessionId: activeSession.id } : { supplier: { branchId: bid } },
       }),
       prisma.productConversion.findMany({
-        where: { branchId: bid, createdAt: { gte: activeSession.date } },
+        where: { branchId: bid, createdAt: { gte: targetDate } },
       }),
     ]);
 

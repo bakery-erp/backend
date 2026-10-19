@@ -1486,7 +1486,6 @@ export class DailySessionsService {
     const activeSession = await prisma.dailySession.findFirst({
       where: {
         branchId: bid,
-        status: { in: ['OPEN', 'PAUSED'] },
       },
       include: {
         leftoverRecords: { include: { product: true } },
@@ -1495,15 +1494,7 @@ export class DailySessionsService {
       orderBy: { date: 'desc' },
     });
 
-    if (!activeSession) {
-      return {
-        data: {
-          hasActiveSession: false,
-          message: 'No active daily session is currently open for this branch. Please start or open a daily session first.',
-          products: [],
-        },
-      };
-    }
+    const sessionDate = activeSession ? activeSession.date : new Date();
 
     // 1. All active products
     const allProducts = await prisma.product.findMany({
@@ -1521,7 +1512,7 @@ export class DailySessionsService {
     const batches = await prisma.productionBatch.findMany({
       where: {
         branchId: bid,
-        OR: [{ sessionId: activeSession.id }, { date: activeSession.date }],
+        date: sessionDate,
         status: { in: ['STARTED', 'COMPLETED', 'PENDING_APPROVAL'] },
       },
       include: { items: true },
@@ -1535,13 +1526,16 @@ export class DailySessionsService {
 
     // 3. Supplier Deliveries
     const delivMap: Record<string, number> = {};
-    for (const d of activeSession.supplierDeliveries || []) {
+    const deliveries = activeSession?.supplierDeliveries && activeSession.supplierDeliveries.length > 0
+      ? activeSession.supplierDeliveries
+      : await prisma.supplierDelivery.findMany({ where: { supplier: { branchId: bid } } });
+    for (const d of deliveries || []) {
       delivMap[d.productId] = (delivMap[d.productId] || 0) + d.quantityReceived;
     }
 
     // 4. Sales
     const sales = await prisma.sale.findMany({
-      where: { sessionId: activeSession.id },
+      where: activeSession ? { OR: [{ sessionId: activeSession.id }, { branchId: bid, date: sessionDate }] } : { branchId: bid, date: sessionDate },
       include: { items: true },
     });
     const soldMap: Record<string, number> = {};
@@ -1553,7 +1547,7 @@ export class DailySessionsService {
 
     // 5. Conversions
     const conversions = await prisma.productConversion.findMany({
-      where: { branchId: bid, createdAt: { gte: activeSession.date } },
+      where: { branchId: bid, createdAt: { gte: sessionDate } },
     });
     const convOutMap: Record<string, number> = {};
     const convInMap: Record<string, number> = {};
@@ -1567,13 +1561,13 @@ export class DailySessionsService {
       where: {
         branchId: bid,
         status: 'CLOSED',
-        date: { lt: activeSession.date },
+        date: { lt: sessionDate },
       },
       orderBy: { date: 'desc' },
       include: { leftoverRecords: true },
     });
     const openingMap: Record<string, number> = {};
-    if (activeSession.leftoverRecords && activeSession.leftoverRecords.length > 0) {
+    if (activeSession?.leftoverRecords && activeSession.leftoverRecords.length > 0) {
       for (const r of activeSession.leftoverRecords) {
         openingMap[r.productId] = (openingMap[r.productId] || 0) + r.quantityRemaining;
       }
@@ -1589,13 +1583,13 @@ export class DailySessionsService {
         where: {
           branchId: bid,
           type: 'CUSTOMER',
-          date: activeSession.date,
+          date: sessionDate,
         },
       }),
       prisma.customerCredit.findMany({
         where: {
           branchId: bid,
-          date: activeSession.date,
+          date: sessionDate,
         },
       }),
     ]);
@@ -1648,9 +1642,9 @@ export class DailySessionsService {
     return {
       data: {
         hasActiveSession: true,
-        sessionId: activeSession.id,
-        sessionDate: dateToYmdUtc(activeSession.date),
-        sessionStatus: activeSession.status,
+        sessionId: activeSession?.id || null,
+        sessionDate: dateToYmdUtc(sessionDate),
+        sessionStatus: 'OPEN',
         products,
       },
     };

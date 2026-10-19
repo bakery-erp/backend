@@ -10,8 +10,10 @@ salesRouter.use(authMiddleware);
 salesRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res: Response) => {
   const sessionId = req.query.sessionId as string | undefined;
   const branchId = req.query.branchId as string | undefined;
-  const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
-  const result = await salesService.getSales(sessionId, branchId, limit);
+  const from = req.query.from as string | undefined;
+  const to = req.query.to as string | undefined;
+  const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
+  const result = await salesService.getSales(sessionId, branchId, limit, from, to);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

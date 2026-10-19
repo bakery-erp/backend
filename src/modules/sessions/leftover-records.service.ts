@@ -30,34 +30,53 @@ function normalizeLeftoverRows(
 }
 
 export class LeftoverRecordsService {
-  async getLeftoverRecords(sessionId?: string): ServiceResult {
-    if (!sessionId) {
-      return { error: 'sessionId required', status: 400 };
+  async getLeftoverRecords(query?: { sessionId?: string; branchId?: string; date?: string } | string): ServiceResult {
+    const whereClause: any = {};
+    if (typeof query === 'string') {
+      whereClause.sessionId = query;
+    } else if (query?.sessionId) {
+      whereClause.sessionId = query.sessionId;
+    } else if (query?.branchId) {
+      whereClause.branchId = query.branchId;
+      if (query.date) {
+        whereClause.date = new Date(query.date);
+      }
+    } else {
+      return { error: 'sessionId or branchId required', status: 400 };
     }
+
     const list = await prisma.leftoverRecord.findMany({
-      where: { sessionId },
+      where: whereClause,
       include: { product: { select: { id: true, name: true, unitType: true, basePrice: true } } },
     });
     return { data: list };
   }
 
-  async createLeftoverRecords(body: { sessionId: string; records: any[] }): ServiceResult {
-    const { sessionId, records } = body;
-    if (!sessionId) {
-      return { error: 'sessionId required', status: 400 };
-    }
+  async createLeftoverRecords(body: { sessionId?: string; branchId?: string; date?: string; records: any[] }): ServiceResult {
+    const { records } = body;
+    let sessionId = body.sessionId;
+    let branchId = body.branchId;
+    let targetDate = body.date ? new Date(body.date) : new Date();
 
     const normalized = normalizeLeftoverRows(records);
     if (normalized === null || normalized.length === 0) {
-      return { error: 'sessionId and non-empty records array required', status: 400 };
+      return { error: 'records array required', status: 400 };
     }
 
-    const session = await prisma.dailySession.findUnique({ where: { id: sessionId } });
-    if (!session) {
-      return { error: 'Session not found', status: 404 };
-    }
-    if (session.status !== 'OPEN') {
-      return { error: 'Session is closed; cannot add leftovers', status: 400 };
+    if (sessionId) {
+      const session = await prisma.dailySession.findUnique({ where: { id: sessionId } });
+      if (session) {
+        branchId = session.branchId;
+        targetDate = session.date;
+      }
+    } else if (branchId) {
+      const activeSession = await prisma.dailySession.findFirst({
+        where: { branchId, status: 'OPEN' },
+      });
+      if (activeSession) {
+        sessionId = activeSession.id;
+        targetDate = activeSession.date;
+      }
     }
 
     const ids = normalized.map((x) => x.productId);
@@ -70,7 +89,9 @@ export class LeftoverRecordsService {
 
     await prisma.leftoverRecord.createMany({
       data: normalized.map((r) => ({
-        sessionId,
+        sessionId: sessionId || null,
+        branchId: branchId || null,
+        date: targetDate,
         productId: r.productId,
         quantityRemaining: r.quantityRemaining,
         damagedQuantity: r.damagedQuantity,
@@ -80,7 +101,7 @@ export class LeftoverRecordsService {
     });
 
     const list = await prisma.leftoverRecord.findMany({
-      where: { sessionId },
+      where: sessionId ? { sessionId } : { branchId, date: targetDate },
       include: { product: true },
     });
     return { data: list };
