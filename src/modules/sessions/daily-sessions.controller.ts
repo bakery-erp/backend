@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/auth.js';
 import { DailySessionsService } from './daily-sessions.service.js';
+import { parsePagination } from '../../lib/pagination.js';
 
 export const dailySessionsRouter = Router();
 const dailySessionsService = new DailySessionsService();
@@ -8,11 +9,20 @@ const dailySessionsService = new DailySessionsService();
 dailySessionsRouter.use(authMiddleware);
 
 dailySessionsRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
-  const branchId = (req.query.branchId as string) || req.user?.branchId;
+  const branchId = (req.query.branchId as string) || (req.user?.role === 'OWNER' ? undefined : req.user?.branchId);
   const from = req.query.from as string;
   const to = req.query.to as string;
   const status = req.query.status as string | undefined;
-  const result = await dailySessionsService.getDailySessions(branchId, from, to, status);
+  const pagination = req.query.page ? parsePagination(req.query as Record<string, unknown>, 15) : undefined;
+
+  const result = await dailySessionsService.getDailySessions({
+    branchId,
+    from,
+    to,
+    status,
+    page: pagination?.page,
+    limit: pagination?.limit,
+  });
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import { businessDateFromYmdString } from '../../lib/businessDate.js';
+import { parsePagination, buildPaginatedResponse } from '../../lib/pagination.js';
 import type { ServiceResult } from '../../types/service-response.js';
 
 function decimalToNum(v: unknown): number {
@@ -24,8 +25,10 @@ export class CustomersService {
     companyId?: string | null;
     branchId?: string | null;
     search?: string;
+    page?: number;
+    limit?: number;
   }): ServiceResult {
-    const { companyId, branchId, search } = params;
+    const { companyId, branchId, search, page, limit } = params;
     const where: any = {};
     if (companyId) where.companyId = companyId;
     if (branchId) where.branchId = branchId;
@@ -37,25 +40,33 @@ export class CustomersService {
       ];
     }
 
-    const customers = await prisma.customer.findMany({
-      where,
-      include: {
-        branch: { select: { id: true, name: true } },
-        credits: {
-          select: {
-            id: true,
-            amount: true,
-            paidAmount: true,
-            remainingBalance: true,
-            status: true,
-            date: true,
-            createdAt: true,
+    const isPaginated = page != null && limit != null;
+    const skip = isPaginated ? (page - 1) * limit : undefined;
+    const take = isPaginated ? limit : undefined;
+
+    const [total, customers] = await Promise.all([
+      isPaginated ? prisma.customer.count({ where }) : Promise.resolve(0),
+      prisma.customer.findMany({
+        where,
+        include: {
+          branch: { select: { id: true, name: true } },
+          credits: {
+            select: {
+              id: true,
+              amount: true,
+              paidAmount: true,
+              remainingBalance: true,
+              status: true,
+              date: true,
+              createdAt: true,
+            },
+            orderBy: { createdAt: 'desc' },
           },
-          orderBy: { createdAt: 'desc' },
         },
-      },
-      orderBy: { updatedAt: 'desc' },
-    });
+        orderBy: { updatedAt: 'desc' },
+        ...(isPaginated ? { skip, take } : {}),
+      }),
+    ]);
 
     const enriched = customers.map((c) => {
       const totalCredits = c.credits.length;
@@ -72,6 +83,10 @@ export class CustomersService {
         lastCreditDate,
       };
     });
+
+    if (isPaginated) {
+      return { data: buildPaginatedResponse(enriched, total, page, limit) };
+    }
 
     return { data: enriched };
   }
@@ -221,8 +236,10 @@ export class CustomersService {
     search?: string;
     from?: string;
     to?: string;
+    page?: number;
+    limit?: number;
   }): ServiceResult {
-    const { branchId, customerId, status, search, from, to } = params;
+    const { branchId, customerId, status, search, from, to, page, limit } = params;
     const where: any = {};
     if (branchId) where.branchId = branchId;
     if (customerId) where.customerId = customerId;
@@ -242,15 +259,53 @@ export class CustomersService {
       if (to) where.date.lte = businessDateFromYmdString(to);
     }
 
-    const credits = await prisma.customerCredit.findMany({
-      where,
-      include: {
-        customer: true,
-        branch: { select: { id: true, name: true } },
-        payments: { orderBy: { createdAt: 'desc' } },
+    const baseWhere: any = {};
+    if (branchId) baseWhere.branchId = branchId;
+    if (customerId) baseWhere.customerId = customerId;
+
+    const isPaginated = page != null && limit != null;
+    const skip = isPaginated ? (page - 1) * limit : undefined;
+    const take = isPaginated ? limit : undefined;
+
+    const [statsAgg, countAll, countOpen, countPaid, total, credits] = await Promise.all([
+      prisma.customerCredit.aggregate({
+        where: baseWhere,
+        _sum: {
+          amount: true,
+          paidAmount: true,
+          remainingBalance: true,
+        },
+      }),
+      prisma.customerCredit.count({ where: baseWhere }),
+      prisma.customerCredit.count({ where: { ...baseWhere, remainingBalance: { gt: 0 } } }),
+      prisma.customerCredit.count({ where: { ...baseWhere, remainingBalance: { lte: 0 } } }),
+      isPaginated ? prisma.customerCredit.count({ where }) : Promise.resolve(0),
+      prisma.customerCredit.findMany({
+        where,
+        include: {
+          customer: true,
+          branch: { select: { id: true, name: true } },
+          payments: { orderBy: { createdAt: 'desc' } },
+        },
+        orderBy: { date: 'desc' },
+        ...(isPaginated ? { skip, take } : {}),
+      }),
+    ]);
+
+    const totalCreditGiven = decimalToNum(statsAgg._sum.amount);
+    const totalOutstanding = decimalToNum(statsAgg._sum.remainingBalance);
+    const totalRepaid = decimalToNum(statsAgg._sum.paidAmount);
+
+    const stats = {
+      totalCreditGiven,
+      totalOutstanding,
+      totalRepaid,
+      counts: {
+        all: countAll,
+        open: countOpen,
+        paid: countPaid,
       },
-      orderBy: { date: 'desc' },
-    });
+    };
 
     const reconciledCredits = credits.map((c) => {
       const totalPaid = (c.payments || []).reduce((sum, p) => sum + decimalToNum(p.amount), 0);
@@ -263,6 +318,15 @@ export class CustomersService {
         status: computedRemaining <= 0.001 ? ('PAID' as const) : ('OPEN' as const),
       };
     });
+
+    if (isPaginated) {
+      return {
+        data: {
+          ...buildPaginatedResponse(reconciledCredits, total, page, limit),
+          stats,
+        },
+      };
+    }
 
     return { data: reconciledCredits };
   }

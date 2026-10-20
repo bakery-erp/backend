@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/auth.js';
 import { ExpensesService } from './expenses.service.js';
+import { parsePagination } from '../../lib/pagination.js';
 
 export const expensesRouter = Router();
 const expensesService = new ExpensesService();
@@ -12,11 +13,14 @@ expensesRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: Au
   const branchId = admin
     ? ((req.query.branchId as string) || req.user?.branchId)
     : req.user?.branchId;
-  const from = req.query.from as string;
-  const to = req.query.to as string;
+  const from = req.query.from as string | undefined;
+  const to = req.query.to as string | undefined;
   const category = req.query.category as string | undefined;
   const type = req.query.type as string | undefined;
-  const result = await expensesService.getExpenses(branchId, from, to, category, type);
+  const search = req.query.search as string | undefined;
+  const { page, limit } = parsePagination(req.query, 20, 100);
+
+  const result = await expensesService.getExpenses(branchId, from, to, category, type, page, limit, search);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import { parseExpenseType, isValidExpenseTypeForPatch } from '../../lib/expenseType.js';
+import { buildPaginatedResponse } from '../../lib/pagination.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
 function decimalToNum(v: unknown): number {
@@ -38,8 +39,17 @@ const expenseInclude = {
 };
 
 export class ExpensesService {
-  async getExpenses(branchId?: string | null, from?: string, to?: string, category?: string, type?: string): ServiceResult {
-    const where: Record<string, unknown> = {};
+  async getExpenses(
+    branchId?: string | null,
+    from?: string,
+    to?: string,
+    category?: string,
+    type?: string,
+    page: number = 1,
+    limit: number = 20,
+    search?: string
+  ): ServiceResult {
+    const where: any = {};
     if (branchId) where.branchId = branchId;
     if (category) where.category = category;
     if (type && type !== 'ALL') {
@@ -47,15 +57,65 @@ export class ExpensesService {
     }
     if (from || to) {
       where.date = {};
-      if (from) (where.date as Record<string, Date>).gte = new Date(from);
-      if (to) (where.date as Record<string, Date>).lte = new Date(to);
+      if (from) where.date.gte = new Date(from);
+      if (to) {
+        const toDate = new Date(to);
+        toDate.setUTCHours(23, 59, 59, 999);
+        where.date.lte = toDate;
+      }
     }
-    const list = await prisma.expense.findMany({
-      where,
-      include: expenseInclude,
-      orderBy: { date: 'desc' },
-    });
-    return { data: list };
+    if (search && search.trim()) {
+      const q = search.trim();
+      where.OR = [
+        { description: { contains: q, mode: 'insensitive' } },
+        { category: { contains: q, mode: 'insensitive' } },
+        { user: { fullName: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [total, list, statsAggregate, byTypeGroups] = await Promise.all([
+      prisma.expense.count({ where }),
+      prisma.expense.findMany({
+        where,
+        include: expenseInclude,
+        orderBy: { date: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.expense.aggregate({
+        where,
+        _sum: { amount: true },
+        _count: true,
+      }),
+      prisma.expense.groupBy({
+        by: ['type'],
+        where,
+        _sum: { amount: true },
+      }),
+    ]);
+
+    let companyTotal = 0;
+    let ownerTotal = 0;
+    for (const g of byTypeGroups) {
+      const amt = Number(g._sum.amount || 0);
+      if (g.type === 'COMPANY') companyTotal += amt;
+      else if (g.type === 'OWNER') ownerTotal += amt;
+    }
+
+    const paginated = buildPaginatedResponse(list, total, page, limit);
+    return {
+      data: {
+        ...paginated,
+        stats: {
+          totalAmount: Number(statsAggregate._sum.amount || 0),
+          companyTotal,
+          ownerTotal,
+          count: statsAggregate._count,
+        },
+      },
+    };
   }
 
   async getExpenseById(id: string, userRole: string, userBranchId?: string | null): ServiceResult {
