@@ -330,8 +330,8 @@ export async function seed8Days() {
   // 7. Timeline Simulation for Both Branches
   console.log('📅 [7/8] Simulating 8 Days of Production, Sales & Sessions for Both Branches...');
 
-  const now = new Date();
-  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+  const ethNow = new Date(Date.now() + 3 * 3600 * 1000);
+  const today = new Date(Date.UTC(ethNow.getUTCFullYear(), ethNow.getUTCMonth(), ethNow.getUTCDate(), 0, 0, 0, 0));
 
   const branchConfigs = [
     {
@@ -417,48 +417,93 @@ export async function seed8Days() {
 
       console.log(`   📅 Day ${d.dayIndex}/8 (${sessionDate.toISOString().slice(0, 10)}) simulated for ${bCfg.name}...`);
 
-      // 1. Baker Batch (Bread)
-      const breadItems = bCfg.isMegenagna
-        ? [{ name: 'Bread', qty: 200 + d.dayIndex * 10 }, { name: 'Special Loaf Bread', qty: 40 + d.dayIndex * 2 }]
-        : [{ name: 'Bread', qty: 180 + d.dayIndex * 10 }];
+      // 1. Baker Batches (Bread) - Multiple batches for Today (15) and Yesterday (12) to test pagination & "Show More"
+      const bakerBatchesToCreate = d.offset === 0
+        ? [
+            { hour: 6, min: 0, breadQty: 100, loafQty: 20, flour: 20, yeast: 0.6, sugar: 0.8 },
+            { hour: 6, min: 45, breadQty: 80, loafQty: 15, flour: 18, yeast: 0.5, sugar: 0.7 },
+            { hour: 7, min: 30, breadQty: 120, loafQty: 25, flour: 24, yeast: 0.8, sugar: 1.0 },
+            { hour: 8, min: 15, breadQty: 90, loafQty: 20, flour: 20, yeast: 0.6, sugar: 0.8 },
+            { hour: 9, min: 0, breadQty: 110, loafQty: 30, flour: 25, yeast: 0.8, sugar: 1.0 },
+            { hour: 9, min: 45, breadQty: 95, loafQty: 20, flour: 20, yeast: 0.6, sugar: 0.8 },
+            { hour: 10, min: 30, breadQty: 130, loafQty: 35, flour: 28, yeast: 0.9, sugar: 1.1 },
+            { hour: 11, min: 15, breadQty: 85, loafQty: 15, flour: 18, yeast: 0.5, sugar: 0.7 },
+            { hour: 12, min: 0, breadQty: 100, loafQty: 25, flour: 22, yeast: 0.7, sugar: 0.9 },
+            { hour: 12, min: 45, breadQty: 115, loafQty: 25, flour: 25, yeast: 0.8, sugar: 1.0 },
+            // Page 2 batches (Show More loads these 5 batches)
+            { hour: 13, min: 30, breadQty: 105, loafQty: 20, flour: 22, yeast: 0.7, sugar: 0.9 },
+            { hour: 14, min: 15, breadQty: 90, loafQty: 18, flour: 20, yeast: 0.6, sugar: 0.8 },
+            { hour: 15, min: 0, breadQty: 120, loafQty: 30, flour: 26, yeast: 0.8, sugar: 1.0 },
+            { hour: 15, min: 45, breadQty: 80, loafQty: 15, flour: 18, yeast: 0.5, sugar: 0.7 },
+            { hour: 16, min: 30, breadQty: 75, loafQty: 10, flour: 16, yeast: 0.5, sugar: 0.6 },
+          ]
+        : d.offset === -1
+        ? [
+            { hour: 6, min: 15, breadQty: 100, loafQty: 20, flour: 20, yeast: 0.6, sugar: 0.8 },
+            { hour: 7, min: 0, breadQty: 80, loafQty: 15, flour: 18, yeast: 0.5, sugar: 0.7 },
+            { hour: 7, min: 45, breadQty: 110, loafQty: 25, flour: 24, yeast: 0.8, sugar: 1.0 },
+            { hour: 8, min: 30, breadQty: 95, loafQty: 20, flour: 20, yeast: 0.6, sugar: 0.8 },
+            { hour: 9, min: 15, breadQty: 120, loafQty: 30, flour: 26, yeast: 0.8, sugar: 1.0 },
+            { hour: 10, min: 0, breadQty: 90, loafQty: 18, flour: 20, yeast: 0.6, sugar: 0.8 },
+            { hour: 10, min: 45, breadQty: 130, loafQty: 35, flour: 28, yeast: 0.9, sugar: 1.1 },
+            { hour: 11, min: 30, breadQty: 85, loafQty: 15, flour: 18, yeast: 0.5, sugar: 0.7 },
+            { hour: 12, min: 15, breadQty: 100, loafQty: 25, flour: 22, yeast: 0.7, sugar: 0.9 },
+            { hour: 13, min: 0, breadQty: 115, loafQty: 25, flour: 25, yeast: 0.8, sugar: 1.0 },
+            // Page 2 batches (Show More loads these 2 batches)
+            { hour: 14, min: 0, breadQty: 105, loafQty: 20, flour: 22, yeast: 0.7, sugar: 0.9 },
+            { hour: 15, min: 0, breadQty: 90, loafQty: 15, flour: 20, yeast: 0.6, sugar: 0.8 },
+          ]
+        : [
+            { hour: 8, min: 0, breadQty: 200 + d.dayIndex * 10, loafQty: 40 + d.dayIndex * 2, flour: 50, yeast: 1.5, sugar: 2.0 },
+          ];
 
-      const breadMat = [
-        { name: 'Wheat Flour (Special)', qty: 50 },
-        { name: 'Dry Yeast', qty: 1.5 },
-        { name: 'Sugar', qty: 2 },
-      ];
+      for (let bIdx = 0; bIdx < bakerBatchesToCreate.length; bIdx++) {
+        const bSpec = bakerBatchesToCreate[bIdx];
+        const batchCreatedAt = new Date(sessionDate);
+        batchCreatedAt.setUTCHours(bSpec.hour - 3, bSpec.min, 0, 0);
 
-      await prisma.productionBatch.create({
-        data: {
-          branchId: bCfg.branch.id,
-          userId: bCfg.bakerId,
-          sessionId: session.id,
-          date: sessionDate,
-          shift: Shift.DAY,
-          status: BatchStatus.COMPLETED,
-          createdAt: sessionDate,
-          items: {
-            create: breadItems.map((i) => ({ productId: productMap.get(i.name).id, quantityProduced: i.qty })),
-          },
-          materialUsages: {
-            create: breadMat.map((m) => ({ stockItemId: bCfg.stockMap.get(m.name).id, quantityUsed: m.qty })),
-          },
-        },
-      });
+        const breadItems = bCfg.isMegenagna
+          ? [{ name: 'Bread', qty: bSpec.breadQty }, { name: 'Special Loaf Bread', qty: bSpec.loafQty }]
+          : [{ name: 'Bread', qty: bSpec.breadQty }];
 
-      for (const m of breadMat) {
-        const item = bCfg.stockMap.get(m.name);
-        await prisma.stockItem.update({ where: { id: item.id }, data: { currentQuantity: { decrement: m.qty } } });
-        await prisma.stockMovement.create({
+        const breadMat = [
+          { name: 'Wheat Flour (Special)', qty: bSpec.flour },
+          { name: 'Dry Yeast', qty: bSpec.yeast },
+          { name: 'Sugar', qty: bSpec.sugar },
+        ];
+
+        await prisma.productionBatch.create({
           data: {
-            stockItemId: item.id,
+            branchId: bCfg.branch.id,
             userId: bCfg.bakerId,
-            quantity: m.qty,
-            type: StockMovementType.PRODUCTION_USAGE,
-            reason: `Baker Bread Batch (Day ${d.dayIndex})`,
-            createdAt: sessionDate,
+            sessionId: session.id,
+            date: sessionDate,
+            shift: Shift.DAY,
+            status: BatchStatus.COMPLETED,
+            createdAt: batchCreatedAt,
+            items: {
+              create: breadItems.map((i) => ({ productId: productMap.get(i.name).id, quantityProduced: i.qty })),
+            },
+            materialUsages: {
+              create: breadMat.map((m) => ({ stockItemId: bCfg.stockMap.get(m.name).id, quantityUsed: m.qty })),
+            },
           },
         });
+
+        for (const m of breadMat) {
+          const item = bCfg.stockMap.get(m.name);
+          await prisma.stockItem.update({ where: { id: item.id }, data: { currentQuantity: { decrement: m.qty } } });
+          await prisma.stockMovement.create({
+            data: {
+              stockItemId: item.id,
+              userId: bCfg.bakerId,
+              quantity: m.qty,
+              type: StockMovementType.PRODUCTION_USAGE,
+              reason: `Baker Bread Batch ${bIdx + 1} (Day ${d.dayIndex})`,
+              createdAt: batchCreatedAt,
+            },
+          });
+        }
       }
 
       // 2. Sambusa Worker Batch (Sambusa)
