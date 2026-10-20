@@ -119,6 +119,20 @@ export class ProductionBatchesService {
       return { error: 'Production batch not found', status: 404 };
     }
 
+    // Worker role restriction: non-admin workers can only access their own batches within the 2-day window
+    if (user && user.role !== 'ADMIN' && user.role !== 'OWNER') {
+      if (batch.userId !== user.id) {
+        return { error: 'Access denied: You can only view your own production batches.', status: 403 };
+      }
+      const ethNow = new Date(Date.now() + 3 * 3600 * 1000);
+      const yesterdayBusinessDate = businessDateFromYmdString(
+        new Date(ethNow.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10)
+      );
+      if (yesterdayBusinessDate && batch.date < yesterdayBusinessDate) {
+        return { error: 'Access denied: Workers can only view batches from today or yesterday.', status: 403 };
+      }
+    }
+
     if (user?.role === 'ADMIN' && !batch.adminSeenAt) {
       batch = await prisma.productionBatch.update({
         where: { id },
