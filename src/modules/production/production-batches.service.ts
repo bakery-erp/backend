@@ -668,6 +668,8 @@ export class ProductionBatchesService {
     supplierId?: string;
     productId?: string;
     search?: string;
+    page?: number;
+    limit?: number;
   }): ServiceResult {
     try {
       const { branchId, startDate, endDate, supplierId, productId } = params;
@@ -819,9 +821,20 @@ export class ProductionBatchesService {
 
       const totalValuation = filteredRecords.reduce((sum, r) => sum + r.subtotal, 0);
 
+      const isPaginated = params.page != null && params.limit != null;
+      const page = params.page || 1;
+      const limit = params.limit || filteredRecords.length;
+      const skip = (page - 1) * limit;
+      const pagedRecords = isPaginated ? filteredRecords.slice(skip, skip + limit) : filteredRecords;
+      const totalPages = Math.max(1, Math.ceil(filteredRecords.length / (limit || 1)));
+
       return {
         data: {
-          records: filteredRecords,
+          records: pagedRecords,
+          total: filteredRecords.length,
+          page,
+          limit,
+          totalPages,
           summary: {
             totalProducedQuantity,
             totalResellQuantity,

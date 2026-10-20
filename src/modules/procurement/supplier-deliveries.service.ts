@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import { utcDayRangeInclusive } from '../../lib/businessDate.js';
+import { parsePagination, buildPaginatedResponse } from '../../lib/pagination.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
 function decimalToNum(v: unknown): number {
@@ -10,7 +11,16 @@ function decimalToNum(v: unknown): number {
 }
 
 export class SupplierDeliveriesService {
-  async getSupplierDeliveries(supplierId?: string, branchId?: string, isPaid?: string, dateYmd?: string, sessionId?: string, limit: number = 50): ServiceResult {
+  async getSupplierDeliveries(params: {
+    supplierId?: string;
+    branchId?: string;
+    isPaid?: string;
+    dateYmd?: string;
+    sessionId?: string;
+    page?: number;
+    limit?: number;
+  }): ServiceResult {
+    const { supplierId, branchId, isPaid, dateYmd, sessionId, page, limit } = params;
     const where: any = {};
     if (supplierId) where.supplierId = supplierId;
     if (branchId) where.supplier = { branchId };
@@ -22,12 +32,50 @@ export class SupplierDeliveriesService {
         where.createdAt = { gte: range.start, lte: range.end };
       }
     }
-    const list = await prisma.supplierDelivery.findMany({
+
+    const isPaginated = page != null && limit != null;
+    const findArgs: any = {
       where,
       include: { supplier: true, product: true },
       orderBy: { createdAt: 'desc' },
-      take: dateYmd ? 500 : limit,
-    });
+    };
+    if (page != null && limit != null) {
+      findArgs.skip = (page - 1) * limit;
+      findArgs.take = limit;
+    } else if (limit) {
+      findArgs.take = limit;
+    } else {
+      findArgs.take = 50;
+    }
+
+    const [total, unpaidAgg, list] = await Promise.all([
+      prisma.supplierDelivery.count({ where }),
+      prisma.supplierDelivery.findMany({
+        where: { ...where, isPaid: false },
+        select: { unitBuyPrice: true, quantityReceived: true },
+      }),
+      prisma.supplierDelivery.findMany(findArgs),
+    ]);
+
+    const totalUnpaidAmount = unpaidAgg.reduce(
+      (sum, d) => sum + decimalToNum(d.unitBuyPrice) * (d.quantityReceived || 0),
+      0
+    );
+
+    const stats = {
+      totalDeliveries: total,
+      totalUnpaidAmount,
+    };
+
+    if (page != null && limit != null) {
+      return {
+        data: {
+          ...buildPaginatedResponse(list, total, page, limit),
+          stats,
+        },
+      };
+    }
+
     return { data: list };
   }
 
