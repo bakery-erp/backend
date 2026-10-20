@@ -1,4 +1,5 @@
 import { prisma } from '../../lib/prisma.js';
+import { buildPaginatedResponse, parsePagination } from '../../lib/pagination.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
 function decimalToNum(v: unknown): number {
@@ -12,16 +13,20 @@ export class StockMovementsService {
   async getStockMovements(
     branchId?: string | null,
     stockItemId?: string,
-    limit: number = 50,
+    page: number = 1,
+    limit: number = 20,
     type?: string,
     from?: string,
-    to?: string
+    to?: string,
+    status?: string,
+    search?: string
   ): ServiceResult {
     const stockWhere = branchId ? { branchId } : {};
     const where: any = {};
     if (stockItemId) where.stockItemId = stockItemId;
     else if (branchId) where.stockItem = stockWhere;
-    if (type) where.type = type;
+    if (type && type !== 'ALL') where.type = type;
+    if (status && status !== 'ALL') where.status = status;
     if (from || to) {
       where.createdAt = {};
       if (from) where.createdAt.gte = new Date(from);
@@ -31,12 +36,51 @@ export class StockMovementsService {
         where.createdAt.lte = toDate;
       }
     }
+    if (search && search.trim()) {
+      const q = search.trim();
+      where.OR = [
+        { stockItem: { name: { contains: q, mode: 'insensitive' } } },
+        { reason: { contains: q, mode: 'insensitive' } },
+        { receivedBy: { contains: q, mode: 'insensitive' } },
+        { user: { fullName: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
 
-    const list = await prisma.stockMovement.findMany({
-      where,
-      include: {
-        stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true, unitPrice: true } },
-        user: { select: { id: true, fullName: true, role: true } },
+    const skip = (page - 1) * limit;
+
+    const [total, list] = await Promise.all([
+      prisma.stockMovement.count({ where }),
+      prisma.stockMovement.findMany({
+        where,
+        include: {
+          stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true, unitPrice: true } },
+          user: { select: { id: true, fullName: true, role: true } },
+          confirmedBy: { select: { id: true, fullName: true, role: true } },
+          purchaseLoan: {
+            include: {
+              payments: {
+                include: { user: { select: { id: true, fullName: true } } },
+                orderBy: { createdAt: 'desc' },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    return { data: buildPaginatedResponse(list, total, page, limit) };
+  }
+
+  async getStockMovementById(id: string): ServiceResult {
+    const movement = await prisma.stockMovement.findUnique({
+      where: { id },
+      include: { 
+        stockItem: true, 
+        user: { select: { id: true, fullName: true, phone: true, role: true } },
+        confirmedBy: { select: { id: true, fullName: true, role: true } },
         purchaseLoan: {
           include: {
             payments: {
@@ -46,19 +90,6 @@ export class StockMovementsService {
           },
         },
       },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
-    return { data: list };
-  }
-
-  async getStockMovementById(id: string): ServiceResult {
-    const movement = await prisma.stockMovement.findUnique({
-      where: { id },
-      include: { 
-        stockItem: true, 
-        user: { select: { id: true, fullName: true, phone: true } } 
-      },
     });
     if (!movement) {
       return { error: 'Stock movement not found', status: 404 };
@@ -67,7 +98,7 @@ export class StockMovementsService {
   }
 
   async createStockMovement(body: any, userId: string): ServiceResult {
-    const { stockItemId, quantity, type, reason, adjustTo, unitPrice } = body;
+    const { stockItemId, quantity, type, reason, adjustTo, unitPrice, receivedBy, autoConfirm } = body;
     
     if (!stockItemId || quantity == null || !type) {
       return { 
@@ -89,7 +120,7 @@ export class StockMovementsService {
     const current = Number(stockItem.currentQuantity);
     const itemUnitPrice = unitPrice != null ? decimalToNum(unitPrice) : Number(stockItem.unitPrice ?? 0);
 
-    // Guard: OUT and PRODUCTION_USAGE cannot bring stock below zero
+    // Guard: OUT cannot bring stock below zero
     if ((type === 'OUT' || type === 'PRODUCTION_USAGE') && qty > current) {
       return {
         error: `Insufficient stock. Current: ${current} ${stockItem.unitType}, requested: ${qty}`,
@@ -118,22 +149,30 @@ export class StockMovementsService {
               unitPrice: itemUnitPrice,
               totalValue: deltaQty * itemUnitPrice,
               type: 'ADJUSTMENT',
+              status: 'CONFIRMED',
+              confirmedAt: new Date(),
+              confirmedById: userId,
               reason: reason || `Adjusted to ${adjQty}`,
             },
             include: { 
               stockItem: true, 
-              user: { select: { id: true, fullName: true } } 
+              user: { select: { id: true, fullName: true, role: true } } 
             },
           });
           return movement;
         }
       }
 
-      const newQty = type === 'IN' ? current + qty : current - qty;
-      await tx.stockItem.update({ 
-        where: { id: stockItemId }, 
-        data: { currentQuantity: newQty } 
-      });
+      const isAuto = autoConfirm === true || type !== 'IN';
+      const movementStatus = isAuto ? 'CONFIRMED' : 'PENDING_CONFIRMATION';
+
+      if (isAuto) {
+        const newQty = type === 'IN' ? current + qty : current - qty;
+        await tx.stockItem.update({ 
+          where: { id: stockItemId }, 
+          data: { currentQuantity: newQty } 
+        });
+      }
 
       const totalVal = qty * itemUnitPrice;
       const movement = await tx.stockMovement.create({
@@ -144,11 +183,15 @@ export class StockMovementsService {
           unitPrice: itemUnitPrice,
           totalValue: totalVal,
           type: type as any,
-          reason: reason || null,
+          status: movementStatus,
+          receivedBy: receivedBy?.trim() || null,
+          reason: reason || (type === 'IN' && !isAuto ? 'Inward stock added (Awaiting Stock Keeper approval)' : null),
+          ...(isAuto ? { confirmedAt: new Date(), confirmedById: userId } : {}),
         },
         include: {
           stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true, unitPrice: true } },
-          user: { select: { id: true, fullName: true } },
+          user: { select: { id: true, fullName: true, role: true } },
+          confirmedBy: { select: { id: true, fullName: true, role: true } },
           purchaseLoan: {
             include: {
               payments: {
@@ -188,6 +231,77 @@ export class StockMovementsService {
       });
   }
 
+  async confirmStockMovement(id: string, userId: string): ServiceResult {
+    const movement = await prisma.stockMovement.findUnique({
+      where: { id },
+      include: { stockItem: true },
+    });
+    if (!movement) {
+      return { error: 'Stock movement not found', status: 404 };
+    }
+    if (movement.status === 'CONFIRMED') {
+      return { error: 'Stock movement is already confirmed', status: 400 };
+    }
+    if (movement.status === 'REJECTED') {
+      return { error: 'Stock movement was rejected and cannot be confirmed', status: 400 };
+    }
+
+    const qty = Number(movement.quantity);
+    const updated = await prisma.$transaction(async (tx) => {
+      if (movement.type === 'IN') {
+        await tx.stockItem.update({
+          where: { id: movement.stockItemId },
+          data: { currentQuantity: { increment: qty } },
+        });
+      }
+
+      return await tx.stockMovement.update({
+        where: { id },
+        data: {
+          status: 'CONFIRMED',
+          confirmedAt: new Date(),
+          confirmedById: userId,
+        },
+        include: {
+          stockItem: true,
+          user: { select: { id: true, fullName: true, role: true } },
+          confirmedBy: { select: { id: true, fullName: true, role: true } },
+        },
+      });
+    });
+
+    return { data: updated };
+  }
+
+  async rejectStockMovement(id: string, userId: string, reason?: string): ServiceResult {
+    const movement = await prisma.stockMovement.findUnique({
+      where: { id },
+    });
+    if (!movement) {
+      return { error: 'Stock movement not found', status: 404 };
+    }
+    if (movement.status !== 'PENDING_CONFIRMATION') {
+      return { error: `Stock movement cannot be rejected because status is ${movement.status}`, status: 400 };
+    }
+
+    const updated = await prisma.stockMovement.update({
+      where: { id },
+      data: {
+        status: 'REJECTED',
+        confirmedAt: new Date(),
+        confirmedById: userId,
+        reason: reason ? `${movement.reason || ''} [Rejected: ${reason}]`.trim() : movement.reason,
+      },
+      include: {
+        stockItem: true,
+        user: { select: { id: true, fullName: true, role: true } },
+        confirmedBy: { select: { id: true, fullName: true, role: true } },
+      },
+    });
+
+    return { data: updated };
+  }
+
   // Per-item full movement history — used on stock item detail pages
   async getMovementsByStockItem(stockItemId: string, limit: number = 100): ServiceResult {
     const stockItem = await prisma.stockItem.findUnique({
@@ -200,6 +314,7 @@ export class StockMovementsService {
       where: { stockItemId },
       include: { 
         user: { select: { id: true, fullName: true, role: true } },
+        confirmedBy: { select: { id: true, fullName: true, role: true } },
         purchaseLoan: {
           include: {
             payments: {
@@ -218,22 +333,29 @@ export class StockMovementsService {
         stockItem,
         movements,
         totalIn: movements
-          .filter((m) => m.type === 'IN')
+          .filter((m) => m.type === 'IN' && m.status === 'CONFIRMED')
           .reduce((s, m) => s + Number(m.quantity), 0),
         totalOut: movements
-          .filter((m) => m.type === 'OUT' || m.type === 'PRODUCTION_USAGE')
+          .filter((m) => (m.type === 'OUT' || m.type === 'PRODUCTION_USAGE') && m.status === 'CONFIRMED')
           .reduce((s, m) => s + Number(m.quantity), 0),
       },
     };
   }
 
-  // Inventory summary — used on web dashboard inventory widget
+  // Inventory summary — used on web dashboard inventory widget & stock keeper
   async getStockSummary(branchId?: string | null): ServiceResult {
     if (!branchId) return { error: 'branchId required', status: 400 };
 
     const items = await prisma.stockItem.findMany({
       where: { branchId },
       orderBy: { name: 'asc' },
+    });
+
+    const pendingApprovals = await prisma.stockMovement.count({
+      where: {
+        stockItem: { branchId },
+        status: 'PENDING_CONFIRMATION',
+      },
     });
 
     const totalItems = items.length;
@@ -250,33 +372,80 @@ export class StockMovementsService {
         outOfStock,
         lowStock,
         healthy,
+        pendingApprovals,
         items,
       },
     };
   }
 
-  async getStockPurchaseLoans(branchId?: string | null, status?: string): ServiceResult {
+  async getStockPurchaseLoans(
+    branchId?: string | null,
+    status?: string,
+    page: number = 1,
+    limit: number = 20,
+    search?: string
+  ): ServiceResult {
     const where: any = {};
     if (branchId) where.branchId = branchId;
     if (status && status !== 'ALL') where.status = status;
+    if (search && search.trim()) {
+      const q = search.trim();
+      where.OR = [
+        { supplierName: { contains: q, mode: 'insensitive' } },
+        { stockItem: { name: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
 
-    const loans = await prisma.stockPurchaseLoan.findMany({
-      where,
-      include: {
-        stockMovement: {
-          include: {
-            stockItem: { select: { id: true, name: true, unitType: true } },
-            user: { select: { id: true, fullName: true } },
+    const skip = (page - 1) * limit;
+
+    const [total, loans, statsAggregate, activeLoansCount] = await Promise.all([
+      prisma.stockPurchaseLoan.count({ where }),
+      prisma.stockPurchaseLoan.findMany({
+        where,
+        include: {
+          stockMovement: {
+            include: {
+              stockItem: { select: { id: true, name: true, unitType: true } },
+              user: { select: { id: true, fullName: true } },
+            },
+          },
+          payments: {
+            include: { user: { select: { id: true, fullName: true } } },
+            orderBy: { createdAt: 'desc' },
           },
         },
-        payments: {
-          include: { user: { select: { id: true, fullName: true } } },
-          orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.stockPurchaseLoan.aggregate({
+        where: branchId ? { branchId } : {},
+        _sum: {
+          totalAmount: true,
+          paidAmount: true,
+          remainingBalance: true,
+        },
+      }),
+      prisma.stockPurchaseLoan.count({
+        where: {
+          ...(branchId ? { branchId } : {}),
+          status: { not: 'PAID' },
+        },
+      }),
+    ]);
+
+    const paginated = buildPaginatedResponse(loans, total, page, limit);
+    return {
+      data: {
+        ...paginated,
+        stats: {
+          totalCredit: Number(statsAggregate._sum.totalAmount || 0),
+          totalPaid: Number(statsAggregate._sum.paidAmount || 0),
+          totalRemaining: Number(statsAggregate._sum.remainingBalance || 0),
+          activeLoansCount,
         },
       },
-      orderBy: { createdAt: 'desc' },
-    });
-    return { data: loans };
+    };
   }
 
   async recordLoanPayment(loanId: string, userId: string, amountToPay: number, note?: string): ServiceResult {

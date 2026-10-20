@@ -32,7 +32,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 usersRouter.get('/roles', requireRole('OWNER', 'ADMIN'), (req, res) => {
-  res.json(['OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER', 'SAMBUSA_WORKER', 'EMPLOYEE']);
+  res.json(['OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER', 'SAMBUSA_WORKER', 'STOCK_KEEPER', 'EMPLOYEE']);
 });
 
 usersRouter.get('/me/dashboard', async (req: AuthRequest, res) => {
@@ -130,12 +130,27 @@ usersRouter.get('/me/dashboard', async (req: AuthRequest, res) => {
 
 const userSelect = { id: true, fullName: true, phone: true, role: true, branchId: true, isActive: true, createdAt: true, salary: true, startDate: true, lastPaidDate: true, shift: true, filesUrl: true } as const;
 
-usersRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res) => {
+usersRouter.get('/', requireRole('OWNER', 'ADMIN', 'STOCK_KEEPER'), async (req: AuthRequest, res) => {
   const branchId = req.query.branchId as string | undefined;
   const where = branchId ? { branchId } : {};
+  const isPrivileged = req.user?.role === 'OWNER' || req.user?.role === 'ADMIN';
   const list = await prisma.user.findMany({
     where,
-    select: { ...userSelect, branch: { select: { name: true } } },
+    select: {
+      id: true,
+      fullName: true,
+      phone: true,
+      role: true,
+      branchId: true,
+      isActive: true,
+      createdAt: true,
+      salary: isPrivileged,
+      startDate: true,
+      lastPaidDate: true,
+      shift: true,
+      filesUrl: isPrivileged,
+      branch: { select: { name: true } },
+    },
     orderBy: { fullName: 'asc' },
   });
   res.json(list);

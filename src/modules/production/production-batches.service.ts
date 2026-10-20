@@ -176,7 +176,7 @@ export class ProductionBatchesService {
       if (p) batchDate = businessDateUtcNoon(p.y, p.mo, p.day);
     }
 
-    // Pre-validate stock availability if material usages are provided
+    // Pre-validate that stock items exist if material usages are provided
     for (const m of materialUsages || []) {
       const used = decimalToNum(m.quantityUsed);
       if (used <= 0) {
@@ -185,12 +185,6 @@ export class ProductionBatchesService {
       const item = await prisma.stockItem.findUnique({ where: { id: m.stockItemId } });
       if (!item) {
         return { error: `Stock item not found: ${m.stockItemId}`, status: 404 };
-      }
-      if (Number(item.currentQuantity) < used) {
-        return {
-          error: `Insufficient stock for '${item.name}'. Available: ${item.currentQuantity} ${item.unitType}, required: ${used}`,
-          status: 400,
-        };
       }
     }
 
@@ -202,13 +196,7 @@ export class ProductionBatchesService {
       orderBy: { date: 'desc' },
     });
 
-    // Pre-fetch product names for human readable stock movement reason
-    const itemProductIds = items.map((i: any) => i.productId);
-    const itemProducts = await prisma.product.findMany({
-      where: { id: { in: itemProductIds } },
-      select: { id: true, name: true },
-    });
-    const productNamesSummary = itemProducts.map((p) => p.name).join(', ') || 'Batch';
+
 
     // Creator seen timestamp
     const creator = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
@@ -253,24 +241,6 @@ export class ProductionBatchesService {
         },
       });
 
-      // Deduct stock & log movement ledger immediately upon creation
-      for (const m of materialUsages || []) {
-        const used = decimalToNum(m.quantityUsed);
-        await tx.stockItem.update({
-          where: { id: m.stockItemId },
-          data: { currentQuantity: { decrement: used } },
-        });
-        await tx.stockMovement.create({
-          data: {
-            stockItemId: m.stockItemId,
-            userId,
-            quantity: used,
-            type: 'PRODUCTION_USAGE',
-            reason: `Production Usage (${productNamesSummary})`,
-          },
-        });
-      }
-
       return batch;
     }, { maxWait: 10000, timeout: 20000 });
 
@@ -295,49 +265,12 @@ export class ProductionBatchesService {
       return { error: `Batch cannot be approved because current status is ${batch.status}`, status: 400 };
     }
 
-    // Check stock availability
-    for (const m of batch.materialUsages) {
-      const used = Number(m.quantityUsed);
-      const stock = Number(m.stockItem.currentQuantity);
-      if (stock < used) {
-        return {
-          error: `Insufficient stock for '${m.stockItem.name}'. Available: ${stock} ${m.stockItem.unitType}, required: ${used}`,
-          status: 400,
-        };
-      }
-    }
-
     const adminUser = await prisma.user.findUnique({
       where: { id: adminUserId },
       select: { fullName: true, role: true },
     });
 
-    const productNamesSummary = batch.items.map((i) => i.product.name).join(', ') || 'Batch';
-
     const updated = await prisma.$transaction(async (tx) => {
-      // Deduct stock & create movement records
-      for (const m of batch.materialUsages) {
-        const used = Number(m.quantityUsed);
-        await tx.stockItem.update({
-          where: { id: m.stockItemId },
-          data: { currentQuantity: { decrement: used } },
-        });
-
-        const itemUnitPrice = Number(m.stockItem.unitPrice ?? 0);
-
-        // Log movement attributed to the person who used/produced the item (batch.userId)
-        await tx.stockMovement.create({
-          data: {
-            stockItemId: m.stockItemId,
-            userId: batch.userId,
-            quantity: used,
-            unitPrice: itemUnitPrice,
-            totalValue: used * itemUnitPrice,
-            type: 'PRODUCTION_USAGE',
-            reason: `Production Usage (${productNamesSummary}) [Used by ${batch.user?.fullName || 'Worker'}${adminUser ? `, Approved by ${adminUser.fullName}` : ''}]`,
-          },
-        });
-      }
 
       const now = new Date();
       const seenUpdate: any = {};
@@ -652,43 +585,6 @@ export class ProductionBatchesService {
     }
 
     const updated = await prisma.$transaction(async (tx) => {
-      // Reconcile raw material inventory if the batch was already completed
-      if (existing.status === 'COMPLETED' && materialChanges.length > 0) {
-        for (const change of materialChanges) {
-          if (change.diff > 0) {
-            // More materials used -> deduct difference
-            await tx.stockItem.update({
-              where: { id: change.stockItemId },
-              data: { currentQuantity: { decrement: change.diff } },
-            });
-            await tx.stockMovement.create({
-              data: {
-                stockItemId: change.stockItemId,
-                userId: user?.id || existing.userId,
-                quantity: change.diff,
-                type: 'PRODUCTION_USAGE',
-                reason: `Production edit adjustment: +${change.diff} ${change.unitType} (${id})`,
-              },
-            });
-          } else if (change.diff < 0) {
-            // Less materials used -> restore difference
-            const restoreQty = Math.abs(change.diff);
-            await tx.stockItem.update({
-              where: { id: change.stockItemId },
-              data: { currentQuantity: { increment: restoreQty } },
-            });
-            await tx.stockMovement.create({
-              data: {
-                stockItemId: change.stockItemId,
-                userId: user?.id || existing.userId,
-                quantity: restoreQty,
-                type: 'IN',
-                reason: `Production edit adjustment: restored ${restoreQty} ${change.unitType} (${id})`,
-              },
-            });
-          }
-        }
-      }
 
       if (items && Array.isArray(items)) {
         await tx.productionItem.deleteMany({ where: { batchId: id } });
@@ -751,31 +647,13 @@ export class ProductionBatchesService {
       }
 
       await prisma.$transaction(async (tx) => {
-        for (const usage of batch.materialUsages) {
-          const qty = Number(usage.quantityUsed);
-          if (qty > 0) {
-            await tx.stockItem.update({
-              where: { id: usage.stockItemId },
-              data: { currentQuantity: { increment: qty } },
-            });
-            await tx.stockMovement.create({
-              data: {
-                stockItemId: usage.stockItemId,
-                userId: batch.userId,
-                quantity: qty,
-                type: 'IN',
-                reason: `Reverted production batch deletion (${id})`,
-              },
-            });
-          }
-        }
         await tx.productionBatch.delete({
           where: { id },
         });
       });
 
       ProductsService.clearCache();
-      return { data: { message: 'Production batch deleted and stock restored successfully' } };
+      return { data: { message: 'Production batch deleted successfully' } };
     } catch (e: any) {
       return { error: e.message || 'Failed to delete production batch', status: 400 };
     }

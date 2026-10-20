@@ -16,6 +16,7 @@ enum Role {
   CAKE_WORKER
   CASHIER
   SAMBUSA_WORKER
+  STOCK_KEEPER
   EMPLOYEE
 }
 
@@ -96,6 +97,12 @@ enum StockMovementType {
   PRODUCTION_USAGE
 }
 
+enum MovementStatus {
+  PENDING_CONFIRMATION
+  CONFIRMED
+  REJECTED
+}
+
 enum StockPurchaseLoanStatus {
   UNPAID
   PARTIAL
@@ -166,6 +173,7 @@ model User {
   updatedAt     DateTime  @updatedAt
   branch        Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
   stockMovements StockMovement[]
+  confirmedStockMovements StockMovement[] @relation("StockMovementConfirmedBy")
   stockPurchasePayments StockPurchasePayment[]
   productionBatches ProductionBatch[]
   productConversions ProductConversion[]
@@ -248,22 +256,28 @@ model StockItem {
 }
 
 model StockMovement {
-  id           String             @id @default(cuid())
-  stockItemId  String
-  stockItem    StockItem          @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
-  userId       String
-  user         User               @relation(fields: [userId], references: [id], onDelete: Restrict)
-  quantity     Decimal            @db.Decimal(12, 3)
-  unitPrice    Decimal?           @db.Decimal(12, 2)
-  totalValue   Decimal?           @db.Decimal(12, 2)
-  type         StockMovementType
-  reason       String?
-  purchaseLoan StockPurchaseLoan?
-  createdAt    DateTime           @default(now())
+  id            String             @id @default(cuid())
+  stockItemId   String
+  stockItem     StockItem          @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  quantity      Decimal            @db.Decimal(12, 3)
+  unitPrice     Decimal?           @db.Decimal(12, 2)
+  totalValue    Decimal?           @db.Decimal(12, 2)
+  type          StockMovementType
+  status        MovementStatus     @default(CONFIRMED)
+  reason        String?
+  receivedBy    String?            // Person/department who took or received the stock
+  confirmedAt   DateTime?
+  confirmedById String?
+  confirmedBy   User?              @relation("StockMovementConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+  purchaseLoan  StockPurchaseLoan?
+  createdAt     DateTime           @default(now())
 
   @@index([stockItemId])
   @@index([userId])
   @@index([createdAt])
+  @@index([status])
 }
 
 model StockPurchaseLoan {
