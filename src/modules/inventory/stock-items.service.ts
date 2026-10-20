@@ -1,4 +1,5 @@
 import { prisma } from '../../lib/prisma.js';
+import { buildPaginatedResponse } from '../../lib/pagination.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
 function decimalToNum(v: unknown) {
@@ -178,51 +179,83 @@ export class StockItemsService {
     return { data: result };
   }
 
-  async getItemHistory(id: string, limit: number = 100): ServiceResult {
+  async getItemHistory(
+    id: string,
+    page: number = 1,
+    limit: number = 20,
+    type?: string
+  ): ServiceResult {
     const stockItem = await prisma.stockItem.findUnique({
       where: { id },
       include: { branch: { select: { id: true, name: true } } },
     });
     if (!stockItem) return { error: 'Stock item not found', status: 404 };
 
-    const movements = await prisma.stockMovement.findMany({
-      where: { stockItemId: id },
-      include: { 
-        user: { select: { id: true, fullName: true, role: true } },
-        purchaseLoan: {
-          include: {
-            payments: {
-              include: { user: { select: { id: true, fullName: true } } },
-              orderBy: { createdAt: 'desc' },
+    const where: any = { stockItemId: id };
+    if (type && type !== 'ALL') {
+      where.type = type;
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [total, movements, allMovementsSummary] = await Promise.all([
+      prisma.stockMovement.count({ where }),
+      prisma.stockMovement.findMany({
+        where,
+        include: { 
+          user: { select: { id: true, fullName: true, role: true } },
+          purchaseLoan: {
+            include: {
+              payments: {
+                include: { user: { select: { id: true, fullName: true } } },
+                orderBy: { createdAt: 'desc' },
+              },
             },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.stockMovement.groupBy({
+        by: ['type'],
+        where: { stockItemId: id },
+        _sum: {
+          quantity: true,
+          totalValue: true,
+        },
+      }),
+    ]);
 
-    const totalIn = movements
-      .filter((m) => m.type === 'IN')
-      .reduce((s, m) => s + Number(m.quantity), 0);
-    const totalOut = movements
-      .filter((m) => m.type === 'OUT' || m.type === 'PRODUCTION_USAGE')
-      .reduce((s, m) => s + Number(m.quantity), 0);
+    let totalIn = 0;
+    let totalOut = 0;
+    let totalValueIn = 0;
+    let totalValueOut = 0;
 
-    const totalValueIn = movements
-      .filter((m) => m.type === 'IN')
-      .reduce((s, m) => s + Number(m.totalValue ?? (Number(m.quantity) * Number(m.unitPrice ?? stockItem.unitPrice ?? 0))), 0);
-
-    const totalValueOut = movements
-      .filter((m) => m.type === 'OUT' || m.type === 'PRODUCTION_USAGE')
-      .reduce((s, m) => s + Number(m.totalValue ?? (Number(m.quantity) * Number(m.unitPrice ?? stockItem.unitPrice ?? 0))), 0);
+    for (const group of allMovementsSummary) {
+      const q = Number(group._sum.quantity || 0);
+      const v = Number(group._sum.totalValue || 0);
+      if (group.type === 'IN') {
+        totalIn += q;
+        totalValueIn += v;
+      } else if (group.type === 'OUT' || group.type === 'PRODUCTION_USAGE') {
+        totalOut += q;
+        totalValueOut += v;
+      }
+    }
 
     const currentValuation = Number(stockItem.currentQuantity) * Number(stockItem.unitPrice ?? 0);
+    const paginatedMovements = buildPaginatedResponse(movements, total, page, limit);
 
     return {
       data: {
         stockItem,
-        movements,
+        movements: paginatedMovements.data,
+        pagination: paginatedMovements.pagination,
+        total,
+        page,
+        limit,
+        totalPages: paginatedMovements.totalPages,
         totalIn,
         totalOut,
         totalValueIn,

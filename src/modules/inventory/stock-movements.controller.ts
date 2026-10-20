@@ -1,13 +1,14 @@
 import { Router, Response } from 'express';
 import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/auth.js';
 import { StockMovementsService } from './stock-movements.service.js';
+import { parsePagination } from '../../lib/pagination.js';
 
 export const stockMovementsRouter = Router();
 const stockMovementsService = new StockMovementsService();
 
 stockMovementsRouter.use(authMiddleware);
 
-// GET /api/stock-movements?branchId=...&stockItemId=...&type=IN&status=PENDING_CONFIRMATION&from=YYYY-MM-DD&to=YYYY-MM-DD&limit=50
+// GET /api/stock-movements?branchId=...&stockItemId=...&type=IN&status=PENDING_CONFIRMATION&from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&limit=20&search=...
 stockMovementsRouter.get('/', async (req: AuthRequest, res: Response) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const stockItemId = req.query.stockItemId as string | undefined;
@@ -15,8 +16,20 @@ stockMovementsRouter.get('/', async (req: AuthRequest, res: Response) => {
   const status = req.query.status as string | undefined;
   const from = req.query.from as string | undefined;
   const to = req.query.to as string | undefined;
-  const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
-  const result = await stockMovementsService.getStockMovements(branchId, stockItemId, limit, type, from, to, status);
+  const search = req.query.search as string | undefined;
+  const { page, limit } = parsePagination(req.query, 20, 100);
+
+  const result = await stockMovementsService.getStockMovements(
+    branchId,
+    stockItemId,
+    page,
+    limit,
+    type,
+    from,
+    to,
+    status,
+    search
+  );
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -37,7 +50,10 @@ stockMovementsRouter.get('/summary', async (req: AuthRequest, res: Response) => 
 stockMovementsRouter.get('/loans/list', async (req: AuthRequest, res: Response) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const status = req.query.status as string | undefined;
-  const result = await stockMovementsService.getStockPurchaseLoans(branchId, status);
+  const search = req.query.search as string | undefined;
+  const { page, limit } = parsePagination(req.query, 20, 100);
+
+  const result = await stockMovementsService.getStockPurchaseLoans(branchId, status, page, limit, search);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

@@ -1,4 +1,5 @@
 import { prisma } from '../../lib/prisma.js';
+import { buildPaginatedResponse, parsePagination } from '../../lib/pagination.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
 function decimalToNum(v: unknown): number {
@@ -12,11 +13,13 @@ export class StockMovementsService {
   async getStockMovements(
     branchId?: string | null,
     stockItemId?: string,
-    limit: number = 50,
+    page: number = 1,
+    limit: number = 20,
     type?: string,
     from?: string,
     to?: string,
-    status?: string
+    status?: string,
+    search?: string
   ): ServiceResult {
     const stockWhere = branchId ? { branchId } : {};
     const where: any = {};
@@ -33,26 +36,42 @@ export class StockMovementsService {
         where.createdAt.lte = toDate;
       }
     }
+    if (search && search.trim()) {
+      const q = search.trim();
+      where.OR = [
+        { stockItem: { name: { contains: q, mode: 'insensitive' } } },
+        { reason: { contains: q, mode: 'insensitive' } },
+        { receivedBy: { contains: q, mode: 'insensitive' } },
+        { user: { fullName: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
 
-    const list = await prisma.stockMovement.findMany({
-      where,
-      include: {
-        stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true, unitPrice: true } },
-        user: { select: { id: true, fullName: true, role: true } },
-        confirmedBy: { select: { id: true, fullName: true, role: true } },
-        purchaseLoan: {
-          include: {
-            payments: {
-              include: { user: { select: { id: true, fullName: true } } },
-              orderBy: { createdAt: 'desc' },
+    const skip = (page - 1) * limit;
+
+    const [total, list] = await Promise.all([
+      prisma.stockMovement.count({ where }),
+      prisma.stockMovement.findMany({
+        where,
+        include: {
+          stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true, unitPrice: true } },
+          user: { select: { id: true, fullName: true, role: true } },
+          confirmedBy: { select: { id: true, fullName: true, role: true } },
+          purchaseLoan: {
+            include: {
+              payments: {
+                include: { user: { select: { id: true, fullName: true } } },
+                orderBy: { createdAt: 'desc' },
+              },
             },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
-    return { data: list };
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    return { data: buildPaginatedResponse(list, total, page, limit) };
   }
 
   async getStockMovementById(id: string): ServiceResult {
@@ -359,28 +378,74 @@ export class StockMovementsService {
     };
   }
 
-  async getStockPurchaseLoans(branchId?: string | null, status?: string): ServiceResult {
+  async getStockPurchaseLoans(
+    branchId?: string | null,
+    status?: string,
+    page: number = 1,
+    limit: number = 20,
+    search?: string
+  ): ServiceResult {
     const where: any = {};
     if (branchId) where.branchId = branchId;
     if (status && status !== 'ALL') where.status = status;
+    if (search && search.trim()) {
+      const q = search.trim();
+      where.OR = [
+        { supplierName: { contains: q, mode: 'insensitive' } },
+        { stockItem: { name: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
 
-    const loans = await prisma.stockPurchaseLoan.findMany({
-      where,
-      include: {
-        stockMovement: {
-          include: {
-            stockItem: { select: { id: true, name: true, unitType: true } },
-            user: { select: { id: true, fullName: true } },
+    const skip = (page - 1) * limit;
+
+    const [total, loans, statsAggregate, activeLoansCount] = await Promise.all([
+      prisma.stockPurchaseLoan.count({ where }),
+      prisma.stockPurchaseLoan.findMany({
+        where,
+        include: {
+          stockMovement: {
+            include: {
+              stockItem: { select: { id: true, name: true, unitType: true } },
+              user: { select: { id: true, fullName: true } },
+            },
+          },
+          payments: {
+            include: { user: { select: { id: true, fullName: true } } },
+            orderBy: { createdAt: 'desc' },
           },
         },
-        payments: {
-          include: { user: { select: { id: true, fullName: true } } },
-          orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.stockPurchaseLoan.aggregate({
+        where: branchId ? { branchId } : {},
+        _sum: {
+          totalAmount: true,
+          paidAmount: true,
+          remainingBalance: true,
+        },
+      }),
+      prisma.stockPurchaseLoan.count({
+        where: {
+          ...(branchId ? { branchId } : {}),
+          status: { not: 'PAID' },
+        },
+      }),
+    ]);
+
+    const paginated = buildPaginatedResponse(loans, total, page, limit);
+    return {
+      data: {
+        ...paginated,
+        stats: {
+          totalCredit: Number(statsAggregate._sum.totalAmount || 0),
+          totalPaid: Number(statsAggregate._sum.paidAmount || 0),
+          totalRemaining: Number(statsAggregate._sum.remainingBalance || 0),
+          activeLoansCount,
         },
       },
-      orderBy: { createdAt: 'desc' },
-    });
-    return { data: loans };
+    };
   }
 
   async recordLoanPayment(loanId: string, userId: string, amountToPay: number, note?: string): ServiceResult {
