@@ -34,3 +34,6 @@ coverage/
 uploads/
 *.zip
 
+# Scratch test files
+scratch_test*.ts
+
