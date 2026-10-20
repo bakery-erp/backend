@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/auth.js';
+import { getPaginationParams } from '../../lib/pagination.js';
 import { PenaltiesService } from './penalties.service.js';
 
 export const penaltiesRouter = Router();
@@ -18,7 +19,11 @@ penaltiesRouter.get('/my', async (req: AuthRequest, res: Response) => {
 penaltiesRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
   const userId = req.query.userId as string | undefined;
   const isDeducted = req.query.isDeducted as string | undefined;
-  const result = await penaltiesService.getPenalties(userId, isDeducted);
+  const branchId = req.query.branchId as string | undefined;
+  const search = req.query.search as string | undefined;
+  const { page, limit } = getPaginationParams(req.query);
+
+  const result = await penaltiesService.getPenalties(userId, isDeducted, branchId, page, limit, search);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

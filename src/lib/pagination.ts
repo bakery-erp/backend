@@ -49,6 +49,17 @@ export function parsePagination(
 }
 
 /**
+ * Parses optional page and limit from query params without forcing page=1 when unpaginated.
+ */
+export function getPaginationParams(query: Record<string, unknown>, defaultLimit: number = 20) {
+  if (!query.page && !query.limit && !query.pageSize) {
+    return { page: undefined, limit: undefined };
+  }
+  const p = parsePagination(query, defaultLimit);
+  return { page: p.page, limit: p.limit };
+}
+
+/**
  * Wraps list data and total into standard pagination response.
  */
 export function buildPaginatedResponse<T>(

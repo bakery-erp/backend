@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma.js';
 import { EthDateTime } from 'ethiopian-calendar-date-converter';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
+import { buildPaginatedResponse } from '../../lib/pagination.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -22,12 +23,34 @@ export class PayrollService {
     return { data: list };
   }
 
-  async getPayroll(userId?: string, month?: string, year?: string, branchId?: string): ServiceResult {
+  async getPayroll(
+    userId?: string,
+    month?: string,
+    year?: string,
+    branchId?: string,
+    page?: number,
+    limit?: number
+  ): ServiceResult {
     const where: any = {};
     if (userId) where.userId = userId;
     if (month) where.month = parseInt(month, 10);
     if (year) where.year = parseInt(year, 10);
     if (branchId) where.user = { branchId };
+
+    if (page != null && limit != null) {
+      const [total, list] = await Promise.all([
+        prisma.payrollRecord.count({ where }),
+        prisma.payrollRecord.findMany({
+          where,
+          include: { user: { select: { id: true, fullName: true, phone: true, role: true } } },
+          orderBy: [{ year: 'desc' }, { month: 'desc' }],
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+      ]);
+      return { data: buildPaginatedResponse(list, total, page, limit) };
+    }
+
     const list = await prisma.payrollRecord.findMany({
       where,
       include: { user: { select: { id: true, fullName: true, phone: true, role: true } } },

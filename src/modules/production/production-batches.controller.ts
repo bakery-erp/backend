@@ -44,6 +44,8 @@ productionBatchesRouter.get('/daily-product-history/all', requireRole('OWNER', '
   const supplierId = req.query.supplierId as string | undefined;
   const productId = req.query.productId as string | undefined;
   const search = req.query.search as string | undefined;
+  const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
 
   const result = await productionBatchesService.getDailyProductHistory({
     branchId,
@@ -53,6 +55,8 @@ productionBatchesRouter.get('/daily-product-history/all', requireRole('OWNER', '
     supplierId,
     productId,
     search,
+    page,
+    limit,
   });
 
   if (result.error) {

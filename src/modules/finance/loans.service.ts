@@ -2,6 +2,7 @@ import { prisma } from '../../lib/prisma.js';
 import { businessDateFromYmdString } from '../../lib/businessDate.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 import { DailySessionsService } from '../sessions/daily-sessions.service.js';
+import { buildPaginatedResponse } from '../../lib/pagination.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -33,7 +34,17 @@ export class LoansService {
     return { data: list };
   }
 
-  async getLoans(branchId?: string | null, type?: string, status?: string, from?: string, to?: string, userId?: string): ServiceResult {
+  async getLoans(
+    branchId?: string | null,
+    type?: string,
+    status?: string,
+    from?: string,
+    to?: string,
+    userId?: string,
+    page?: number,
+    limit?: number,
+    search?: string
+  ): ServiceResult {
     const where: any = {};
     if (branchId) where.branchId = branchId;
     if (userId) where.userId = userId;
@@ -50,11 +61,83 @@ export class LoansService {
       if (from) where.date.gte = businessDateFromYmdString(from);
       if (to) where.date.lte = businessDateFromYmdString(to);
     }
-    const list = await prisma.loan.findMany({
+    if (search && search.trim()) {
+      const q = search.trim();
+      where.OR = [
+        { user: { fullName: { contains: q, mode: 'insensitive' } } },
+        { user: { phone: { contains: q, mode: 'insensitive' } } },
+        { entityId: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    const isPaginated = page != null && limit != null;
+    const findArgs: any = {
       where,
-      include: { user: { select: { id: true, fullName: true, phone: true, role: true } }, payments: { orderBy: { date: 'desc' } } },
+      include: {
+        user: { select: { id: true, fullName: true, phone: true, role: true } },
+        branch: { select: { id: true, name: true } },
+        payments: { orderBy: { date: 'desc' } },
+      },
       orderBy: { createdAt: 'desc' },
-    });
+    };
+
+    if (page != null && limit != null) {
+      findArgs.skip = (page - 1) * limit;
+      findArgs.take = limit;
+
+      const [total, allLoansForStats, list] = await Promise.all([
+        prisma.loan.count({ where }),
+        prisma.loan.findMany({
+          where,
+          select: {
+            totalAmount: true,
+            remainingBalance: true,
+            status: true,
+            payments: { select: { amountPaid: true } },
+          },
+        }),
+        prisma.loan.findMany(findArgs),
+      ]);
+
+      let totalBorrowed = 0;
+      let totalRemaining = 0;
+      let totalRepaid = 0;
+      let openCount = 0;
+      let paidCount = 0;
+
+      for (const l of allLoansForStats) {
+        const orig = decimalToNum(l.totalAmount);
+        const rem = decimalToNum(l.remainingBalance);
+        const paid = l.payments?.reduce((s, p) => s + decimalToNum(p.amountPaid), 0) || (orig - rem);
+
+        totalBorrowed += orig;
+        totalRemaining += rem;
+        totalRepaid += paid;
+
+        if (l.status === 'OPEN' && rem > 0) {
+          openCount++;
+        } else {
+          paidCount++;
+        }
+      }
+
+      const stats = {
+        totalBorrowed,
+        totalRepaid,
+        totalRemaining,
+        openCount,
+        paidCount,
+      };
+
+      return {
+        data: {
+          ...buildPaginatedResponse(list, total, page, limit),
+          stats,
+        },
+      };
+    }
+
+    const list = await prisma.loan.findMany(findArgs);
     return { data: list };
   }
 

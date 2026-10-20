@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma.js';
 import { Prisma } from '@prisma/client';
 import { businessDateUtcNoon, dateToYmdUtc, parseYmd, utcDayRangeInclusive } from '../../lib/businessDate.js';
+import { parsePagination, buildPaginatedResponse } from '../../lib/pagination.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
 function decimalToNum(v: unknown): number {
@@ -55,24 +56,44 @@ export function extractCreditItemsFromEntityId(
 }
 
 export class DailySessionsService {
-  async getDailySessions(branchId?: string | null, from?: string, to?: string, status?: string): ServiceResult {
-    if (!branchId) {
-      return { error: 'branchId required', status: 400 };
-    }
-    const where: any = { branchId };
+  async getDailySessions(params: {
+    branchId?: string | null;
+    from?: string;
+    to?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+  }): ServiceResult {
+    const { branchId, from, to, status, page, limit } = params;
+    const where: any = {};
+    if (branchId) where.branchId = branchId;
     if (status) where.status = status;
     if (from || to) {
       where.date = {};
       if (from) where.date.gte = new Date(from);
       if (to) where.date.lte = new Date(to);
     }
-    const list = await prisma.dailySession.findMany({
-      where,
-      include: {
-        _count: { select: { sales: true, leftoverRecords: true } },
-      },
-      orderBy: { date: 'desc' },
-    });
+
+    const isPaginated = page != null && limit != null;
+    const skip = isPaginated ? (page - 1) * limit : undefined;
+    const take = isPaginated ? limit : undefined;
+
+    const [total, list] = await Promise.all([
+      isPaginated ? prisma.dailySession.count({ where }) : Promise.resolve(0),
+      prisma.dailySession.findMany({
+        where,
+        include: {
+          _count: { select: { sales: true, leftoverRecords: true } },
+        },
+        orderBy: { date: 'desc' },
+        ...(isPaginated ? { skip, take } : {}),
+      }),
+    ]);
+
+    if (isPaginated) {
+      return { data: buildPaginatedResponse(list, total, page, limit) };
+    }
+
     return { data: list };
   }
 

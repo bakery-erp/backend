@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/auth.js';
 import { CustomersService } from './customers.service.js';
+import { parsePagination } from '../../lib/pagination.js';
 
 export const customersRouter = Router();
 const customersService = new CustomersService();
@@ -16,6 +17,7 @@ customersRouter.get('/credits', async (req: AuthRequest, res: Response) => {
   const search = req.query.search as string | undefined;
   const from = req.query.from as string | undefined;
   const to = req.query.to as string | undefined;
+  const pagination = req.query.page ? parsePagination(req.query as Record<string, unknown>, 15) : undefined;
 
   const result = await customersService.getCredits({
     branchId: req.user?.role === 'OWNER' ? (req.query.branchId as string) : branchId,
@@ -24,6 +26,8 @@ customersRouter.get('/credits', async (req: AuthRequest, res: Response) => {
     search,
     from,
     to,
+    page: pagination?.page,
+    limit: pagination?.limit,
   });
 
   if (result.error) {
@@ -73,11 +77,14 @@ customersRouter.get('/', async (req: AuthRequest, res: Response) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const search = req.query.search as string | undefined;
   const companyId = req.query.companyId as string | undefined;
+  const pagination = req.query.page ? parsePagination(req.query as Record<string, unknown>, 15) : undefined;
 
   const result = await customersService.getCustomers({
     branchId: req.user?.role === 'OWNER' ? (req.query.branchId as string) : branchId,
     companyId,
     search,
+    page: pagination?.page,
+    limit: pagination?.limit,
   });
 
   if (result.error) {
