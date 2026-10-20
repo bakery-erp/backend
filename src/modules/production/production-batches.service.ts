@@ -19,7 +19,10 @@ export class ProductionBatchesService {
     role?: string,
     userId?: string,
     seenFilter?: string,
-    callerRole?: string
+    callerRole?: string,
+    callerUserId?: string,
+    page?: number,
+    limit?: number
   ): ServiceResult {
     if (!branchId) {
       return { error: 'branchId required', status: 400 };
@@ -29,6 +32,20 @@ export class ProductionBatchesService {
     if (status) where.status = status;
     if (shift) where.shift = shift;
     if (userId) where.userId = userId;
+
+    const isGlobalAdmin = callerRole === 'ADMIN' || callerRole === 'OWNER';
+    if (!isGlobalAdmin && callerUserId) {
+      where.userId = callerUserId;
+      // If no explicit date requested by worker, default to last 2 days (Yesterday and Today)
+      if (!date) {
+        const ethNow = new Date(Date.now() + 3 * 3600 * 1000);
+        const yesterdayYmd = new Date(ethNow.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+        const yp = parseYmd(yesterdayYmd);
+        if (yp) {
+          where.date = { gte: businessDateUtcNoon(yp.y, yp.mo, yp.day) };
+        }
+      }
+    }
 
     if (date) {
       const p = parseYmd(date);
@@ -55,15 +72,36 @@ export class ProductionBatchesService {
       }
     }
 
-    const list = await prisma.productionBatch.findMany({
-      where,
-      include: {
-        user: { select: { id: true, fullName: true, role: true } },
-        items: { include: { product: { select: { id: true, name: true, unitType: true, basePrice: true } } } },
-        materialUsages: { include: { stockItem: { select: { id: true, name: true, unitType: true } } } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const pageNum = page ? Math.max(1, Number(page)) : 1;
+    const limitNum = limit ? Math.max(1, Number(limit)) : undefined;
+    const skip = limitNum ? (pageNum - 1) * limitNum : undefined;
+
+    const [total, list] = await Promise.all([
+      prisma.productionBatch.count({ where }),
+      prisma.productionBatch.findMany({
+        where,
+        include: {
+          user: { select: { id: true, fullName: true, role: true } },
+          items: { include: { product: { select: { id: true, name: true, unitType: true, basePrice: true } } } },
+          materialUsages: { include: { stockItem: { select: { id: true, name: true, unitType: true } } } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limitNum,
+      }),
+    ]);
+
+    if (page || limit) {
+      return {
+        data: {
+          batches: list,
+          total,
+          page: pageNum,
+          limit: limitNum || total,
+          hasMore: limitNum ? (skip! + list.length) < total : false,
+        },
+      };
+    }
     return { data: list };
   }
 
@@ -435,6 +473,21 @@ export class ProductionBatchesService {
         error: 'You do not have permission to edit this production batch.',
         status: 403,
       };
+    }
+
+    // Workers can only edit today's batches
+    if (!isAdminOrOwner) {
+      const ethNow = new Date(Date.now() + 3 * 3600 * 1000);
+      const todayYmd = ethNow.toISOString().slice(0, 10);
+      const batchDateYmd = existing.date
+        ? existing.date.toISOString().slice(0, 10)
+        : existing.createdAt.toISOString().slice(0, 10);
+      if (batchDateYmd !== todayYmd) {
+        return {
+          error: 'Workers can only edit production batches created for today.',
+          status: 403,
+        };
+      }
     }
 
     // Producer roles cannot directly change status to COMPLETED or REJECTED
