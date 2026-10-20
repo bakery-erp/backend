@@ -94,6 +94,9 @@ stockMovementsRouter.get('/:id', async (req, res: Response) => {
 
 // POST /api/stock-movements — manual IN / OUT / ADJUSTMENT entry
 stockMovementsRouter.post('/', requireRole('OWNER', 'ADMIN', 'STOCK_KEEPER'), async (req: AuthRequest, res: Response) => {
+  if (req.user?.role === 'STOCK_KEEPER' && req.body?.type === 'IN') {
+    return res.status(403).json({ error: 'Stock Keepers are not permitted to add stock' });
+  }
   const result = await stockMovementsService.createStockMovement(req.body, req.user!.id);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });

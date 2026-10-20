@@ -45,6 +45,9 @@ stockMovementsRouter.post('/', requireRole('OWNER', 'ADMIN', 'STOCK_KEEPER', 'BA
     type: string;
     reason?: string;
   };
+  if (req.user?.role === 'STOCK_KEEPER' && type === 'IN') {
+    return res.status(403).json({ error: 'Stock Keepers are not permitted to add stock' });
+  }
   if (!stockItemId || quantity == null || !type) {
     return res.status(400).json({ error: 'stockItemId, quantity, type (IN|OUT|ADJUSTMENT|PRODUCTION_USAGE) required' });
   }
