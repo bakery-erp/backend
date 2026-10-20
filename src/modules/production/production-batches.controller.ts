@@ -36,7 +36,7 @@ productionBatchesRouter.get('/', async (req: AuthRequest, res: Response) => {
   res.json(result.data);
 });
 
-productionBatchesRouter.get('/daily-product-history/all', async (req: AuthRequest, res: Response) => {
+productionBatchesRouter.get('/daily-product-history/all', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const startDate = req.query.startDate as string | undefined;
   const endDate = req.query.endDate as string | undefined;
