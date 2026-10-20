@@ -29,11 +29,26 @@ function toDecimal(v: unknown): number | null {
 }
 
 export class UsersService {
-  async getUsers(branchId?: string): ServiceResult {
+  async getUsers(branchId?: string, isPrivileged: boolean = true): ServiceResult {
     const where = branchId ? { branchId } : {};
     const list = await prisma.user.findMany({
       where,
-      select: { ...userSelect, branch: { select: { name: true } } },
+      select: {
+        id: true,
+        fullName: true,
+        phone: true,
+        role: true,
+        branchId: true,
+        isActive: true,
+        createdAt: true,
+        salary: isPrivileged,
+        startDate: true,
+        lastPaidDate: true,
+        shift: true,
+        avatarUrl: true,
+        filesUrl: isPrivileged,
+        branch: { select: { name: true } },
+      },
       orderBy: { fullName: 'asc' },
     });
     return { data: list };

@@ -99,12 +99,13 @@ usersRouter.post('/me/profile-picture', handleProfilePictureUpload, async (req: 
   }
 });
 
-usersRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
+usersRouter.get('/', requireRole('OWNER', 'ADMIN', 'STOCK_KEEPER'), async (req: AuthRequest, res: Response) => {
   let branchId = req.query.branchId as string | undefined;
   if (req.user?.role !== 'OWNER') {
     branchId = req.user?.branchId || undefined;
   }
-  const result = await usersService.getUsers(branchId);
+  const isPrivileged = req.user?.role === 'OWNER' || req.user?.role === 'ADMIN';
+  const result = await usersService.getUsers(branchId, isPrivileged);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
