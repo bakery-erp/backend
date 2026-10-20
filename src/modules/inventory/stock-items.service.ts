@@ -260,7 +260,8 @@ export class StockItemsService {
     quantityToAdd: number, 
     reason?: string,
     loanInfo?: { isLoan?: boolean; paidAmount?: number; supplierName?: string },
-    newUnitPrice?: number | string
+    newUnitPrice?: number | string,
+    autoConfirm: boolean = false
   ): ServiceResult {
     const qty = Number(quantityToAdd);
     if (isNaN(qty) || qty <= 0) {
@@ -281,15 +282,18 @@ export class StockItemsService {
     const totalValue = qty * price;
 
     const result = await prisma.$transaction(async (tx) => {
-      const updateData: any = { currentQuantity: { increment: qty } };
-      if (parsedPrice !== undefined && !isNaN(parsedPrice) && parsedPrice >= 0) {
-        updateData.unitPrice = parsedPrice;
-      }
+      let updatedItem = item;
+      if (autoConfirm) {
+        const updateData: any = { currentQuantity: { increment: qty } };
+        if (parsedPrice !== undefined && !isNaN(parsedPrice) && parsedPrice >= 0) {
+          updateData.unitPrice = parsedPrice;
+        }
 
-      const updatedItem = await tx.stockItem.update({
-        where: { id },
-        data: updateData,
-      });
+        updatedItem = await tx.stockItem.update({
+          where: { id },
+          data: updateData,
+        });
+      }
 
       const movement = await tx.stockMovement.create({
         data: {
@@ -299,7 +303,9 @@ export class StockItemsService {
           unitPrice: price,
           totalValue,
           type: 'IN',
-          reason: reason?.trim() || 'Manual stock addition by Admin/Owner',
+          status: autoConfirm ? 'CONFIRMED' : 'PENDING_CONFIRMATION',
+          reason: reason?.trim() || (autoConfirm ? 'Manual stock addition' : 'Added by Admin/Owner (Awaiting Stock Keeper approval)'),
+          ...(autoConfirm ? { confirmedAt: new Date(), confirmedById: userId } : {}),
         },
       });
 
@@ -328,7 +334,7 @@ export class StockItemsService {
     return { data: result };
   }
 
-  async reduceStockItem(id: string, userId: string, quantityToReduce: number, reason?: string): ServiceResult {
+  async reduceStockItem(id: string, userId: string, quantityToReduce: number, reason?: string, receivedBy?: string): ServiceResult {
     const qty = Number(quantityToReduce);
     if (isNaN(qty) || qty <= 0) {
       return { error: 'Valid positive quantity required for reduction', status: 400 };
@@ -363,7 +369,9 @@ export class StockItemsService {
           unitPrice: price,
           totalValue: qty * price,
           type: 'OUT',
-          reason: reason?.trim() || 'Manual stock reduction by Admin/Owner',
+          status: 'CONFIRMED',
+          receivedBy: receivedBy?.trim() || null,
+          reason: reason?.trim() || 'Manual stock reduction / material issuance',
         },
       });
 

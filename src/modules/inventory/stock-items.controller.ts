@@ -46,7 +46,7 @@ stockItemsRouter.get('/:id', async (req, res: Response) => {
   res.json(result.data);
 });
 
-stockItemsRouter.post('/', requireRole('OWNER'), async (req: AuthRequest, res: Response) => {
+stockItemsRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
   const result = await stockItemsService.createStockItem(req.body, req.user!.id, req.user?.branchId);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -55,17 +55,17 @@ stockItemsRouter.post('/', requireRole('OWNER'), async (req: AuthRequest, res: R
 });
 
 stockItemsRouter.post('/:id/add', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
-  const { quantity, reason, loanInfo, unitPrice } = req.body;
-  const result = await stockItemsService.addStockItem(req.params.id, req.user!.id, quantity, reason, loanInfo, unitPrice);
+  const { quantity, reason, loanInfo, unitPrice, autoConfirm } = req.body;
+  const result = await stockItemsService.addStockItem(req.params.id, req.user!.id, quantity, reason, loanInfo, unitPrice, autoConfirm);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
   res.json(result.data);
 });
 
-stockItemsRouter.post('/:id/reduce', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
-  const { quantity, reason } = req.body;
-  const result = await stockItemsService.reduceStockItem(req.params.id, req.user!.id, quantity, reason);
+stockItemsRouter.post('/:id/reduce', requireRole('OWNER', 'ADMIN', 'STOCK_KEEPER'), async (req: AuthRequest, res: Response) => {
+  const { quantity, reason, receivedBy } = req.body;
+  const result = await stockItemsService.reduceStockItem(req.params.id, req.user!.id, quantity, reason, receivedBy);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

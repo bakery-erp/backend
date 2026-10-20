@@ -7,15 +7,16 @@ const stockMovementsService = new StockMovementsService();
 
 stockMovementsRouter.use(authMiddleware);
 
-// GET /api/stock-movements?branchId=...&stockItemId=...&type=IN&from=YYYY-MM-DD&to=YYYY-MM-DD&limit=50
+// GET /api/stock-movements?branchId=...&stockItemId=...&type=IN&status=PENDING_CONFIRMATION&from=YYYY-MM-DD&to=YYYY-MM-DD&limit=50
 stockMovementsRouter.get('/', async (req: AuthRequest, res: Response) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const stockItemId = req.query.stockItemId as string | undefined;
   const type = req.query.type as string | undefined;
+  const status = req.query.status as string | undefined;
   const from = req.query.from as string | undefined;
   const to = req.query.to as string | undefined;
   const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
-  const result = await stockMovementsService.getStockMovements(branchId, stockItemId, limit, type, from, to);
+  const result = await stockMovementsService.getStockMovements(branchId, stockItemId, limit, type, from, to, status);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -63,6 +64,25 @@ stockMovementsRouter.get('/:stockItemId/history', async (req: AuthRequest, res: 
   res.json(result.data);
 });
 
+// POST /api/stock-movements/:id/confirm — approve pending inward stock intake
+stockMovementsRouter.post('/:id/confirm', requireRole('OWNER', 'ADMIN', 'STOCK_KEEPER'), async (req: AuthRequest, res: Response) => {
+  const result = await stockMovementsService.confirmStockMovement(req.params.id, req.user!.id);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
+// POST /api/stock-movements/:id/reject — reject pending inward stock intake
+stockMovementsRouter.post('/:id/reject', requireRole('OWNER', 'ADMIN', 'STOCK_KEEPER'), async (req: AuthRequest, res: Response) => {
+  const { reason } = req.body;
+  const result = await stockMovementsService.rejectStockMovement(req.params.id, req.user!.id, reason);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
 // GET /api/stock-movements/:id
 stockMovementsRouter.get('/:id', async (req, res: Response) => {
   const result = await stockMovementsService.getStockMovementById(req.params.id);
@@ -72,8 +92,8 @@ stockMovementsRouter.get('/:id', async (req, res: Response) => {
   res.json(result.data);
 });
 
-// POST /api/stock-movements — manual IN / OUT / ADJUSTMENT entry by admin/owner
-stockMovementsRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
+// POST /api/stock-movements — manual IN / OUT / ADJUSTMENT entry
+stockMovementsRouter.post('/', requireRole('OWNER', 'ADMIN', 'STOCK_KEEPER'), async (req: AuthRequest, res: Response) => {
   const result = await stockMovementsService.createStockMovement(req.body, req.user!.id);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
