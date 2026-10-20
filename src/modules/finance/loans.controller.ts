@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/auth.js';
+import { getPaginationParams } from '../../lib/pagination.js';
 import { LoansService } from './loans.service.js';
 
 export const loansRouter = Router();
@@ -25,7 +26,10 @@ loansRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthR
   const from = req.query.from as string | undefined;
   const to = req.query.to as string | undefined;
   const userId = req.query.userId as string | undefined;
-  const result = await loansService.getLoans(branchId, type, status, from, to, userId);
+  const search = req.query.search as string | undefined;
+  const { page, limit } = getPaginationParams(req.query);
+
+  const result = await loansService.getLoans(branchId, type, status, from, to, userId, page, limit, search);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

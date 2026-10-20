@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/auth.js';
+import { getPaginationParams } from '../../lib/pagination.js';
 import { PayrollService } from './payroll.service.js';
 
 export const payrollRouter = Router();
@@ -20,7 +21,8 @@ payrollRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req, res: Response)
   const month = req.query.month as string | undefined;
   const year = req.query.year as string | undefined;
   const branchId = req.query.branchId as string | undefined;
-  const result = await payrollService.getPayroll(userId, month, year, branchId);
+  const { page, limit } = getPaginationParams(req.query);
+  const result = await payrollService.getPayroll(userId, month, year, branchId, page, limit);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

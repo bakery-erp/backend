@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
+import { buildPaginatedResponse } from '../../lib/pagination.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -21,10 +22,41 @@ export class PenaltiesService {
     return { data: list };
   }
 
-  async getPenalties(userId?: string, isDeducted?: string): ServiceResult {
+  async getPenalties(
+    userId?: string,
+    isDeducted?: string,
+    branchId?: string,
+    page?: number,
+    limit?: number,
+    search?: string
+  ): ServiceResult {
     const where: any = {};
     if (userId) where.userId = userId;
     if (isDeducted !== undefined) where.isDeducted = isDeducted === 'true';
+    if (branchId) where.user = { branchId };
+    if (search && search.trim()) {
+      const q = search.trim();
+      where.OR = [
+        { reason: { contains: q, mode: 'insensitive' } },
+        { user: { fullName: { contains: q, mode: 'insensitive' } } },
+        { user: { phone: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
+
+    if (page != null && limit != null) {
+      const [total, list] = await Promise.all([
+        prisma.penalty.count({ where }),
+        prisma.penalty.findMany({
+          where,
+          include: { user: { select: { id: true, fullName: true, phone: true, role: true } } },
+          orderBy: { date: 'desc' },
+          skip: (page - 1) * limit,
+          take: limit,
+        }),
+      ]);
+      return { data: buildPaginatedResponse(list, total, page, limit) };
+    }
+
     const list = await prisma.penalty.findMany({
       where,
       include: { user: { select: { id: true, fullName: true, phone: true, role: true } } },
