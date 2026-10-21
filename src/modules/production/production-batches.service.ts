@@ -1,5 +1,5 @@
 import { prisma } from '../../lib/prisma.js';
-import { businessDateFromYmdString, businessDateUtcNoon, parseYmd } from '../../lib/businessDate.js';
+import { businessDateFromYmdString, businessDateUtcNoon, parseYmd, utcDayRangeInclusive } from '../../lib/businessDate.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 import { ProductsService } from '../catalog/products.service.js';
 
@@ -40,9 +40,9 @@ export class ProductionBatchesService {
       if (!date) {
         const ethNow = new Date(Date.now() + 3 * 3600 * 1000);
         const yesterdayYmd = new Date(ethNow.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
-        const yp = parseYmd(yesterdayYmd);
-        if (yp) {
-          where.date = { gte: businessDateUtcNoon(yp.y, yp.mo, yp.day) };
+        const range = utcDayRangeInclusive(yesterdayYmd);
+        if (range) {
+          where.date = { gte: range.start };
         }
       }
     }
@@ -125,10 +125,9 @@ export class ProductionBatchesService {
         return { error: 'Access denied: You can only view your own production batches.', status: 403 };
       }
       const ethNow = new Date(Date.now() + 3 * 3600 * 1000);
-      const yesterdayBusinessDate = businessDateFromYmdString(
-        new Date(ethNow.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10)
-      );
-      if (yesterdayBusinessDate && batch.date < yesterdayBusinessDate) {
+      const yesterdayYmd = new Date(ethNow.getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const batchYmd = (batch.date || batch.createdAt).toISOString().slice(0, 10);
+      if (batchYmd < yesterdayYmd) {
         return { error: 'Access denied: Workers can only view batches from today or yesterday.', status: 403 };
       }
     }
