@@ -64,6 +64,14 @@ customersRouter.post('/credits/:id/pay', async (req, res: Response) => {
   res.json(result.data);
 });
 
+customersRouter.patch('/credits/:id', async (req: AuthRequest, res: Response) => {
+  const result = await customersService.updateCredit(req.params.id, req.body);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
 customersRouter.delete('/credits/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
   const result = await customersService.deleteCredit(req.params.id);
   if (result.error) {

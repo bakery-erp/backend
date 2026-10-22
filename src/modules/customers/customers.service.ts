@@ -511,6 +511,80 @@ export class CustomersService {
     return { data: { credit: updated, payment } };
   }
 
+  async updateCredit(
+    id: string,
+    body: {
+      customerId?: string;
+      amount?: number | string;
+      date?: string;
+      dueDate?: string | null;
+      description?: string | null;
+    }
+  ): Promise<ServiceResult> {
+    const credit = await prisma.customerCredit.findUnique({
+      where: { id },
+      include: { payments: true },
+    });
+    if (!credit) return { error: 'Credit transaction not found', status: 404 };
+
+    const totalPaid = (credit.payments || []).reduce((sum, p) => sum + decimalToNum(p.amount), 0);
+
+    let newAmount = decimalToNum(credit.amount);
+    if (body.amount !== undefined) {
+      newAmount = decimalToNum(body.amount);
+      if (newAmount <= 0) {
+        return { error: 'Credit amount must be greater than zero', status: 400 };
+      }
+      if (newAmount < totalPaid) {
+        return {
+          error: `Credit amount (${newAmount.toFixed(2)} ETB) cannot be less than already recorded repayments (${totalPaid.toFixed(2)} ETB)`,
+          status: 400,
+        };
+      }
+    }
+
+    if (body.customerId) {
+      const customerExists = await prisma.customer.findUnique({ where: { id: body.customerId } });
+      if (!customerExists) {
+        return { error: 'Selected customer not found', status: 404 };
+      }
+    }
+
+    const newRemaining = Math.max(0, newAmount - totalPaid);
+    const newStatus = newRemaining <= 0.001 ? 'PAID' : 'OPEN';
+
+    const updateData: any = {
+      amount: newAmount,
+      paidAmount: totalPaid,
+      remainingBalance: newRemaining,
+      status: newStatus,
+    };
+
+    if (body.customerId) updateData.customerId = body.customerId;
+    if (body.date) {
+      const parsedDate = businessDateFromYmdString(body.date);
+      if (parsedDate) updateData.date = parsedDate;
+    }
+    if (body.dueDate !== undefined) {
+      updateData.dueDate = body.dueDate ? businessDateFromYmdString(body.dueDate) : null;
+    }
+    if (body.description !== undefined) {
+      updateData.description = body.description?.trim() || null;
+    }
+
+    const updated = await prisma.customerCredit.update({
+      where: { id },
+      data: updateData,
+      include: {
+        customer: true,
+        branch: { select: { id: true, name: true } },
+        payments: { orderBy: { createdAt: 'desc' } },
+      },
+    });
+
+    return { data: updated };
+  }
+
   async deleteCredit(id: string): Promise<ServiceResult> {
     const credit = await prisma.customerCredit.findUnique({ where: { id } });
     if (!credit) return { error: 'Credit transaction not found', status: 404 };
