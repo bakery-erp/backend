@@ -98,7 +98,7 @@ supplierDeliveriesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'SAM
   return res.status(201).json(delivery);
 });
 
-supplierDeliveriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+supplierDeliveriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req, res) => {
   const { isPaid, returnedQuantity } = req.body as { isPaid?: boolean; returnedQuantity?: number };
   const delivery = await prisma.supplierDelivery.update({
     where: { id: req.params.id },
@@ -111,7 +111,7 @@ supplierDeliveriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req
   res.json(delivery);
 });
 
-supplierDeliveriesRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+supplierDeliveriesRouter.delete('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req, res) => {
   const delivery = await prisma.supplierDelivery.findUnique({
     where: { id: req.params.id },
   });

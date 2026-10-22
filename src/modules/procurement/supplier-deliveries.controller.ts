@@ -66,7 +66,7 @@ supplierDeliveriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'),
   res.json(result.data);
 });
 
-supplierDeliveriesRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
+supplierDeliveriesRouter.delete('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res: Response) => {
   const result = await supplierDeliveriesService.deleteSupplierDelivery(req.params.id, req.user!.id);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
