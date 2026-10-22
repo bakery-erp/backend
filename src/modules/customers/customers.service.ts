@@ -110,14 +110,28 @@ export class CustomersService {
       return { error: 'Customer not found', status: 404 };
     }
 
-    const totalCredits = customer.credits.length;
-    const totalBorrowed = customer.credits.reduce((sum, cr) => sum + decimalToNum(cr.amount), 0);
-    const totalPaid = customer.credits.reduce((sum, cr) => sum + decimalToNum(cr.paidAmount), 0);
-    const totalRemaining = customer.credits.reduce((sum, cr) => sum + decimalToNum(cr.remainingBalance), 0);
+    const reconciledCredits = customer.credits.map((c) => {
+      const totalPaid = (c.payments || []).reduce((sum, p) => sum + decimalToNum(p.amount), 0);
+      const totalAmt = decimalToNum(c.amount);
+      const computedRemaining = Math.max(0, totalAmt - totalPaid);
+      return {
+        ...c,
+        amount: totalAmt,
+        paidAmount: totalPaid,
+        remainingBalance: computedRemaining,
+        status: computedRemaining <= 0.001 ? ('PAID' as const) : ('OPEN' as const),
+      };
+    });
+
+    const totalCredits = reconciledCredits.length;
+    const totalBorrowed = reconciledCredits.reduce((sum, cr) => sum + cr.amount, 0);
+    const totalPaid = reconciledCredits.reduce((sum, cr) => sum + cr.paidAmount, 0);
+    const totalRemaining = reconciledCredits.reduce((sum, cr) => sum + cr.remainingBalance, 0);
 
     return {
       data: {
         ...customer,
+        credits: reconciledCredits,
         totalCredits,
         totalBorrowed,
         totalPaid,
@@ -253,15 +267,28 @@ export class CustomersService {
         ],
       };
     }
+    const dateCondition: any = {};
     if (from || to) {
-      where.date = {};
-      if (from) where.date.gte = businessDateFromYmdString(from);
-      if (to) where.date.lte = businessDateFromYmdString(to);
+      if (from) {
+        const fromDate = businessDateFromYmdString(from);
+        if (fromDate) dateCondition.gte = fromDate;
+      }
+      if (to) {
+        const toDate = businessDateFromYmdString(to);
+        if (toDate) dateCondition.lte = toDate;
+      }
+      if (Object.keys(dateCondition).length > 0) {
+        where.date = dateCondition;
+      }
     }
 
     const baseWhere: any = {};
     if (branchId) baseWhere.branchId = branchId;
     if (customerId) baseWhere.customerId = customerId;
+    const baseWithDateWhere: any = { ...baseWhere };
+    if (Object.keys(dateCondition).length > 0) {
+      baseWithDateWhere.date = dateCondition;
+    }
 
     const isPaginated = page != null && limit != null;
     const skip = isPaginated ? (page - 1) * limit : undefined;
@@ -276,9 +303,9 @@ export class CustomersService {
           remainingBalance: true,
         },
       }),
-      prisma.customerCredit.count({ where: baseWhere }),
-      prisma.customerCredit.count({ where: { ...baseWhere, remainingBalance: { gt: 0 } } }),
-      prisma.customerCredit.count({ where: { ...baseWhere, remainingBalance: { lte: 0 } } }),
+      prisma.customerCredit.count({ where: baseWithDateWhere }),
+      prisma.customerCredit.count({ where: { ...baseWithDateWhere, remainingBalance: { gt: 0 } } }),
+      prisma.customerCredit.count({ where: { ...baseWithDateWhere, remainingBalance: { lte: 0 } } }),
       isPaginated ? prisma.customerCredit.count({ where }) : Promise.resolve(0),
       prisma.customerCredit.findMany({
         where,
@@ -496,6 +523,80 @@ export class CustomersService {
     });
 
     return { data: { credit: updated, payment } };
+  }
+
+  async updateCredit(
+    id: string,
+    body: {
+      customerId?: string;
+      amount?: number | string;
+      date?: string;
+      dueDate?: string | null;
+      description?: string | null;
+    }
+  ): Promise<ServiceResult> {
+    const credit = await prisma.customerCredit.findUnique({
+      where: { id },
+      include: { payments: true },
+    });
+    if (!credit) return { error: 'Credit transaction not found', status: 404 };
+
+    const totalPaid = (credit.payments || []).reduce((sum, p) => sum + decimalToNum(p.amount), 0);
+
+    let newAmount = decimalToNum(credit.amount);
+    if (body.amount !== undefined) {
+      newAmount = decimalToNum(body.amount);
+      if (newAmount <= 0) {
+        return { error: 'Credit amount must be greater than zero', status: 400 };
+      }
+      if (newAmount < totalPaid) {
+        return {
+          error: `Credit amount (${newAmount.toFixed(2)} ETB) cannot be less than already recorded repayments (${totalPaid.toFixed(2)} ETB)`,
+          status: 400,
+        };
+      }
+    }
+
+    if (body.customerId) {
+      const customerExists = await prisma.customer.findUnique({ where: { id: body.customerId } });
+      if (!customerExists) {
+        return { error: 'Selected customer not found', status: 404 };
+      }
+    }
+
+    const newRemaining = Math.max(0, newAmount - totalPaid);
+    const newStatus = newRemaining <= 0.001 ? 'PAID' : 'OPEN';
+
+    const updateData: any = {
+      amount: newAmount,
+      paidAmount: totalPaid,
+      remainingBalance: newRemaining,
+      status: newStatus,
+    };
+
+    if (body.customerId) updateData.customerId = body.customerId;
+    if (body.date) {
+      const parsedDate = businessDateFromYmdString(body.date);
+      if (parsedDate) updateData.date = parsedDate;
+    }
+    if (body.dueDate !== undefined) {
+      updateData.dueDate = body.dueDate ? businessDateFromYmdString(body.dueDate) : null;
+    }
+    if (body.description !== undefined) {
+      updateData.description = body.description?.trim() || null;
+    }
+
+    const updated = await prisma.customerCredit.update({
+      where: { id },
+      data: updateData,
+      include: {
+        customer: true,
+        branch: { select: { id: true, name: true } },
+        payments: { orderBy: { createdAt: 'desc' } },
+      },
+    });
+
+    return { data: updated };
   }
 
   async deleteCredit(id: string): Promise<ServiceResult> {

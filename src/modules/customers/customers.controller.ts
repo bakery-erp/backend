@@ -15,8 +15,9 @@ customersRouter.get('/credits', async (req: AuthRequest, res: Response) => {
   const customerId = req.query.customerId as string | undefined;
   const status = req.query.status as string | undefined;
   const search = req.query.search as string | undefined;
-  const from = req.query.from as string | undefined;
-  const to = req.query.to as string | undefined;
+  const dateParam = (req.query.date as string)?.trim() || undefined;
+  const from = ((req.query.from as string)?.trim() || dateParam) || undefined;
+  const to = ((req.query.to as string)?.trim() || dateParam) || undefined;
   const pagination = req.query.page ? parsePagination(req.query as Record<string, unknown>, 15) : undefined;
 
   const result = await customersService.getCredits({
@@ -57,6 +58,14 @@ customersRouter.get('/credits/:id', async (req, res: Response) => {
 
 customersRouter.post('/credits/:id/pay', async (req, res: Response) => {
   const result = await customersService.payCredit(req.params.id, req.body);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
+customersRouter.patch('/credits/:id', async (req: AuthRequest, res: Response) => {
+  const result = await customersService.updateCredit(req.params.id, req.body);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
