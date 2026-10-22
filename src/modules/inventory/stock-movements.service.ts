@@ -243,6 +243,45 @@ export class StockMovementsService {
           ).catch((err) => console.error('[Notification] stockPurchaseLoan error:', err));
         }
 
+        if (type === 'OUT' || type === 'PRODUCTION_USAGE') {
+          const actorName = movement.user?.fullName ? `${movement.user.fullName} (${movement.user.role})` : (receivedBy?.trim() || 'Staff');
+          notificationsService.notifyBranchRoles(
+            stockItem.branchId,
+            [Role.OWNER, Role.ADMIN, Role.STOCK_KEEPER],
+            'STOCK_OUTWARD',
+            'notifications.stockOutwardTitle',
+            'notifications.stockOutwardBody',
+            {
+              itemName: stockItem.name,
+              quantity: qty,
+              unit: stockItem.unitType,
+              takenBy: actorName,
+              reason: reason?.trim() || (type === 'PRODUCTION_USAGE' ? 'Baking / Production usage' : 'Material issuance'),
+              remaining: Math.max(0, current - qty),
+            },
+            '/stock'
+          ).catch((err) => console.error('[Notification] stockOutward error:', err));
+        }
+
+        if (type === 'IN' && movement.status === 'PENDING_CONFIRMATION') {
+          const actorName = movement.user?.fullName ? `${movement.user.fullName} (${movement.user.role})` : 'Management';
+          notificationsService.notifyBranchRoles(
+            stockItem.branchId,
+            [Role.STOCK_KEEPER],
+            'STOCK_INWARD_ADDED',
+            'notifications.stockInwardTitle',
+            'notifications.stockInwardBody',
+            {
+              itemName: stockItem.name,
+              quantity: qty,
+              unit: stockItem.unitType,
+              addedBy: actorName,
+              reason: reason?.trim() || '',
+            },
+            '/stock-movements'
+          ).catch((err) => console.error('[Notification] stockInward error:', err));
+        }
+
         if (type !== 'IN' || type === 'ADJUSTMENT') {
           this.checkAndNotifyStock(stockItemId).catch((err) =>
             console.error('[Notification] checkStock error:', err)
@@ -266,7 +305,7 @@ export class StockMovementsService {
       if (current <= 0) {
         await notificationsService.notifyBranchRoles(
           item.branchId,
-          [Role.OWNER, Role.ADMIN, Role.BAKER, Role.STOCK_KEEPER],
+          [Role.OWNER, Role.ADMIN, Role.STOCK_KEEPER],
           'OUT_OF_STOCK',
           'notifications.outOfStockTitle',
           'notifications.outOfStockBody',
@@ -280,7 +319,7 @@ export class StockMovementsService {
       } else if (current <= min) {
         await notificationsService.notifyBranchRoles(
           item.branchId,
-          [Role.OWNER, Role.ADMIN, Role.BAKER, Role.STOCK_KEEPER],
+          [Role.OWNER, Role.ADMIN, Role.STOCK_KEEPER],
           'LOW_STOCK',
           'notifications.lowStockTitle',
           'notifications.lowStockBody',

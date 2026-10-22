@@ -4,10 +4,12 @@ import { notificationsService } from './notifications.service.js';
 
 export const notificationsRouter = Router();
 
+const DEFAULT_VAPID_PUBLIC_KEY = 'BNuLLLYPRoS_3gl__0KwuYjlmkAsAptU5fyEnGxZ4WDn4k94dBGsXDA2pFjpEid6SUztE4iVljbioypCbkzvdU8';
+
 // Public endpoint to retrieve public VAPID key
 notificationsRouter.get('/public-key', (_req, res: Response) => {
   res.json({
-    vapidPublicKey: process.env.VAPID_PUBLIC_KEY || '',
+    vapidPublicKey: process.env.VAPID_PUBLIC_KEY || DEFAULT_VAPID_PUBLIC_KEY,
   });
 });
 
@@ -79,4 +81,18 @@ notificationsRouter.post('/read-all', async (req: AuthRequest, res: Response) =>
   }
 
   res.json(result.data);
+});
+
+notificationsRouter.post('/test', async (req: AuthRequest, res: Response) => {
+  await notificationsService.notifyUsers({
+    userIds: [req.user!.id],
+    branchId: req.user!.branchId,
+    type: 'NOTIFICATION_TEST',
+    titleKey: 'notifications.testTitle',
+    bodyKey: 'notifications.testBody',
+    variables: { userId: req.user!.id },
+    link: '/dashboard',
+  });
+
+  res.json({ success: true, message: 'Test notification sent' });
 });

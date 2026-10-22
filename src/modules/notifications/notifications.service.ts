@@ -2,8 +2,11 @@ import webpush from 'web-push';
 import { prisma } from '../../lib/prisma.js';
 import { Role } from '@prisma/client';
 
-const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || '';
-const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || '';
+const DEFAULT_VAPID_PUBLIC_KEY = 'BNuLLLYPRoS_3gl__0KwuYjlmkAsAptU5fyEnGxZ4WDn4k94dBGsXDA2pFjpEid6SUztE4iVljbioypCbkzvdU8';
+const DEFAULT_VAPID_PRIVATE_KEY = 'MIWnnw0dBVhEKsz7yyfCnEOqDjDy9c6C03roW1tlf_8';
+
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || DEFAULT_VAPID_PUBLIC_KEY;
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || DEFAULT_VAPID_PRIVATE_KEY;
 const vapidSubject = process.env.VAPID_SUBJECT || 'mailto:admin@bakeryerp.com';
 
 if (vapidPublicKey && vapidPrivateKey) {
@@ -22,6 +25,69 @@ export interface SendNotificationPayload {
   bodyKey: string;
   variables?: Record<string, any>;
   link?: string;
+}
+
+function resolvePushContent(type: string, titleKey: string, bodyKey: string, variables: any = {}): { title: string; body: string } {
+  let title = 'Koket Bakery ERP';
+  let body = 'You have a new update in Koket ERP.';
+
+  switch (type) {
+    case 'LOW_STOCK':
+      title = '⚠️ Low Stock Alert';
+      body = `Raw material "${variables.itemName || 'Item'}" is low (${variables.quantity ?? 0} ${variables.unit || ''} remaining, min: ${variables.minLevel ?? 0}).`;
+      break;
+    case 'OUT_OF_STOCK':
+      title = '🚨 Out of Stock Critical Alert';
+      body = `Raw material "${variables.itemName || 'Item'}" is completely out of stock!`;
+      break;
+    case 'STOCK_OUTWARD':
+      title = '📤 Material Issued / Taken';
+      body = `${variables.takenBy || 'Staff'} took ${variables.quantity ?? 0} ${variables.unit || ''} of "${variables.itemName || 'Item'}" (${variables.reason || 'usage'}). Remaining: ${variables.remaining ?? 0} ${variables.unit || ''}.`;
+      break;
+    case 'STOCK_INWARD_ADDED':
+      title = '📦 Inward Stock Added';
+      body = `${variables.addedBy || 'Management'} added ${variables.quantity ?? 0} ${variables.unit || ''} of "${variables.itemName || 'Item'}". Please inspect and confirm receipt.`;
+      break;
+    case 'STOCK_CONFIRMED':
+      title = '✅ Inward Stock Confirmed';
+      body = `${variables.confirmedBy || 'Stock Keeper'} verified receipt of ${variables.quantity ?? 0} ${variables.unit || ''} "${variables.itemName || 'Item'}".`;
+      break;
+    case 'STOCK_PURCHASE_LOAN':
+      title = '💳 Stock Purchased on Credit';
+      body = `Credit purchase of "${variables.itemName || 'Item'}" logged from ${variables.supplierName || 'supplier'} for ${variables.amount || 0} ETB.`;
+      break;
+    case 'DAILY_CLOSE_SUBMITTED':
+      title = '📋 Daily Close Submitted';
+      body = `${variables.cashierName || 'Cashier'} submitted daily closing report for ${variables.branchName || 'branch'}.`;
+      break;
+    case 'DAILY_CLOSE_APPROVED':
+      title = '✅ Daily Close Approved';
+      body = `Daily session report for ${variables.branchName || 'branch'} has been approved.`;
+      break;
+    case 'LOAN_REQUESTED':
+      title = '💰 New Employee Loan Request';
+      body = `${variables.employeeName || 'Employee'} requested a loan of ${variables.amount || 0} ETB.`;
+      break;
+    case 'LOAN_APPROVED':
+      title = '✅ Loan Approved';
+      body = `Your loan request of ${variables.amount || 0} ETB has been approved.`;
+      break;
+    case 'LOAN_REJECTED':
+      title = '❌ Loan Rejected';
+      body = `Your loan request of ${variables.amount || 0} ETB has been rejected.`;
+      break;
+    case 'NOTIFICATION_TEST':
+      title = '🔔 Koket Notification Test';
+      body = `Web push notifications are working properly on your phone!`;
+      break;
+    default:
+      if (titleKey) {
+        title = titleKey.replace('notifications.', '').replace(/([A-Z])/g, ' $1').trim();
+      }
+      break;
+  }
+
+  return { title, body };
 }
 
 export class NotificationsService {
@@ -212,10 +278,14 @@ export class NotificationsService {
         });
 
         if (subscriptions.length > 0) {
+          const { title: resolvedTitle, body: resolvedBody } = resolvePushContent(type, titleKey, bodyKey, variables);
+
           const pushPayload = JSON.stringify({
             type,
             titleKey,
             bodyKey,
+            title: resolvedTitle,
+            body: resolvedBody,
             variables: variables || {},
             link: link || '/dashboard',
             timestamp: Date.now(),
@@ -347,10 +417,14 @@ export class NotificationsService {
         });
       }
 
+      if (conditions.length === 0) {
+        return;
+      }
+
       const users = await prisma.user.findMany({
         where: {
           isActive: true,
-          OR: conditions.length > 0 ? conditions : undefined,
+          OR: conditions,
         },
         select: { id: true },
       });
