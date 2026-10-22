@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import { buildPaginatedResponse } from '../../lib/pagination.js';
+import { utcDayRangeInclusive } from '../../lib/businessDate.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
 function decimalToNum(v: unknown) {
@@ -183,7 +184,8 @@ export class StockItemsService {
     id: string,
     page: number = 1,
     limit: number = 20,
-    type?: string
+    type?: string,
+    date?: string
   ): ServiceResult {
     const stockItem = await prisma.stockItem.findUnique({
       where: { id },
@@ -194,6 +196,15 @@ export class StockItemsService {
     const where: any = { stockItemId: id };
     if (type && type !== 'ALL') {
       where.type = type;
+    }
+    if (date && date.trim()) {
+      const range = utcDayRangeInclusive(date.trim());
+      if (range) {
+        where.createdAt = {
+          gte: range.start,
+          lte: range.end,
+        };
+      }
     }
 
     const skip = (page - 1) * limit;
