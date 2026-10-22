@@ -110,14 +110,28 @@ export class CustomersService {
       return { error: 'Customer not found', status: 404 };
     }
 
-    const totalCredits = customer.credits.length;
-    const totalBorrowed = customer.credits.reduce((sum, cr) => sum + decimalToNum(cr.amount), 0);
-    const totalPaid = customer.credits.reduce((sum, cr) => sum + decimalToNum(cr.paidAmount), 0);
-    const totalRemaining = customer.credits.reduce((sum, cr) => sum + decimalToNum(cr.remainingBalance), 0);
+    const reconciledCredits = customer.credits.map((c) => {
+      const totalPaid = (c.payments || []).reduce((sum, p) => sum + decimalToNum(p.amount), 0);
+      const totalAmt = decimalToNum(c.amount);
+      const computedRemaining = Math.max(0, totalAmt - totalPaid);
+      return {
+        ...c,
+        amount: totalAmt,
+        paidAmount: totalPaid,
+        remainingBalance: computedRemaining,
+        status: computedRemaining <= 0.001 ? ('PAID' as const) : ('OPEN' as const),
+      };
+    });
+
+    const totalCredits = reconciledCredits.length;
+    const totalBorrowed = reconciledCredits.reduce((sum, cr) => sum + cr.amount, 0);
+    const totalPaid = reconciledCredits.reduce((sum, cr) => sum + cr.paidAmount, 0);
+    const totalRemaining = reconciledCredits.reduce((sum, cr) => sum + cr.remainingBalance, 0);
 
     return {
       data: {
         ...customer,
+        credits: reconciledCredits,
         totalCredits,
         totalBorrowed,
         totalPaid,
