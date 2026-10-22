@@ -333,16 +333,25 @@ export class NotificationsService {
     link?: string
   ) {
     try {
-      const where: any = {
-        isActive: true,
-        role: { in: roles },
-      };
-      if (branchId) {
-        where.branchId = branchId;
+      const includeOwner = roles.includes(Role.OWNER);
+      const otherRoles = roles.filter((r) => r !== Role.OWNER);
+
+      const conditions: any[] = [];
+      if (includeOwner) {
+        conditions.push({ role: Role.OWNER });
+      }
+      if (otherRoles.length > 0) {
+        conditions.push({
+          role: { in: otherRoles },
+          ...(branchId ? { branchId } : {}),
+        });
       }
 
       const users = await prisma.user.findMany({
-        where,
+        where: {
+          isActive: true,
+          OR: conditions.length > 0 ? conditions : undefined,
+        },
         select: { id: true },
       });
 

@@ -1,7 +1,9 @@
 import { prisma } from '../../lib/prisma.js';
+import { Role } from '@prisma/client';
 import { buildPaginatedResponse } from '../../lib/pagination.js';
 import { utcDayRangeInclusive } from '../../lib/businessDate.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
+import { notificationsService } from '../notifications/notifications.service.js';
 
 function decimalToNum(v: unknown) {
   if (v == null) return undefined;
@@ -176,6 +178,10 @@ export class StockItemsService {
 
       return updated;
     });
+
+    this.checkStockAndNotify(result).catch((err) =>
+      console.error('[Notification] updateStockItem checkStock error:', err)
+    );
 
     return { data: result };
   }
@@ -375,6 +381,36 @@ export class StockItemsService {
       return { stockItem: updatedItem, movement };
     });
 
+    // Notify Stock Keeper and Baker that new inward stock was added
+    notificationsService.notifyBranchRoles(
+      item.branchId,
+      [Role.STOCK_KEEPER, Role.BAKER],
+      'STOCK_INWARD_ADDED',
+      'notifications.stockInwardTitle',
+      'notifications.stockInwardBody',
+      {
+        itemName: item.name,
+        quantity: qty,
+        unit: item.unitType,
+      },
+      '/dashboard/stock'
+    ).catch((err) => console.error('[Notification] addStockItem notifyStockKeeper error:', err));
+
+    if (loanInfo && loanInfo.isLoan) {
+      notificationsService.notifyAdminsAndOwners(
+        item.branchId,
+        'STOCK_PURCHASE_LOAN',
+        'notifications.stockPurchaseLoanTitle',
+        'notifications.stockPurchaseLoanBody',
+        {
+          itemName: item.name,
+          amount: totalValue,
+          supplierName: loanInfo.supplierName || 'Supplier',
+        },
+        '/dashboard/stock/loans'
+      ).catch((err) => console.error('[Notification] addStockItem loan error:', err));
+    }
+
     return { data: result };
   }
 
@@ -422,7 +458,51 @@ export class StockItemsService {
       return { stockItem: updatedItem, movement };
     });
 
+    this.checkStockAndNotify(result.stockItem).catch((err) =>
+      console.error('[Notification] reduceStockItem checkStock error:', err)
+    );
+
     return { data: result };
+  }
+
+  private async checkStockAndNotify(item: { id: string; name: string; unitType: string; branchId: string; currentQuantity: any; minStockLevel: any }) {
+    try {
+      const remaining = Number(item.currentQuantity);
+      const min = Number(item.minStockLevel);
+
+      if (remaining <= 0) {
+        await notificationsService.notifyBranchRoles(
+          item.branchId,
+          [Role.OWNER, Role.ADMIN, Role.BAKER, Role.STOCK_KEEPER],
+          'OUT_OF_STOCK',
+          'notifications.outOfStockTitle',
+          'notifications.outOfStockBody',
+          {
+            itemName: item.name,
+            quantity: remaining,
+            unit: item.unitType,
+          },
+          '/dashboard/stock'
+        );
+      } else if (remaining <= min) {
+        await notificationsService.notifyBranchRoles(
+          item.branchId,
+          [Role.OWNER, Role.ADMIN, Role.BAKER, Role.STOCK_KEEPER],
+          'LOW_STOCK',
+          'notifications.lowStockTitle',
+          'notifications.lowStockBody',
+          {
+            itemName: item.name,
+            quantity: remaining,
+            minLevel: min,
+            unit: item.unitType,
+          },
+          '/dashboard/stock'
+        );
+      }
+    } catch (err) {
+      console.error('[Notification] checkStockAndNotify error:', err);
+    }
   }
 
   async deleteStockItem(id: string): ServiceResult {

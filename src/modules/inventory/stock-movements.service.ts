@@ -337,6 +337,22 @@ export class StockMovementsService {
       });
     });
 
+    if (updated.stockItem) {
+      notificationsService.notifyAdminsAndOwners(
+        updated.stockItem.branchId,
+        'STOCK_CONFIRMED',
+        'notifications.stockConfirmedTitle',
+        'notifications.stockConfirmedBody',
+        {
+          itemName: updated.stockItem.name,
+          quantity: Number(updated.quantity),
+          unit: updated.stockItem.unitType,
+          confirmedBy: updated.confirmedBy?.fullName || 'Stock Keeper',
+        },
+        '/dashboard/stock'
+      ).catch((err) => console.error('[Notification] confirmStockMovement error:', err));
+    }
+
     return { data: updated };
   }
 
