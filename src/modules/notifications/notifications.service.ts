@@ -2,8 +2,11 @@ import webpush from 'web-push';
 import { prisma } from '../../lib/prisma.js';
 import { Role } from '@prisma/client';
 
-const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || '';
-const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || '';
+const DEFAULT_VAPID_PUBLIC_KEY = 'BNuLLLYPRoS_3gl__0KwuYjlmkAsAptU5fyEnGxZ4WDn4k94dBGsXDA2pFjpEid6SUztE4iVljbioypCbkzvdU8';
+const DEFAULT_VAPID_PRIVATE_KEY = 'MIWnnw0dBVhEKsz7yyfCnEOqDjDy9c6C03roW1tlf_8';
+
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || DEFAULT_VAPID_PUBLIC_KEY;
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || DEFAULT_VAPID_PRIVATE_KEY;
 const vapidSubject = process.env.VAPID_SUBJECT || 'mailto:admin@bakeryerp.com';
 
 if (vapidPublicKey && vapidPrivateKey) {
