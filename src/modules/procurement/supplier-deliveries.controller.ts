@@ -13,6 +13,7 @@ supplierDeliveriesRouter.get('/', async (req: AuthRequest, res: Response) => {
   const branchId = req.query.branchId as string | undefined;
   const sessionId = req.query.sessionId as string | undefined;
   const isPaid = req.query.isPaid as string | undefined;
+  const paymentStatus = req.query.paymentStatus as string | undefined;
   const dateYmd = (req.query.date as string | undefined)?.trim();
   const pagination = req.query.page ? parsePagination(req.query as Record<string, unknown>, 20) : undefined;
   const limit = pagination?.limit ?? Math.min(parseInt(req.query.limit as string) || 50, 200);
@@ -21,6 +22,7 @@ supplierDeliveriesRouter.get('/', async (req: AuthRequest, res: Response) => {
     supplierId,
     branchId,
     isPaid,
+    paymentStatus,
     dateYmd,
     sessionId,
     page: pagination?.page,
@@ -48,7 +50,15 @@ supplierDeliveriesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'SAM
   res.status(201).json(result.data);
 });
 
-supplierDeliveriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+supplierDeliveriesRouter.post('/:id/payments', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res: Response) => {
+  const result = await supplierDeliveriesService.recordDeliveryPayment(req.params.id, req.body);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.status(201).json(result.data);
+});
+
+supplierDeliveriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req, res: Response) => {
   const result = await supplierDeliveriesService.updateSupplierDelivery(req.params.id, req.body);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -63,3 +73,4 @@ supplierDeliveriesRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (re
   }
   res.status(204).send();
 });
+

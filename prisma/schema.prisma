@@ -64,6 +64,12 @@ enum SupplierType {
   GENERAL
 }
 
+enum SupplierPaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+}
+
 enum DeliveryPaymentSource {
   DAILY_CASH
   OWNER
@@ -477,35 +483,54 @@ model LeftoverRecord {
 }
 
 model Supplier {
-  id        String   @id @default(cuid())
-  branchId  String
-  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  name      String
-  phone     String?
-  type      SupplierType
-  createdAt DateTime @default(now())
-  deliveries SupplierDelivery[]
+  id            String             @id @default(cuid())
+  branchId      String
+  branch        Branch             @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name          String
+  phone         String?
+  contactPerson String?
+  address       String?
+  notes         String?
+  type          SupplierType
+  createdAt     DateTime           @default(now())
+  deliveries    SupplierDelivery[]
 }
 
 model SupplierDelivery {
-  id               String     @id @default(cuid())
+  id               String                 @id @default(cuid())
   supplierId       String
-  supplier         Supplier   @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  supplier         Supplier               @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   productId        String
-  product          Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+  product          Product                @relation(fields: [productId], references: [id], onDelete: Restrict)
   quantityReceived Int
-  unitBuyPrice     Decimal    @db.Decimal(12, 2)
-  unitSellPrice   Decimal    @db.Decimal(12, 2)
+  unitBuyPrice     Decimal                @db.Decimal(12, 2)
+  unitSellPrice    Decimal                @db.Decimal(12, 2)
   sessionId        String?
-  session          DailySession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
-  isPaid           Boolean    @default(false)
-  paymentSource    DeliveryPaymentSource @default(DAILY_CASH)
-  returnedQuantity Int        @default(0)
-  createdAt        DateTime   @default(now())
+  session          DailySession?          @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  isPaid           Boolean                @default(false)
+  paidAmount       Decimal                @default(0) @db.Decimal(12, 2)
+  paymentStatus    SupplierPaymentStatus  @default(PENDING)
+  paymentSource    DeliveryPaymentSource  @default(DAILY_CASH)
+  returnedQuantity Int                    @default(0)
+  notes            String?
+  createdAt        DateTime               @default(now())
+  payments         SupplierDeliveryPayment[]
 
   @@index([supplierId])
   @@index([createdAt])
   @@index([sessionId])
+}
+
+model SupplierDeliveryPayment {
+  id            String                @id @default(cuid())
+  deliveryId    String
+  delivery      SupplierDelivery      @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  amount        Decimal               @db.Decimal(12, 2)
+  paymentSource DeliveryPaymentSource @default(DAILY_CASH)
+  notes         String?
+  createdAt     DateTime              @default(now())
+
+  @@index([deliveryId])
 }
 
 /// COMPANY = business / operating; OWNER = owner withdrawal (excluded from daily operating totals in analytics)
