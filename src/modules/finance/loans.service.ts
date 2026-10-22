@@ -3,6 +3,7 @@ import { businessDateFromYmdString } from '../../lib/businessDate.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 import { DailySessionsService } from '../sessions/daily-sessions.service.js';
 import { buildPaginatedResponse } from '../../lib/pagination.js';
+import { notificationsService } from '../notifications/notifications.service.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -294,6 +295,21 @@ export class LoansService {
       },
       include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
     });
+
+    if (loan.type === 'EMPLOYEE') {
+      notificationsService.notifyAdminsAndOwners(
+        loan.branchId,
+        'LOAN_REQUESTED',
+        'notifications.loanRequestedTitle',
+        'notifications.loanRequestedBody',
+        {
+          employeeName: loan.user?.fullName || 'Employee',
+          amount,
+        },
+        '/dashboard/loans'
+      ).catch((err) => console.error('[Notification] loan requested error:', err));
+    }
+
     return { data: loan };
   }
 
@@ -347,6 +363,19 @@ export class LoansService {
       data: { status: 'OPEN' },
       include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
     });
+
+    if (updated.type === 'EMPLOYEE' && updated.userId) {
+      notificationsService.notifyUser(
+        updated.userId,
+        'LOAN_APPROVED',
+        'notifications.loanApprovedTitle',
+        'notifications.loanApprovedBody',
+        { amount: Number(updated.totalAmount) },
+        '/dashboard/loans',
+        updated.branchId
+      ).catch((err) => console.error('[Notification] loan approved error:', err));
+    }
+
     return { data: updated };
   }
 
@@ -363,6 +392,19 @@ export class LoansService {
       data: { status: 'REJECTED' },
       include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
     });
+
+    if (updated.type === 'EMPLOYEE' && updated.userId) {
+      notificationsService.notifyUser(
+        updated.userId,
+        'LOAN_REJECTED',
+        'notifications.loanRejectedTitle',
+        'notifications.loanRejectedBody',
+        { amount: Number(updated.totalAmount) },
+        '/dashboard/loans',
+        updated.branchId
+      ).catch((err) => console.error('[Notification] loan rejected error:', err));
+    }
+
     return { data: updated };
   }
 

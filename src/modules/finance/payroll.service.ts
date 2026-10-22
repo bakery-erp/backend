@@ -2,6 +2,7 @@ import { prisma } from '../../lib/prisma.js';
 import { EthDateTime } from 'ethiopian-calendar-date-converter';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 import { buildPaginatedResponse } from '../../lib/pagination.js';
+import { notificationsService } from '../notifications/notifications.service.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -159,6 +160,19 @@ export class PayrollService {
         return createdRecord;
       });
 
+      notificationsService.notifyUser(
+        record.userId,
+        'PAYROLL_GENERATED',
+        'notifications.payrollGeneratedTitle',
+        'notifications.payrollGeneratedBody',
+        {
+          month: record.month,
+          year: record.year,
+          netPay: Number(record.finalAmount),
+        },
+        '/dashboard/payroll'
+      ).catch((err) => console.error('[Notification] payroll generated error:', err));
+
       return { data: record };
     } catch (e: any) {
       return { error: e.message || 'Failed to create payroll record', status: 400 };
@@ -276,8 +290,24 @@ export class PayrollService {
     const updated = await prisma.payrollRecord.update({
       where: { id },
       data: { status: 'APPROVED' },
-      include: { user: { select: { id: true, fullName: true, phone: true, role: true } } },
+      include: { user: { select: { id: true, fullName: true, phone: true, role: true, branchId: true } } },
     });
+
+    if (userId === updated.userId) {
+      notificationsService.notifyAdminsAndOwners(
+        updated.user.branchId,
+        'PAYROLL_SIGNED',
+        'notifications.payrollSignedTitle',
+        'notifications.payrollSignedBody',
+        {
+          employeeName: updated.user.fullName,
+          month: updated.month,
+          year: updated.year,
+        },
+        '/dashboard/payroll'
+      ).catch((err) => console.error('[Notification] payroll signed error:', err));
+    }
+
     return { data: updated };
   }
 

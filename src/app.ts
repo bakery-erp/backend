@@ -16,26 +16,12 @@ import { suppliersRouter, supplierDeliveriesRouter } from './modules/procurement
 import { financialCategoriesRouter, expensesRouter, loansRouter, penaltiesRouter, payrollRouter } from './modules/finance/index.js';
 import { analyticsRouter, dashboardRouter, financialReportsRouter } from './modules/reporting/index.js';
 import { customersRouter } from './modules/customers/customers.controller.js';
+import { notificationsRouter } from './modules/notifications/notifications.controller.js';
 import { prisma } from './lib/prisma.js';
 import path from 'path';
 import fs from 'fs';
 
 export const app = express();
-
-// Midnight Session Auto-Closer Scheduled Job (runs on startup, and every 60s in persistent environments)
-try {
-  DailySessionsService.autoCloseExpiredSessions().catch(() => {});
-} catch {
-  // ignore
-}
-if (!process.env.VERCEL) {
-  const autoCloseInterval = setInterval(() => {
-    DailySessionsService.autoCloseExpiredSessions().catch(() => {});
-  }, 60 * 1000);
-  if (autoCloseInterval && typeof autoCloseInterval.unref === 'function') {
-    autoCloseInterval.unref();
-  }
-}
 
 const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : path.join(process.cwd(), 'uploads');
 const avatarsDir = path.join(uploadsDir, 'avatars');
@@ -180,6 +166,7 @@ app.use('/api/loans', loansRouter);
 app.use('/api/customers', customersRouter);
 app.use('/api/penalties', penaltiesRouter);
 app.use('/api/payroll', payrollRouter);
+app.use('/api/notifications', notificationsRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/reports', financialReportsRouter);

@@ -1,7 +1,9 @@
 import { prisma } from '../../lib/prisma.js';
+import { Role } from '@prisma/client';
 import { utcDayRangeInclusive } from '../../lib/businessDate.js';
 import { parsePagination, buildPaginatedResponse } from '../../lib/pagination.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
+import { notificationsService } from '../notifications/notifications.service.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -99,16 +101,15 @@ export class SupplierDeliveriesService {
     }
 
     let targetSessionId = typeof sessionId === 'string' ? sessionId : undefined;
+    const supp = await prisma.supplier.findUnique({ where: { id: supplierId as string } });
+    const targetBranchId = (body.branchId as string) || supp?.branchId || null;
 
     // Search for active session if targetSessionId not provided
-    if (!targetSessionId && supplierId) {
-      const supp = await prisma.supplier.findUnique({ where: { id: supplierId as string } });
-      if (supp?.branchId) {
-        const activeSess = await prisma.dailySession.findFirst({
-          where: { branchId: supp.branchId, status: { in: ['OPEN', 'PAUSED'] } },
-        });
-        if (activeSess) targetSessionId = activeSess.id;
-      }
+    if (!targetSessionId && supp?.branchId) {
+      const activeSess = await prisma.dailySession.findFirst({
+        where: { branchId: supp.branchId, status: { in: ['OPEN', 'PAUSED'] } },
+      });
+      if (activeSess) targetSessionId = activeSess.id;
     }
 
     // Handle Multi-Item creation
@@ -146,6 +147,29 @@ export class SupplierDeliveriesService {
         return results;
       });
 
+      // Notify if any unpaid deliveries in batch
+      try {
+        const unpaidList = createdDeliveries.filter((d) => !d.isPaid);
+        if (unpaidList.length > 0) {
+          const supplierName = unpaidList[0]?.supplier?.name || 'Supplier';
+          const totalCost = unpaidList.reduce((acc, d) => acc + (d.quantityReceived * Number(d.unitBuyPrice)), 0);
+          notificationsService.notifyAdminsAndOwners(
+            targetBranchId,
+            'UNPAID_DELIVERY',
+            'notifications.unpaidDeliveryTitle',
+            'notifications.unpaidDeliveryBody',
+            {
+              supplierName,
+              totalAmount: totalCost,
+              count: unpaidList.length,
+            },
+            '/dashboard/deliveries'
+          ).catch((err) => console.error('[Notification] unpaid delivery error:', err));
+        }
+      } catch (err) {
+        console.error('[Notification] unpaid delivery error:', err);
+      }
+
       return { data: createdDeliveries };
     }
 
@@ -177,6 +201,21 @@ export class SupplierDeliveriesService {
       include: { supplier: true, product: true },
     });
 
+    if (!delivery.isPaid) {
+      notificationsService.notifyAdminsAndOwners(
+        targetBranchId,
+        'UNPAID_DELIVERY',
+        'notifications.unpaidDeliveryTitle',
+        'notifications.unpaidDeliveryBody',
+        {
+          supplierName: delivery.supplier?.name || 'Supplier',
+          productName: delivery.product?.name || 'Product',
+          totalAmount: qty * Number(delivery.unitBuyPrice),
+        },
+        '/dashboard/deliveries'
+      ).catch((err) => console.error('[Notification] unpaid delivery error:', err));
+    }
+
     return { data: delivery };
   }
 
@@ -189,8 +228,24 @@ export class SupplierDeliveriesService {
         ...(returnedQuantity !== undefined && { returnedQuantity }),
         ...(paymentSource !== undefined && { paymentSource: paymentSource as any }),
       },
-      include: { supplier: true, product: true },
+      include: { supplier: true, product: true, session: true },
     });
+
+    if (returnedQuantity !== undefined && returnedQuantity > 0) {
+      notificationsService.notifyAdminsAndOwners(
+        delivery.session?.branchId,
+        'DELIVERY_RETURN',
+        'notifications.deliveryReturnTitle',
+        'notifications.deliveryReturnBody',
+        {
+          supplierName: delivery.supplier?.name || 'Supplier',
+          productName: delivery.product?.name || 'Product',
+          returnedQuantity,
+        },
+        '/dashboard/deliveries'
+      ).catch((err) => console.error('[Notification] delivery return error:', err));
+    }
+
     return { data: delivery };
   }
 

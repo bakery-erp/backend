@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 import { buildPaginatedResponse } from '../../lib/pagination.js';
+import { notificationsService } from '../notifications/notifications.service.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -83,6 +84,19 @@ export class PenaltiesService {
       },
       include: { user: { select: { id: true, fullName: true, phone: true } } },
     });
+
+    notificationsService.notifyUser(
+      userId,
+      'PENALTY_ISSUED',
+      'notifications.penaltyIssuedTitle',
+      'notifications.penaltyIssuedBody',
+      {
+        amount: decimalToNum(amount),
+        reason: reason.trim(),
+      },
+      '/dashboard/penalties'
+    ).catch((err) => console.error('[Notification] penalty issued error:', err));
+
     return { data: penalty };
   }
 
@@ -104,6 +118,7 @@ export class PenaltiesService {
       data,
       include: { user: { select: { id: true, fullName: true, phone: true } } },
     });
+
     return { data: penalty };
   }
 
@@ -120,6 +135,19 @@ export class PenaltiesService {
       data: { status: 'APPROVED' },
       include: { user: { select: { id: true, fullName: true, phone: true } } },
     });
+
+    notificationsService.notifyUser(
+      updated.userId,
+      'PENALTY_ISSUED',
+      'notifications.penaltyIssuedTitle',
+      'notifications.penaltyIssuedBody',
+      {
+        amount: Number(updated.amount),
+        reason: updated.reason,
+      },
+      '/dashboard/penalties'
+    ).catch((err) => console.error('[Notification] penalty approved error:', err));
+
     return { data: updated };
   }
 

@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { prisma } from '../../lib/prisma.js';
 import { toAuthUserDto } from '../../lib/authUser.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
+import { notificationsService } from '../notifications/notifications.service.js';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret';
 
@@ -144,6 +145,18 @@ export class AuthService {
           status: 'PENDING',
         },
       });
+
+      notificationsService.notifyAdminsAndOwners(
+        user.branchId,
+        'PASSWORD_RESET_REQUESTED',
+        'notifications.passwordResetRequestedTitle',
+        'notifications.passwordResetRequestedBody',
+        {
+          employeeName: user.fullName,
+          phone: user.phone || phoneTrim,
+        },
+        '/dashboard/users'
+      ).catch((err) => console.error('[Notification] password reset requested error:', err));
     }
 
     return {

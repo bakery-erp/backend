@@ -1,7 +1,9 @@
 import { prisma } from '../../lib/prisma.js';
+import { Role } from '@prisma/client';
 import { businessDateFromYmdString, businessDateUtcNoon, parseYmd, utcDayRangeInclusive } from '../../lib/businessDate.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 import { ProductsService } from '../catalog/products.service.js';
+import { notificationsService } from '../notifications/notifications.service.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -245,6 +247,28 @@ export class ProductionBatchesService {
     }, { maxWait: 10000, timeout: 20000 });
 
     ProductsService.clearCache();
+
+    try {
+      const productSummaries = (result.items || [])
+        .map((i: any) => `${i.product?.name || 'Product'} (${i.quantityProduced})`)
+        .join(', ');
+      notificationsService.notifyBranchRoles(
+        bid,
+        [Role.CASHIER, Role.ADMIN, Role.OWNER],
+        'PRODUCTION_COMPLETED',
+        'notifications.productionCompletedTitle',
+        'notifications.productionCompletedBody',
+        {
+          bakerName: result.user?.fullName || 'Baker',
+          products: productSummaries || 'Baked goods',
+          count: result.items?.length || 1,
+        },
+        '/dashboard/production'
+      ).catch((err) => console.error('[Notification] createProductionBatch error:', err));
+    } catch (err) {
+      console.error('[Notification] createProductionBatch error:', err);
+    }
+
     return { data: result };
   }
 

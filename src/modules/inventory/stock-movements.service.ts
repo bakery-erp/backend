@@ -1,6 +1,8 @@
 import { prisma } from '../../lib/prisma.js';
+import { Role } from '@prisma/client';
 import { buildPaginatedResponse, parsePagination } from '../../lib/pagination.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
+import { notificationsService } from '../notifications/notifications.service.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -225,10 +227,75 @@ export class StockMovementsService {
 
       return movement;
     })
-      .then((movement) => ({ data: movement }))
+      .then(async (movement) => {
+        if (body.loanInfo?.isLoan) {
+          notificationsService.notifyAdminsAndOwners(
+            stockItem.branchId,
+            'STOCK_PURCHASE_LOAN',
+            'notifications.stockPurchaseLoanTitle',
+            'notifications.stockPurchaseLoanBody',
+            {
+              itemName: stockItem.name,
+              amount: Number(movement.totalValue),
+              supplierName: body.loanInfo.supplierName || 'Supplier',
+            },
+            '/dashboard/stock/loans'
+          ).catch((err) => console.error('[Notification] stockPurchaseLoan error:', err));
+        }
+
+        if (type !== 'IN' || type === 'ADJUSTMENT') {
+          this.checkAndNotifyStock(stockItemId).catch((err) =>
+            console.error('[Notification] checkStock error:', err)
+          );
+        }
+
+        return { data: movement };
+      })
       .catch((err) => {
         return { error: err.message || 'Transaction failed', status: 400 };
       });
+  }
+
+  async checkAndNotifyStock(stockItemId: string) {
+    try {
+      const item = await prisma.stockItem.findUnique({ where: { id: stockItemId } });
+      if (!item) return;
+      const current = Number(item.currentQuantity);
+      const min = Number(item.minStockLevel);
+
+      if (current <= 0) {
+        await notificationsService.notifyBranchRoles(
+          item.branchId,
+          [Role.OWNER, Role.ADMIN, Role.BAKER, Role.STOCK_KEEPER],
+          'OUT_OF_STOCK',
+          'notifications.outOfStockTitle',
+          'notifications.outOfStockBody',
+          {
+            itemName: item.name,
+            quantity: current,
+            unit: item.unitType,
+          },
+          '/dashboard/stock'
+        );
+      } else if (current <= min) {
+        await notificationsService.notifyBranchRoles(
+          item.branchId,
+          [Role.OWNER, Role.ADMIN, Role.BAKER, Role.STOCK_KEEPER],
+          'LOW_STOCK',
+          'notifications.lowStockTitle',
+          'notifications.lowStockBody',
+          {
+            itemName: item.name,
+            quantity: current,
+            minLevel: min,
+            unit: item.unitType,
+          },
+          '/dashboard/stock'
+        );
+      }
+    } catch (err) {
+      console.error('[Notification] checkAndNotifyStock error:', err);
+    }
   }
 
   async confirmStockMovement(id: string, userId: string): ServiceResult {

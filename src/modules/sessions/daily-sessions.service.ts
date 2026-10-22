@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
-import { Prisma } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
+import { notificationsService } from '../notifications/notifications.service.js';
 import { businessDateUtcNoon, dateToYmdUtc, parseYmd, utcDayRangeInclusive } from '../../lib/businessDate.js';
 import { parsePagination, buildPaginatedResponse } from '../../lib/pagination.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
@@ -997,6 +998,26 @@ export class DailySessionsService {
       },
     });
 
+    try {
+      const submitter = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } });
+      const branch = await prisma.branch.findUnique({ where: { id: session.branchId }, select: { name: true } });
+      const dateFormatted = updated.date.toISOString().slice(0, 10);
+      notificationsService.notifyAdminsAndOwners(
+        session.branchId,
+        'DAILY_CLOSE_SUBMITTED',
+        'notifications.dailyCloseSubmittedTitle',
+        'notifications.dailyCloseSubmittedBody',
+        {
+          cashierName: submitter?.fullName || 'Cashier',
+          branchName: branch?.name || '',
+          date: dateFormatted,
+        },
+        `/dashboard/sessions/${sessionId}`
+      ).catch((err) => console.error('[Notification] submitCloseRequest error:', err));
+    } catch (err) {
+      console.error('[Notification] submitCloseRequest error:', err);
+    }
+
     return { data: updated };
   }
 
@@ -1309,29 +1330,50 @@ export class DailySessionsService {
     const dailyTotalRevenue = Math.round((yesterdayCashLeftover + totalBrr + creditReceivedFromLoan - tomorrowCashLeftover) * 100) / 100;
     const dailyNetIncome = Math.round((dailyTotalRevenue - totalCompanyExpense) * 100) / 100;
 
-    return {
-      data: {
-        ...updated,
-        _closeSummary: {
-          productionBatchCount: batches.length,
-          openingLineItems,
-          purchaseLineItems,
-          derivedLineItems: saleItems.length,
-          totalBrr,
-          totalSalesIncome: totalBrr,
-          yesterdayCashLeftover,
-          creditReceivedFromLoan,
-          tomorrowCashLeftover,
-          dailyTotalRevenue,
-          dailyCompanyExpenses: totalCompanyExpense,
-          dailyNetIncome,
-          openingCashFloat: openingFloat,
-          totalCompanyExpense,
-          expectedCash,
-          cashLeftoverAmount,
-        },
+    const resultData = {
+      ...updated,
+      _closeSummary: {
+        productionBatchCount: batches.length,
+        openingLineItems,
+        purchaseLineItems,
+        derivedLineItems: saleItems.length,
+        totalBrr,
+        totalSalesIncome: totalBrr,
+        yesterdayCashLeftover,
+        creditReceivedFromLoan,
+        tomorrowCashLeftover,
+        dailyTotalRevenue,
+        dailyCompanyExpenses: totalCompanyExpense,
+        dailyNetIncome,
+        openingCashFloat: openingFloat,
+        totalCompanyExpense,
+        expectedCash,
+        cashLeftoverAmount,
       },
     };
+
+    if (updated) {
+      try {
+        const branch = await prisma.branch.findUnique({ where: { id: updated.branchId }, select: { name: true } });
+        const dateFormatted = updated.date.toISOString().slice(0, 10);
+        notificationsService.notifyBranchRoles(
+          updated.branchId,
+          [Role.CASHIER],
+          'DAILY_CLOSE_APPROVED',
+          'notifications.dailyCloseApprovedTitle',
+          'notifications.dailyCloseApprovedBody',
+          {
+            branchName: branch?.name || '',
+            date: dateFormatted,
+          },
+          `/dashboard/sessions/${sessionId}`
+        ).catch((err) => console.error('[Notification] finalizeDailySession error:', err));
+      } catch (err) {
+        console.error('[Notification] finalizeDailySession error:', err);
+      }
+    }
+
+    return { data: resultData };
   }
 
   async getActiveSession(branchId?: string | null): ServiceResult {
@@ -1394,133 +1436,8 @@ export class DailySessionsService {
   }
 
   static async autoCloseExpiredSessions() {
-    try {
-      const now = new Date();
-      // Ethiopian timezone offset UTC+3
-      const ethDateStr = new Date(now.getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10);
-      const parts = parseYmd(ethDateStr);
-      if (!parts) return;
-      const todayUtcNoon = businessDateUtcNoon(parts.y, parts.mo, parts.day);
-
-      // 1. Auto-close any open/paused/pending session prior to today
-      const expired = await prisma.dailySession.findMany({
-        where: {
-          status: { in: ['OPEN', 'PAUSED', 'CLOSE_PENDING'] },
-          date: { lt: todayUtcNoon },
-        },
-        include: {
-          leftoverRecords: true,
-          expenses: true,
-          sales: true,
-        },
-      });
-
-      const service = new DailySessionsService();
-
-      for (const sess of expired) {
-        // Find a responsible user ID for this branch
-        const defaultUser =
-          (await prisma.user.findFirst({
-            where: { branchId: sess.branchId, isActive: true },
-            orderBy: { role: 'asc' }, // OWNER or ADMIN preferred
-          })) || (await prisma.user.findFirst({ where: { isActive: true } }));
-
-        const userId = defaultUser?.id || sess.sales[0]?.userId;
-
-        if (userId) {
-          const finalizeBody = {
-            cashLeftoverAmount: sess.cashLeftoverAmount != null ? decimalToNum(sess.cashLeftoverAmount) : undefined,
-            actualCashAmount: sess.actualCashAmount != null ? decimalToNum(sess.actualCashAmount) : undefined,
-            actualCbeAmount: sess.actualCbeAmount != null ? decimalToNum(sess.actualCbeAmount) : undefined,
-            actualTelebirrAmount: sess.actualTelebirrAmount != null ? decimalToNum(sess.actualTelebirrAmount) : undefined,
-            notes: sess.notes
-              ? `${sess.notes}\n[System Auto-Finalized at Midnight using recorded draft]`
-              : '[System Auto-Finalized at Midnight using recorded draft]',
-            label: sess.label || undefined,
-            draftExchangeLogs: sess.draftExchangeLogs || undefined,
-            leftoverRecords: (sess.leftoverRecords || []).map((r) => ({
-              productId: r.productId,
-              quantityRemaining: r.quantityRemaining,
-              damagedQuantity: r.damagedQuantity,
-              damageReason: r.damageReason,
-            })),
-            expenses: (sess.expenses || []).map((e) => ({
-              id: e.id,
-              amount: decimalToNum(e.amount),
-              category: e.category,
-              description: e.description,
-            })),
-          };
-
-          const res = await service.finalizeDailySession(sess.id, finalizeBody, userId);
-          if (res.error) {
-            console.error(`[AutoClose] Error auto-finalizing session ${sess.id}:`, res.error);
-            // Fallback simple close so it does not stay open forever
-            await prisma.dailySession.update({
-              where: { id: sess.id },
-              data: {
-                status: 'CLOSED',
-                notes: sess.notes ? `${sess.notes}\n[System Auto-Closed at Midnight]` : '[System Auto-Closed at Midnight]',
-              },
-            });
-          } else {
-            console.log(`[AutoClose] Successfully auto-finalized expired daily session ${sess.id} with draft leftovers & sales`);
-          }
-        } else {
-          // If no user exists, fallback close
-          await prisma.dailySession.update({
-            where: { id: sess.id },
-            data: {
-              status: 'CLOSED',
-              notes: sess.notes ? `${sess.notes}\n[System Auto-Closed at Midnight]` : '[System Auto-Closed at Midnight]',
-            },
-          });
-        }
-      }
-
-      // 2. Auto-open a new session for today for each active branch if none exists
-      const branches = await prisma.branch.findMany({ where: { isActive: true } });
-      for (const branch of branches) {
-        const todaySession = await prisma.dailySession.findFirst({
-          where: {
-            branchId: branch.id,
-            date: todayUtcNoon,
-          },
-        });
-
-        if (!todaySession) {
-          const previousClosed = await prisma.dailySession.findFirst({
-            where: { branchId: branch.id, status: 'CLOSED' },
-            orderBy: { date: 'desc' },
-          });
-
-          const carriedFloat = previousClosed?.cashLeftoverAmount != null
-            ? decimalToNum(previousClosed.cashLeftoverAmount)
-            : (previousClosed?.actualCashAmount != null ? decimalToNum(previousClosed.actualCashAmount) : 0);
-
-          await prisma.dailySession.create({
-            data: {
-              branchId: branch.id,
-              date: todayUtcNoon,
-              status: 'OPEN',
-              label: `Session - ${ethDateStr}`,
-              openingCashFloat: carriedFloat,
-              notes: carriedFloat > 0
-                ? `[System Auto-Opened at Midnight with Carried Starter Cash: ${carriedFloat.toFixed(2)} ETB]`
-                : '[System Auto-Opened at Midnight]',
-            },
-          });
-          console.log(`[AutoOpen] Automatically opened new session for branch ${branch.name} (${branch.id}) for date ${ethDateStr} with opening float ${carriedFloat}`);
-        }
-      }
-    } catch (err: any) {
-      if (err.code === 'P1017' || err.message?.includes('closed the connection')) {
-        try {
-          await prisma.$connect();
-        } catch (_) {}
-      }
-      console.warn('[AutoClose/AutoOpen] Notice during midnight session rollover:', err.message || err);
-    }
+    // Disabled as requested: cashiers manually choose their closing date with no arbitrary cron or cutoff.
+    return;
   }
 
   async getInShopAvailableProducts(branchId?: string | null): ServiceResult {

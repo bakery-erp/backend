@@ -150,6 +150,7 @@ model Branch {
   customerCredits CustomerCredit[]
   sales Sale[]
   leftoverRecords LeftoverRecord[]
+  notifications Notification[]
 
   @@index([companyId])
 }
@@ -183,6 +184,8 @@ model User {
   payrollRecords PayrollRecord[]
   loansAsBorrower Loan[]  @relation("EmployeeLoans")
   passwordResetRequests PasswordResetRequest[]
+  notifications Notification[]
+  pushSubscriptions PushSubscription[]
 
   @@index([branchId])
   @@index([role])
@@ -697,4 +700,36 @@ model UploadedFile {
 
   @@index([filename])
 }
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  type      String
+  titleKey  String
+  bodyKey   String
+  variables String?  // JSON stringified variables for translation interpolation
+  link      String?  // Deep link to relevant page
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
 
