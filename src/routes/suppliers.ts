@@ -40,7 +40,15 @@ suppliersRouter.get('/:id', async (req, res) => {
 
 suppliersRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res) => {
   try {
-    const { branchId, name, phone, type } = req.body as { branchId?: string; name: string; phone?: string; type: string };
+    const { branchId, name, phone, type, contactPerson, address, notes } = req.body as {
+      branchId?: string;
+      name: string;
+      phone?: string;
+      type: string;
+      contactPerson?: string;
+      address?: string;
+      notes?: string;
+    };
     let bid = branchId || req.user?.branchId;
     if (!bid) {
       const firstBranch = await prisma.branch.findFirst({ where: { isActive: true } });
@@ -58,7 +66,15 @@ suppliersRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest
     }
 
     const supplier = await prisma.supplier.create({
-      data: { branchId: bid, name: name.trim(), phone: phone?.trim() || null, type: normalizedType as any },
+      data: {
+        branchId: bid,
+        name: name.trim(),
+        phone: phone?.trim() || null,
+        contactPerson: contactPerson?.trim() || null,
+        address: address?.trim() || null,
+        notes: notes?.trim() || null,
+        type: normalizedType as any,
+      },
     });
     res.status(201).json(supplier);
   } catch (err: any) {
@@ -69,7 +85,14 @@ suppliersRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest
 
 suppliersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
   try {
-    const { name, phone, type } = req.body as { name?: string; phone?: string; type?: string };
+    const { name, phone, type, contactPerson, address, notes } = req.body as {
+      name?: string;
+      phone?: string;
+      type?: string;
+      contactPerson?: string;
+      address?: string;
+      notes?: string;
+    };
     let normalizedType: string | undefined;
     if (type !== undefined) {
       normalizedType = String(type).toUpperCase();
@@ -84,6 +107,9 @@ suppliersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) =>
       data: {
         ...(name !== undefined && { name: name.trim() }),
         ...(phone !== undefined && { phone: phone?.trim() || null }),
+        ...(contactPerson !== undefined && { contactPerson: contactPerson?.trim() || null }),
+        ...(address !== undefined && { address: address?.trim() || null }),
+        ...(notes !== undefined && { notes: notes?.trim() || null }),
         ...(normalizedType !== undefined && { type: normalizedType as any }),
       },
     });
