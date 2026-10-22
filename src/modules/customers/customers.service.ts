@@ -253,15 +253,28 @@ export class CustomersService {
         ],
       };
     }
+    const dateCondition: any = {};
     if (from || to) {
-      where.date = {};
-      if (from) where.date.gte = businessDateFromYmdString(from);
-      if (to) where.date.lte = businessDateFromYmdString(to);
+      if (from) {
+        const fromDate = businessDateFromYmdString(from);
+        if (fromDate) dateCondition.gte = fromDate;
+      }
+      if (to) {
+        const toDate = businessDateFromYmdString(to);
+        if (toDate) dateCondition.lte = toDate;
+      }
+      if (Object.keys(dateCondition).length > 0) {
+        where.date = dateCondition;
+      }
     }
 
     const baseWhere: any = {};
     if (branchId) baseWhere.branchId = branchId;
     if (customerId) baseWhere.customerId = customerId;
+    const baseWithDateWhere: any = { ...baseWhere };
+    if (Object.keys(dateCondition).length > 0) {
+      baseWithDateWhere.date = dateCondition;
+    }
 
     const isPaginated = page != null && limit != null;
     const skip = isPaginated ? (page - 1) * limit : undefined;
@@ -276,9 +289,9 @@ export class CustomersService {
           remainingBalance: true,
         },
       }),
-      prisma.customerCredit.count({ where: baseWhere }),
-      prisma.customerCredit.count({ where: { ...baseWhere, remainingBalance: { gt: 0 } } }),
-      prisma.customerCredit.count({ where: { ...baseWhere, remainingBalance: { lte: 0 } } }),
+      prisma.customerCredit.count({ where: baseWithDateWhere }),
+      prisma.customerCredit.count({ where: { ...baseWithDateWhere, remainingBalance: { gt: 0 } } }),
+      prisma.customerCredit.count({ where: { ...baseWithDateWhere, remainingBalance: { lte: 0 } } }),
       isPaginated ? prisma.customerCredit.count({ where }) : Promise.resolve(0),
       prisma.customerCredit.findMany({
         where,
