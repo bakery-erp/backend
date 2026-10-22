@@ -533,6 +533,12 @@ export class CustomersService {
       date?: string;
       dueDate?: string | null;
       description?: string | null;
+      items?: Array<{
+        productId: string;
+        productName?: string;
+        quantity: number | string;
+        unitPrice: number | string;
+      }>;
     }
   ): Promise<ServiceResult> {
     const credit = await prisma.customerCredit.findUnique({
@@ -582,7 +588,22 @@ export class CustomersService {
     if (body.dueDate !== undefined) {
       updateData.dueDate = body.dueDate ? businessDateFromYmdString(body.dueDate) : null;
     }
-    if (body.description !== undefined) {
+
+    if (Array.isArray(body.items) && body.items.length > 0) {
+      const itemSummaries = body.items.map((it) => {
+        const lineTot = (Number(it.quantity) * Number(it.unitPrice)).toFixed(2);
+        return `${it.quantity}x ${it.productName || 'Item'} @ ${it.unitPrice} ETB (${lineTot} ETB)`;
+      });
+      const structuredItems = JSON.stringify(body.items);
+      const itemsText = `[Products: ${itemSummaries.join(', ')}] [CreditItems: ${structuredItems}]`;
+      const baseNote = body.description !== undefined ? body.description : (credit.description || '');
+      const cleanDesc = (baseNote || '')
+        .replace(/\[Products:\s*.*?\]/gi, '')
+        .replace(/\[CreditItems:\s*\[.*?\]\s*\]/gi, '')
+        .replace(/^[\s\-–—]+|[\s\-–—]+$/g, '')
+        .trim();
+      updateData.description = cleanDesc ? `${itemsText} - ${cleanDesc}` : itemsText;
+    } else if (body.description !== undefined) {
       updateData.description = body.description?.trim() || null;
     }
 
