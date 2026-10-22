@@ -382,19 +382,27 @@ export class StockItemsService {
     });
 
     // Notify Stock Keeper and Baker that new inward stock was added
-    notificationsService.notifyBranchRoles(
-      item.branchId,
-      [Role.STOCK_KEEPER, Role.BAKER],
-      'STOCK_INWARD_ADDED',
-      'notifications.stockInwardTitle',
-      'notifications.stockInwardBody',
-      {
-        itemName: item.name,
-        quantity: qty,
-        unit: item.unitType,
-      },
-      '/dashboard/stock'
-    ).catch((err) => console.error('[Notification] addStockItem notifyStockKeeper error:', err));
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { fullName: true, role: true },
+    }).then((user) => {
+      const addedBy = user ? `${user.fullName} (${user.role})` : 'Management';
+      notificationsService.notifyBranchRoles(
+        item.branchId,
+        [Role.STOCK_KEEPER, Role.BAKER],
+        'STOCK_INWARD_ADDED',
+        'notifications.stockInwardTitle',
+        'notifications.stockInwardBody',
+        {
+          itemName: item.name,
+          quantity: qty,
+          unit: item.unitType,
+          addedBy,
+          reason: reason?.trim() || '',
+        },
+        '/stock-movements'
+      ).catch((err) => console.error('[Notification] addStockItem notifyStockKeeper error:', err));
+    }).catch(() => {});
 
     if (loanInfo && loanInfo.isLoan) {
       notificationsService.notifyAdminsAndOwners(
@@ -457,6 +465,30 @@ export class StockItemsService {
 
       return { stockItem: updatedItem, movement };
     });
+
+    // Notify management & stock keeper that material was taken from warehouse
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { fullName: true, role: true },
+    }).then((user) => {
+      const takenBy = receivedBy?.trim() || (user ? `${user.fullName} (${user.role})` : 'Staff');
+      notificationsService.notifyBranchRoles(
+        item.branchId,
+        [Role.OWNER, Role.ADMIN, Role.STOCK_KEEPER],
+        'STOCK_OUTWARD',
+        'notifications.stockOutwardTitle',
+        'notifications.stockOutwardBody',
+        {
+          itemName: item.name,
+          quantity: qty,
+          unit: item.unitType,
+          takenBy,
+          reason: reason?.trim() || 'Material usage / issuance',
+          remaining: Number(result.stockItem.currentQuantity),
+        },
+        '/stock'
+      ).catch((err) => console.error('[Notification] reduceStockItem outward error:', err));
+    }).catch(() => {});
 
     this.checkStockAndNotify(result.stockItem).catch((err) =>
       console.error('[Notification] reduceStockItem checkStock error:', err)

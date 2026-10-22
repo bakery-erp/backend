@@ -40,9 +40,13 @@ function resolvePushContent(type: string, titleKey: string, bodyKey: string, var
       title = '🚨 Out of Stock Critical Alert';
       body = `Raw material "${variables.itemName || 'Item'}" is completely out of stock!`;
       break;
+    case 'STOCK_OUTWARD':
+      title = '📤 Material Issued / Taken';
+      body = `${variables.takenBy || 'Staff'} took ${variables.quantity ?? 0} ${variables.unit || ''} of "${variables.itemName || 'Item'}" (${variables.reason || 'usage'}). Remaining: ${variables.remaining ?? 0} ${variables.unit || ''}.`;
+      break;
     case 'STOCK_INWARD_ADDED':
       title = '📦 Inward Stock Added';
-      body = `New inward stock added for "${variables.itemName || 'Item'}" (${variables.quantity ?? 0} ${variables.unit || ''}).`;
+      body = `${variables.addedBy || 'Management'} added ${variables.quantity ?? 0} ${variables.unit || ''} of "${variables.itemName || 'Item'}". Please inspect and confirm receipt.`;
       break;
     case 'STOCK_CONFIRMED':
       title = '✅ Inward Stock Confirmed';
