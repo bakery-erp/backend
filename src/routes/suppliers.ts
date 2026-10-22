@@ -38,7 +38,7 @@ suppliersRouter.get('/:id', async (req, res) => {
   }
 });
 
-suppliersRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res) => {
+suppliersRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res) => {
   try {
     const { branchId, name, phone, type, contactPerson, address, notes } = req.body as {
       branchId?: string;
@@ -83,7 +83,7 @@ suppliersRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest
   }
 });
 
-suppliersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+suppliersRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req, res) => {
   try {
     const { name, phone, type, contactPerson, address, notes } = req.body as {
       name?: string;
@@ -120,7 +120,7 @@ suppliersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) =>
   }
 });
 
-suppliersRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+suppliersRouter.delete('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req, res) => {
   try {
     const deliveryCount = await prisma.supplierDelivery.count({ where: { supplierId: req.params.id } });
     if (deliveryCount > 0) {
