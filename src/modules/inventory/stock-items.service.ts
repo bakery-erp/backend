@@ -381,7 +381,7 @@ export class StockItemsService {
       return { stockItem: updatedItem, movement };
     });
 
-    // Notify Stock Keeper and Baker that new inward stock was added
+    // Notify Stock Keeper that new inward stock was added awaiting their physical confirmation
     prisma.user.findUnique({
       where: { id: userId },
       select: { fullName: true, role: true },
@@ -389,7 +389,7 @@ export class StockItemsService {
       const addedBy = user ? `${user.fullName} (${user.role})` : 'Management';
       notificationsService.notifyBranchRoles(
         item.branchId,
-        [Role.STOCK_KEEPER, Role.BAKER],
+        [Role.STOCK_KEEPER],
         'STOCK_INWARD_ADDED',
         'notifications.stockInwardTitle',
         'notifications.stockInwardBody',
@@ -505,7 +505,7 @@ export class StockItemsService {
       if (remaining <= 0) {
         await notificationsService.notifyBranchRoles(
           item.branchId,
-          [Role.OWNER, Role.ADMIN, Role.BAKER, Role.STOCK_KEEPER],
+          [Role.OWNER, Role.ADMIN, Role.STOCK_KEEPER],
           'OUT_OF_STOCK',
           'notifications.outOfStockTitle',
           'notifications.outOfStockBody',
@@ -519,7 +519,7 @@ export class StockItemsService {
       } else if (remaining <= min) {
         await notificationsService.notifyBranchRoles(
           item.branchId,
-          [Role.OWNER, Role.ADMIN, Role.BAKER, Role.STOCK_KEEPER],
+          [Role.OWNER, Role.ADMIN, Role.STOCK_KEEPER],
           'LOW_STOCK',
           'notifications.lowStockTitle',
           'notifications.lowStockBody',

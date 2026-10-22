@@ -1356,18 +1356,21 @@ export class DailySessionsService {
       try {
         const branch = await prisma.branch.findUnique({ where: { id: updated.branchId }, select: { name: true } });
         const dateFormatted = updated.date.toISOString().slice(0, 10);
-        notificationsService.notifyBranchRoles(
-          updated.branchId,
-          [Role.CASHIER],
-          'DAILY_CLOSE_APPROVED',
-          'notifications.dailyCloseApprovedTitle',
-          'notifications.dailyCloseApprovedBody',
-          {
-            branchName: branch?.name || '',
-            date: dateFormatted,
-          },
-          `/dashboard/sessions/${sessionId}`
-        ).catch((err) => console.error('[Notification] finalizeDailySession error:', err));
+        const cashierIds = Array.from(new Set(updated.sales.map((s) => s.userId).filter(Boolean)));
+        if (cashierIds.length > 0) {
+          notificationsService.notifyUsers({
+            userIds: cashierIds,
+            branchId: updated.branchId,
+            type: 'DAILY_CLOSE_APPROVED',
+            titleKey: 'notifications.dailyCloseApprovedTitle',
+            bodyKey: 'notifications.dailyCloseApprovedBody',
+            variables: {
+              branchName: branch?.name || '',
+              date: dateFormatted,
+            },
+            link: '/daily-sessions',
+          }).catch((err) => console.error('[Notification] finalizeDailySession error:', err));
+        }
       } catch (err) {
         console.error('[Notification] finalizeDailySession error:', err);
       }

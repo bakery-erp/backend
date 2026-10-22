@@ -417,10 +417,14 @@ export class NotificationsService {
         });
       }
 
+      if (conditions.length === 0) {
+        return;
+      }
+
       const users = await prisma.user.findMany({
         where: {
           isActive: true,
-          OR: conditions.length > 0 ? conditions : undefined,
+          OR: conditions,
         },
         select: { id: true },
       });

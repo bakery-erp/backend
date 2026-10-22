@@ -267,7 +267,7 @@ export class StockMovementsService {
           const actorName = movement.user?.fullName ? `${movement.user.fullName} (${movement.user.role})` : 'Management';
           notificationsService.notifyBranchRoles(
             stockItem.branchId,
-            [Role.STOCK_KEEPER, Role.BAKER],
+            [Role.STOCK_KEEPER],
             'STOCK_INWARD_ADDED',
             'notifications.stockInwardTitle',
             'notifications.stockInwardBody',
@@ -305,7 +305,7 @@ export class StockMovementsService {
       if (current <= 0) {
         await notificationsService.notifyBranchRoles(
           item.branchId,
-          [Role.OWNER, Role.ADMIN, Role.BAKER, Role.STOCK_KEEPER],
+          [Role.OWNER, Role.ADMIN, Role.STOCK_KEEPER],
           'OUT_OF_STOCK',
           'notifications.outOfStockTitle',
           'notifications.outOfStockBody',
@@ -319,7 +319,7 @@ export class StockMovementsService {
       } else if (current <= min) {
         await notificationsService.notifyBranchRoles(
           item.branchId,
-          [Role.OWNER, Role.ADMIN, Role.BAKER, Role.STOCK_KEEPER],
+          [Role.OWNER, Role.ADMIN, Role.STOCK_KEEPER],
           'LOW_STOCK',
           'notifications.lowStockTitle',
           'notifications.lowStockBody',
