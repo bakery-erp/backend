@@ -82,3 +82,17 @@ notificationsRouter.post('/read-all', async (req: AuthRequest, res: Response) =>
 
   res.json(result.data);
 });
+
+notificationsRouter.post('/test', async (req: AuthRequest, res: Response) => {
+  await notificationsService.notifyUsers({
+    userIds: [req.user!.id],
+    branchId: req.user!.branchId,
+    type: 'NOTIFICATION_TEST',
+    titleKey: 'notifications.testTitle',
+    bodyKey: 'notifications.testBody',
+    variables: { userId: req.user!.id },
+    link: '/dashboard',
+  });
+
+  res.json({ success: true, message: 'Test notification sent' });
+});

@@ -27,6 +27,65 @@ export interface SendNotificationPayload {
   link?: string;
 }
 
+function resolvePushContent(type: string, titleKey: string, bodyKey: string, variables: any = {}): { title: string; body: string } {
+  let title = 'Koket Bakery ERP';
+  let body = 'You have a new update in Koket ERP.';
+
+  switch (type) {
+    case 'LOW_STOCK':
+      title = '⚠️ Low Stock Alert';
+      body = `Raw material "${variables.itemName || 'Item'}" is low (${variables.quantity ?? 0} ${variables.unit || ''} remaining, min: ${variables.minLevel ?? 0}).`;
+      break;
+    case 'OUT_OF_STOCK':
+      title = '🚨 Out of Stock Critical Alert';
+      body = `Raw material "${variables.itemName || 'Item'}" is completely out of stock!`;
+      break;
+    case 'STOCK_INWARD_ADDED':
+      title = '📦 Inward Stock Added';
+      body = `New inward stock added for "${variables.itemName || 'Item'}" (${variables.quantity ?? 0} ${variables.unit || ''}).`;
+      break;
+    case 'STOCK_CONFIRMED':
+      title = '✅ Inward Stock Confirmed';
+      body = `${variables.confirmedBy || 'Stock Keeper'} verified receipt of ${variables.quantity ?? 0} ${variables.unit || ''} "${variables.itemName || 'Item'}".`;
+      break;
+    case 'STOCK_PURCHASE_LOAN':
+      title = '💳 Stock Purchased on Credit';
+      body = `Credit purchase of "${variables.itemName || 'Item'}" logged from ${variables.supplierName || 'supplier'} for ${variables.amount || 0} ETB.`;
+      break;
+    case 'DAILY_CLOSE_SUBMITTED':
+      title = '📋 Daily Close Submitted';
+      body = `${variables.cashierName || 'Cashier'} submitted daily closing report for ${variables.branchName || 'branch'}.`;
+      break;
+    case 'DAILY_CLOSE_APPROVED':
+      title = '✅ Daily Close Approved';
+      body = `Daily session report for ${variables.branchName || 'branch'} has been approved.`;
+      break;
+    case 'LOAN_REQUESTED':
+      title = '💰 New Employee Loan Request';
+      body = `${variables.employeeName || 'Employee'} requested a loan of ${variables.amount || 0} ETB.`;
+      break;
+    case 'LOAN_APPROVED':
+      title = '✅ Loan Approved';
+      body = `Your loan request of ${variables.amount || 0} ETB has been approved.`;
+      break;
+    case 'LOAN_REJECTED':
+      title = '❌ Loan Rejected';
+      body = `Your loan request of ${variables.amount || 0} ETB has been rejected.`;
+      break;
+    case 'NOTIFICATION_TEST':
+      title = '🔔 Koket Notification Test';
+      body = `Web push notifications are working properly on your phone!`;
+      break;
+    default:
+      if (titleKey) {
+        title = titleKey.replace('notifications.', '').replace(/([A-Z])/g, ' $1').trim();
+      }
+      break;
+  }
+
+  return { title, body };
+}
+
 export class NotificationsService {
   /**
    * Save or update a Web Push subscription for a user
@@ -215,10 +274,14 @@ export class NotificationsService {
         });
 
         if (subscriptions.length > 0) {
+          const { title: resolvedTitle, body: resolvedBody } = resolvePushContent(type, titleKey, bodyKey, variables);
+
           const pushPayload = JSON.stringify({
             type,
             titleKey,
             bodyKey,
+            title: resolvedTitle,
+            body: resolvedBody,
             variables: variables || {},
             link: link || '/dashboard',
             timestamp: Date.now(),
