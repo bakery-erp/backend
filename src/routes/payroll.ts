@@ -27,7 +27,7 @@ payrollRouter.get('/my', async (req: any, res) => {
 });
 
 
-payrollRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+payrollRouter.get('/', requireRole('OWNER'), async (req, res) => {
   const userId = req.query.userId as string | undefined;
   const month = req.query.month as string | undefined;
   const year = req.query.year as string | undefined;
@@ -43,7 +43,7 @@ payrollRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req, res) => {
   res.json(list);
 });
 
-payrollRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+payrollRouter.post('/', requireRole('OWNER'), async (req, res) => {
   const { userId, month, year, baseSalary, loanDeductions, penaltyDeductions, bonus, paymentDate } = req.body as {
     userId: string;
     month: number;
@@ -79,7 +79,7 @@ payrollRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res) => {
   res.status(201).json(record);
 });
 
-payrollRouter.get('/calculate/:userId', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+payrollRouter.get('/calculate/:userId', requireRole('OWNER'), async (req, res) => {
   const { userId } = req.params;
   const { month, year } = req.query as { month: string; year: string };
   if (!month || !year) return res.status(400).json({ error: 'month and year required' });
@@ -137,7 +137,7 @@ payrollRouter.get('/calculate/:userId', requireRole('OWNER', 'ADMIN'), async (re
   });
 });
 
-payrollRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+payrollRouter.get('/:id', requireRole('OWNER'), async (req, res) => {
   const record = await prisma.payrollRecord.findUnique({
     where: { id: req.params.id },
     include: { user: { select: { id: true, fullName: true, phone: true, role: true } } },
@@ -146,7 +146,7 @@ payrollRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
   res.json(record);
 });
 
-payrollRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+payrollRouter.patch('/:id', requireRole('OWNER'), async (req, res) => {
   const { paymentDate, bonus, loanDeductions, penaltyDeductions, baseSalary, finalAmount } = req.body as {
     paymentDate?: string | null;
     bonus?: number | string;
