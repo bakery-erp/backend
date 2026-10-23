@@ -16,7 +16,7 @@ payrollRouter.get('/my', async (req: AuthRequest, res: Response) => {
   res.json(result.data);
 });
 
-payrollRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+payrollRouter.get('/', requireRole('OWNER'), async (req, res: Response) => {
   const userId = req.query.userId as string | undefined;
   const month = req.query.month as string | undefined;
   const year = req.query.year as string | undefined;
@@ -29,7 +29,7 @@ payrollRouter.get('/', requireRole('OWNER', 'ADMIN'), async (req, res: Response)
   res.json(result.data);
 });
 
-payrollRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+payrollRouter.post('/', requireRole('OWNER'), async (req, res: Response) => {
   const result = await payrollService.createPayroll(req.body);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -37,7 +37,7 @@ payrollRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res: Response
   res.status(201).json(result.data);
 });
 
-payrollRouter.get('/calculate/:userId', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+payrollRouter.get('/calculate/:userId', requireRole('OWNER'), async (req, res: Response) => {
   const { userId } = req.params;
   const { month, year } = req.query as { month: string; year: string };
   const result = await payrollService.calculatePayroll(userId, month, year);
@@ -47,7 +47,7 @@ payrollRouter.get('/calculate/:userId', requireRole('OWNER', 'ADMIN'), async (re
   res.json(result.data);
 });
 
-payrollRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+payrollRouter.get('/:id', requireRole('OWNER'), async (req, res: Response) => {
   const result = await payrollService.getPayrollById(req.params.id);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -55,7 +55,7 @@ payrollRouter.get('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Respon
   res.json(result.data);
 });
 
-payrollRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+payrollRouter.patch('/:id', requireRole('OWNER'), async (req, res: Response) => {
   const result = await payrollService.updatePayroll(req.params.id, req.body);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
