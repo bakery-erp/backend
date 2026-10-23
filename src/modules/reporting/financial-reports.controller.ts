@@ -6,7 +6,7 @@ export const financialReportsRouter = Router();
 const financialReportsService = new FinancialReportsService();
 
 financialReportsRouter.use(authMiddleware);
-financialReportsRouter.use(requireRole('OWNER', 'ADMIN'));
+financialReportsRouter.use(requireRole('OWNER'));
 
 financialReportsRouter.get('/range', async (req: AuthRequest, res: Response) => {
   try {

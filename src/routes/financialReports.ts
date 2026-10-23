@@ -5,7 +5,7 @@ import { businessDateFromYmdString, dateToYmdUtc, parseYmd, utcDayRangeInclusive
 
 export const financialReportsRouter = Router();
 financialReportsRouter.use(authMiddleware);
-financialReportsRouter.use(requireRole('OWNER', 'ADMIN'));
+financialReportsRouter.use(requireRole('OWNER'));
 
 type Period = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'semester' | 'yearly';
 
