@@ -505,20 +505,38 @@ export class StockMovementsService {
     status?: string,
     page: number = 1,
     limit: number = 20,
-    search?: string
+    search?: string,
+    user?: { id: string; role: string }
   ): ServiceResult {
     const where: any = {};
     if (branchId) where.branchId = branchId;
     if (status && status !== 'ALL') where.status = status;
+    if (user?.role === 'ADMIN') {
+      where.stockMovement = { userId: user.id };
+    }
     if (search && search.trim()) {
       const q = search.trim();
-      where.OR = [
+      const searchOr = [
         { supplierName: { contains: q, mode: 'insensitive' } },
         { stockItem: { name: { contains: q, mode: 'insensitive' } } },
       ];
+      if (user?.role === 'ADMIN') {
+        where.AND = [
+          { stockMovement: { userId: user.id } },
+          { OR: searchOr },
+        ];
+        delete where.stockMovement;
+      } else {
+        where.OR = searchOr;
+      }
     }
 
     const skip = (page - 1) * limit;
+
+    const statsWhere: any = {
+      ...(branchId ? { branchId } : {}),
+      ...(user?.role === 'ADMIN' ? { stockMovement: { userId: user.id } } : {}),
+    };
 
     const [total, loans, statsAggregate, activeLoansCount] = await Promise.all([
       prisma.stockPurchaseLoan.count({ where }),
@@ -528,7 +546,7 @@ export class StockMovementsService {
           stockMovement: {
             include: {
               stockItem: { select: { id: true, name: true, unitType: true } },
-              user: { select: { id: true, fullName: true } },
+              user: { select: { id: true, fullName: true, role: true } },
             },
           },
           payments: {
@@ -541,7 +559,7 @@ export class StockMovementsService {
         take: limit,
       }),
       prisma.stockPurchaseLoan.aggregate({
-        where: branchId ? { branchId } : {},
+        where: statsWhere,
         _sum: {
           totalAmount: true,
           paidAmount: true,
@@ -550,7 +568,7 @@ export class StockMovementsService {
       }),
       prisma.stockPurchaseLoan.count({
         where: {
-          ...(branchId ? { branchId } : {}),
+          ...statsWhere,
           status: { not: 'PAID' },
         },
       }),
@@ -576,9 +594,17 @@ export class StockMovementsService {
       return { error: 'Valid positive payment amount required', status: 400 };
     }
 
-    const loan = await prisma.stockPurchaseLoan.findUnique({ where: { id: loanId } });
+    const loan = await prisma.stockPurchaseLoan.findUnique({ 
+      where: { id: loanId },
+      include: { stockMovement: true },
+    });
     if (!loan) {
       return { error: 'Stock purchase loan record not found', status: 404 };
+    }
+
+    const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+    if (currentUser?.role === 'ADMIN' && loan.stockMovement?.userId !== userId) {
+      return { error: 'You do not have permission to pay loans recorded by other users', status: 403 };
     }
 
     const currentBal = Number(loan.remainingBalance);
