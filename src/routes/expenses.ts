@@ -27,14 +27,35 @@ export const expensesRouter = Router();
 expensesRouter.use(authMiddleware);
 
 expensesRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER', 'CAKE_WORKER'), async (req: AuthRequest, res) => {
+  const isCashier = req.user!.role === 'CASHIER';
   const admin = req.user!.role === 'OWNER' || req.user!.role === 'ADMIN';
   const branchId = admin
     ? ((req.query.branchId as string) || req.user?.branchId)
     : req.user?.branchId;
-  const from = req.query.from as string;
-  const to = req.query.to as string;
+  let from = req.query.from as string;
+  let to = req.query.to as string;
   const category = req.query.category as string | undefined;
-  const type = req.query.type as string | undefined;
+  let type = req.query.type as string | undefined;
+
+  if (isCashier) {
+    type = 'COMPANY';
+    const now = new Date(Date.now() + 3 * 3600 * 1000);
+    const todayStr = now.toISOString().slice(0, 10);
+    const yesterday = new Date(Date.now() + 3 * 3600 * 1000 - 24 * 3600 * 1000);
+    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+
+    if (from === yesterdayStr && to === yesterdayStr) {
+      from = yesterdayStr;
+      to = yesterdayStr;
+    } else if (from === todayStr && to === todayStr) {
+      from = todayStr;
+      to = todayStr;
+    } else {
+      from = yesterdayStr;
+      to = todayStr;
+    }
+  }
+
   if (!branchId) return res.status(400).json({ error: 'branchId required' });
   const where: Record<string, unknown> = { branchId };
   if (category) where.category = category;
@@ -53,6 +74,7 @@ expensesRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER', 'CAKE_
 });
 
 expensesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER', 'CAKE_WORKER'), async (req: AuthRequest, res) => {
+  const isCashier = req.user!.role === 'CASHIER';
   const { branchId, type, amount, category, description, date, financialCategoryId } = req.body as {
     branchId?: string;
     type?: string;
@@ -62,6 +84,11 @@ expensesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER', 'CAKE
     date?: string;
     financialCategoryId?: string;
   };
+
+  if (isCashier && type && type !== 'COMPANY') {
+    return res.status(403).json({ error: 'Cashiers can only record company operating expenses' });
+  }
+
   const bid = branchId || req.user?.branchId;
   const admin = req.user!.role === 'OWNER' || req.user!.role === 'ADMIN';
   if (!admin && bid && bid !== req.user?.branchId) {
