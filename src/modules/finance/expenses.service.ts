@@ -149,14 +149,19 @@ export class ExpensesService {
       return { error: 'branchId, amount, and category required', status: 400 };
     }
 
+    // Cashiers can only record company operating expenses
+    if (userRole === 'CASHIER' && type && type !== 'COMPANY') {
+      return { error: 'Cashiers can only record company operating expenses', status: 403 };
+    }
+
     // Optional Daily Session link (does not block if session is not open)
     const activeSession = await prisma.dailySession.findFirst({
       where: { branchId: bid },
       orderBy: { date: 'desc' },
     });
 
-    // Allow selecting COMPANY or OWNER expense, default to COMPANY if not specified
-    const expenseType = parseExpenseType(type) || 'COMPANY';
+    // Allow selecting COMPANY or OWNER expense, default to COMPANY if not specified (or locked to COMPANY for cashier)
+    const expenseType = userRole === 'CASHIER' ? 'COMPANY' : (parseExpenseType(type) || 'COMPANY');
 
     const fcErr = await validateExpenseFinancialCategory(financialCategoryId);
     if (fcErr) {
