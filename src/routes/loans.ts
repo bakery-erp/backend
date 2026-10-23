@@ -41,7 +41,7 @@ loansRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthR
       where.type = type;
     }
   }
-  if (status) where.status = status;
+  if (status && status !== 'ALL') where.status = status;
   if (from || to) {
     where.date = {};
     if (from) where.date.gte = businessDateFromYmdString(from);

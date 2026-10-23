@@ -56,7 +56,7 @@ export class LoansService {
         where.type = type;
       }
     }
-    if (status) where.status = status;
+    if (status && status !== 'ALL') where.status = status;
     if (from || to) {
       where.date = {};
       if (from) where.date.gte = businessDateFromYmdString(from);
