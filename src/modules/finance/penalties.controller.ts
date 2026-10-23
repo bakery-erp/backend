@@ -63,3 +63,12 @@ penaltiesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Re
   }
   res.json(result.data);
 });
+
+penaltiesRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+  const result = await penaltiesService.deletePenalty(req.params.id);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.status(204).send();
+});
+

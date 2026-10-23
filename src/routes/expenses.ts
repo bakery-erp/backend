@@ -54,6 +54,12 @@ expensesRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'BAKER', 'CAKE_
       from = yesterdayStr;
       to = todayStr;
     }
+  } else if (req.user!.role === 'ADMIN') {
+    type = 'COMPANY';
+    const oneWeekAgo = new Date(Date.now() + 3 * 3600 * 1000 - 7 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    if (!from || from < oneWeekAgo) {
+      from = oneWeekAgo;
+    }
   }
 
   if (!branchId) return res.status(400).json({ error: 'branchId required' });

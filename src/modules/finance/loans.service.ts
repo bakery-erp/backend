@@ -56,7 +56,7 @@ export class LoansService {
         where.type = type;
       }
     }
-    if (status) where.status = status;
+    if (status && status !== 'ALL') where.status = status;
     if (from || to) {
       where.date = {};
       if (from) where.date.gte = businessDateFromYmdString(from);
@@ -426,6 +426,7 @@ export class LoansService {
     }
     if (status !== undefined) data.status = status;
     if (date !== undefined) data.date = date ? new Date(date) : loan.date;
+    if (body.userId !== undefined) data.userId = body.userId;
 
     const updated = await prisma.loan.update({
       where: { id },

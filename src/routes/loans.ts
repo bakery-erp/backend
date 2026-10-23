@@ -41,7 +41,7 @@ loansRouter.get('/', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthR
       where.type = type;
     }
   }
-  if (status) where.status = status;
+  if (status && status !== 'ALL') where.status = status;
   if (from || to) {
     where.date = {};
     if (from) where.date.gte = businessDateFromYmdString(from);
@@ -136,6 +136,7 @@ loansRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
   }
   if (status !== undefined) data.status = status;
   if (date !== undefined) data.date = date ? new Date(date) : loan.date;
+  if ((req.body as any).userId !== undefined) data.userId = (req.body as any).userId;
 
   const updated = await prisma.loan.update({
     where: { id: req.params.id },

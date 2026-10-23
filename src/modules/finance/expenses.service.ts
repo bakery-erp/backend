@@ -149,9 +149,9 @@ export class ExpensesService {
       return { error: 'branchId, amount, and category required', status: 400 };
     }
 
-    // Cashiers can only record company operating expenses
-    if (userRole === 'CASHIER' && type && type !== 'COMPANY') {
-      return { error: 'Cashiers can only record company operating expenses', status: 403 };
+    // Cashiers and Admins can only record company operating expenses
+    if ((userRole === 'CASHIER' || userRole === 'ADMIN') && type && type !== 'COMPANY') {
+      return { error: 'Only OWNER can record owner personal withdrawals', status: 403 };
     }
 
     // Optional Daily Session link (does not block if session is not open)
@@ -160,8 +160,8 @@ export class ExpensesService {
       orderBy: { date: 'desc' },
     });
 
-    // Allow selecting COMPANY or OWNER expense, default to COMPANY if not specified (or locked to COMPANY for cashier)
-    const expenseType = userRole === 'CASHIER' ? 'COMPANY' : (parseExpenseType(type) || 'COMPANY');
+    // Allow selecting COMPANY or OWNER expense, default to COMPANY if not specified (or locked to COMPANY for cashier & admin)
+    const expenseType = (userRole === 'CASHIER' || userRole === 'ADMIN') ? 'COMPANY' : (parseExpenseType(type) || 'COMPANY');
 
     const fcErr = await validateExpenseFinancialCategory(financialCategoryId);
     if (fcErr) {
@@ -199,7 +199,7 @@ export class ExpensesService {
     return { data: expense };
   }
 
-  async updateExpense(id: string, body: any): ServiceResult {
+  async updateExpense(id: string, body: any, userRole?: string): ServiceResult {
     const { type, amount, category, description, date, financialCategoryId } = body;
     const data: Record<string, unknown> = {};
 
@@ -207,7 +207,11 @@ export class ExpensesService {
       if (!isValidExpenseTypeForPatch(type)) {
         return { error: 'type must be COMPANY, OWNER, or legacy OPERATIONAL/PERSONAL', status: 400 };
       }
-      data.type = parseExpenseType(type);
+      const parsed = parseExpenseType(type);
+      if ((userRole === 'ADMIN' || userRole === 'CASHIER') && parsed !== 'COMPANY') {
+        return { error: 'Only OWNER can manage owner personal withdrawals', status: 403 };
+      }
+      data.type = parsed;
     }
     if (amount != null) data.amount = decimalToNum(amount);
     if (category !== undefined) data.category = category?.trim() ?? null;
