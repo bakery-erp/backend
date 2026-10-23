@@ -53,7 +53,8 @@ stockMovementsRouter.get('/loans/list', async (req: AuthRequest, res: Response) 
   const search = req.query.search as string | undefined;
   const { page, limit } = parsePagination(req.query, 20, 100);
 
-  const result = await stockMovementsService.getStockPurchaseLoans(branchId, status, page, limit, search);
+  const user = req.user ? { id: req.user.id, role: req.user.role } : undefined;
+  const result = await stockMovementsService.getStockPurchaseLoans(branchId, status, page, limit, search, user);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -113,7 +114,14 @@ stockMovementsRouter.post('/', requireRole('OWNER', 'ADMIN', 'STOCK_KEEPER'), as
   if (req.user?.role === 'STOCK_KEEPER' && req.body?.type === 'IN') {
     return res.status(403).json({ error: 'Stock Keepers are not permitted to add stock' });
   }
-  const result = await stockMovementsService.createStockMovement(req.body, req.user!.id);
+  if (req.body?.type === 'ADJUSTMENT' && req.user?.role !== 'OWNER') {
+    return res.status(403).json({ error: 'Only the Owner is permitted to perform stock adjustments' });
+  }
+  const body = { ...req.body };
+  if (req.user?.role !== 'OWNER') {
+    body.autoConfirm = false;
+  }
+  const result = await stockMovementsService.createStockMovement(body, req.user!.id);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
