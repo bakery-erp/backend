@@ -136,6 +136,7 @@ loansRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
   }
   if (status !== undefined) data.status = status;
   if (date !== undefined) data.date = date ? new Date(date) : loan.date;
+  if ((req.body as any).userId !== undefined) data.userId = (req.body as any).userId;
 
   const updated = await prisma.loan.update({
     where: { id: req.params.id },

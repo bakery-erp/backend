@@ -43,7 +43,18 @@ supplierDeliveriesRouter.get('/:id', async (req, res: Response) => {
 });
 
 supplierDeliveriesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'SAMBUSA_WORKER'), async (req: AuthRequest, res: Response) => {
-  const result = await supplierDeliveriesService.createSupplierDelivery(req.body, req.user!.id);
+  const body = { ...req.body };
+  if (req.user?.role !== 'OWNER') {
+    delete body.unitSellPrice;
+    if (Array.isArray(body.items)) {
+      body.items = body.items.map((item: any) => {
+        if (!item || typeof item !== 'object') return item;
+        const { unitSellPrice, ...rest } = item;
+        return rest;
+      });
+    }
+  }
+  const result = await supplierDeliveriesService.createSupplierDelivery(body, req.user!.id);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -58,8 +69,12 @@ supplierDeliveriesRouter.post('/:id/payments', requireRole('OWNER', 'ADMIN', 'CA
   res.status(201).json(result.data);
 });
 
-supplierDeliveriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req, res: Response) => {
-  const result = await supplierDeliveriesService.updateSupplierDelivery(req.params.id, req.body);
+supplierDeliveriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN', 'CASHIER'), async (req: AuthRequest, res: Response) => {
+  const updateData = { ...req.body };
+  if (req.user?.role !== 'OWNER') {
+    delete updateData.unitSellPrice;
+  }
+  const result = await supplierDeliveriesService.updateSupplierDelivery(req.params.id, updateData);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

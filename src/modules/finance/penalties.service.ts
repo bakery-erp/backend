@@ -101,11 +101,12 @@ export class PenaltiesService {
   }
 
   async updatePenalty(id: string, body: any): ServiceResult {
-    const { isDeducted, amount, reason, date, userId } = body;
+    const { isDeducted, amount, reason, date, userId, status } = body;
     const data: any = {};
     if (isDeducted !== undefined) data.isDeducted = Boolean(isDeducted);
     if (amount !== undefined) data.amount = decimalToNum(amount);
     if (reason !== undefined) data.reason = String(reason).trim();
+    if (status !== undefined) data.status = status;
     if (date !== undefined) {
       const d = new Date(date);
       d.setHours(0, 0, 0, 0);
@@ -120,6 +121,13 @@ export class PenaltiesService {
     });
 
     return { data: penalty };
+  }
+
+  async deletePenalty(id: string): ServiceResult {
+    const penalty = await prisma.penalty.findUnique({ where: { id } });
+    if (!penalty) return { error: 'Penalty not found', status: 404 };
+    await prisma.penalty.delete({ where: { id } });
+    return { data: { success: true } };
   }
 
   async approvePenalty(id: string, userId: string, userRole?: string): ServiceResult {

@@ -49,6 +49,7 @@ supplierDeliveriesRouter.get('/:id', async (req, res) => {
 
 supplierDeliveriesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'SAMBUSA_WORKER', 'BAKER', 'CAKE_WORKER'), async (req: AuthRequest, res) => {
   const { supplierId, isPaid, items, productId, quantityReceived, unitBuyPrice, unitSellPrice, returnedQuantity } = req.body as Record<string, unknown>;
+  const isOwner = req.user?.role === 'OWNER';
   
   if (!supplierId) {
     return res.status(400).json({ error: 'supplierId is required' });
@@ -60,13 +61,18 @@ supplierDeliveriesRouter.post('/', requireRole('OWNER', 'ADMIN', 'CASHIER', 'SAM
     for (const item of items) {
       if (!item.productId || item.quantityReceived == null) continue;
       const qty = typeof item.quantityReceived === 'number' ? item.quantityReceived : parseInt(String(item.quantityReceived), 10);
+      let sellPrice = isOwner ? decimalToNum(item.unitSellPrice) : 0;
+      if (!isOwner) {
+        const prod = await prisma.product.findUnique({ where: { id: item.productId } });
+        if (prod) sellPrice = Number(prod.basePrice);
+      }
       const created = await prisma.supplierDelivery.create({
         data: {
           supplierId: supplierId as string,
           productId: item.productId,
           quantityReceived: qty,
           unitBuyPrice: decimalToNum(item.unitBuyPrice),
-          unitSellPrice: decimalToNum(item.unitSellPrice),
+          unitSellPrice: sellPrice,
           isPaid: Boolean(isPaid),
           returnedQuantity: item.returnedQuantity != null ? parseInt(String(item.returnedQuantity), 10) : 0,
         },

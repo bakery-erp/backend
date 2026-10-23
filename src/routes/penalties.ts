@@ -79,6 +79,7 @@ penaltiesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) =>
     data.date = d;
   }
   if (userId !== undefined) data.userId = userId;
+  if ((req.body as any).status !== undefined) data.status = (req.body as any).status;
 
   const penalty = await prisma.penalty.update({
     where: { id: req.params.id },
@@ -87,3 +88,11 @@ penaltiesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) =>
   });
   res.json(penalty);
 });
+
+penaltiesRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+  const penalty = await prisma.penalty.findUnique({ where: { id: req.params.id } });
+  if (!penalty) return res.status(404).json({ error: 'Penalty not found' });
+  await prisma.penalty.delete({ where: { id: req.params.id } });
+  res.status(204).send();
+});
+

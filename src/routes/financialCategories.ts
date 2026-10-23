@@ -26,7 +26,7 @@ financialCategoriesRouter.get('/:id', async (req, res) => {
   res.json(row);
 });
 
-financialCategoriesRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+financialCategoriesRouter.post('/', requireRole('OWNER'), async (req, res) => {
   const { name, type } = req.body as { name?: string; type?: string };
   const t = type?.toUpperCase();
   if (!name?.trim() || (t !== 'REVENUE' && t !== 'EXPENSE')) {
@@ -42,7 +42,7 @@ financialCategoriesRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, r
   }
 });
 
-financialCategoriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+financialCategoriesRouter.patch('/:id', requireRole('OWNER'), async (req, res) => {
   const { name, type } = req.body as { name?: string; type?: string };
   const t = type?.toUpperCase();
   const data: { name?: string; type?: 'REVENUE' | 'EXPENSE' } = {};
@@ -67,7 +67,7 @@ financialCategoriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (re
   }
 });
 
-financialCategoriesRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
+financialCategoriesRouter.delete('/:id', requireRole('OWNER'), async (req, res) => {
   try {
     await prisma.financialCategory.delete({ where: { id: req.params.id } });
     res.status(204).send();
