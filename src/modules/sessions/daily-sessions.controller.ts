@@ -76,8 +76,8 @@ dailySessionsRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthReq
   res.status(201).json(result.data);
 });
 
-dailySessionsRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
-  const result = await dailySessionsService.updateDailySession(req.params.id, req.body);
+dailySessionsRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
+  const result = await dailySessionsService.updateDailySession(req.params.id, req.body, req.user?.id, req.user?.role);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -85,7 +85,7 @@ dailySessionsRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res
 });
 
 dailySessionsRouter.post('/:id/save-draft', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
-  const result = await dailySessionsService.saveSessionDraft(req.params.id, req.body, req.user?.id);
+  const result = await dailySessionsService.saveSessionDraft(req.params.id, req.body, req.user?.id, req.user?.role);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -100,7 +100,7 @@ dailySessionsRouter.post('/:id/submit-close', requireRole('OWNER', 'ADMIN'), asy
   res.json(result.data);
 });
 
-dailySessionsRouter.post('/:id/finalize', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
+dailySessionsRouter.post('/:id/finalize', requireRole('OWNER'), async (req: AuthRequest, res: Response) => {
   const result = await dailySessionsService.finalizeDailySession(req.params.id, req.body, req.user!.id);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -108,9 +108,7 @@ dailySessionsRouter.post('/:id/finalize', requireRole('OWNER', 'ADMIN'), async (
   res.json(result.data);
 });
 
-
-
-dailySessionsRouter.post('/:id/reopen', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
+dailySessionsRouter.post('/:id/reopen', requireRole('OWNER'), async (req: AuthRequest, res: Response) => {
   const result = await dailySessionsService.reopenDailySession(req.params.id);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -118,7 +116,7 @@ dailySessionsRouter.post('/:id/reopen', requireRole('OWNER', 'ADMIN'), async (re
   res.json(result.data);
 });
 
-dailySessionsRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
+dailySessionsRouter.delete('/:id', requireRole('OWNER'), async (req, res: Response) => {
   const result = await dailySessionsService.deleteDailySession(req.params.id);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });

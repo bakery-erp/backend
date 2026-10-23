@@ -666,7 +666,7 @@ export class DailySessionsService {
     return null;
   }
 
-  async updateDailySession(id: string, body: any, userId?: string): ServiceResult {
+  async updateDailySession(id: string, body: any, userId?: string, userRole?: string): ServiceResult {
     const {
       status,
       cashLeftoverAmount,
@@ -685,9 +685,12 @@ export class DailySessionsService {
       return { error: 'Session not found', status: 404 };
     }
 
-    // Lockout Enforcement: CLOSED sessions cannot be edited
-    if (existingSession.status === 'CLOSED') {
-      return { error: 'Session editing is locked because the session is already CLOSED.', status: 400 };
+    // Lockout Enforcement: CLOSED sessions can ONLY be edited directly by OWNER
+    if (existingSession.status === 'CLOSED' && userRole !== 'OWNER') {
+      return {
+        error: 'Session editing is locked because the session is CLOSED. Only the Owner can modify closed sessions or reopen them.',
+        status: 403,
+      };
     }
 
     // Stock Limit Validation for Leftover Products
@@ -782,18 +785,24 @@ export class DailySessionsService {
       },
     });
 
+    // If session is CLOSED and was modified by OWNER, recompute derived sales & cascade forward
+    if (existingSession.status === 'CLOSED') {
+      await this.recomputeDerivedSaleForSession(id, userId);
+      await this.cascadeRecalculateForwardSessions(existingSession.branchId, existingSession.date, userId);
+    }
+
     return { data: updatedSession };
   }
 
-  async saveSessionDraft(sessionId: string, body: any, userId?: string): ServiceResult {
+  async saveSessionDraft(sessionId: string, body: any, userId?: string, userRole?: string): ServiceResult {
     const session = await prisma.dailySession.findUnique({
       where: { id: sessionId },
     });
     if (!session) {
       return { error: 'Session not found', status: 404 };
     }
-    if (session.status === 'CLOSED') {
-      return { error: 'Cannot modify a closed session', status: 400 };
+    if (session.status === 'CLOSED' && userRole !== 'OWNER') {
+      return { error: 'Cannot modify a closed session. Only the Owner can modify closed sessions.', status: 403 };
     }
 
     const {
@@ -900,6 +909,11 @@ export class DailySessionsService {
         leftoverRecords: { include: { product: true } },
       },
     });
+
+    if (session.status === 'CLOSED') {
+      await this.recomputeDerivedSaleForSession(sessionId, userId);
+      await this.cascadeRecalculateForwardSessions(session.branchId, session.date, userId);
+    }
 
     return { data: updated };
   }
@@ -1376,6 +1390,8 @@ export class DailySessionsService {
       }
     }
 
+    await this.cascadeRecalculateForwardSessions(session.branchId, sessionBusinessDate, userId);
+
     return { data: resultData };
   }
 
@@ -1618,5 +1634,181 @@ export class DailySessionsService {
         products,
       },
     };
+  }
+
+  async recomputeDerivedSaleForSession(sessionId: string, userId?: string): Promise<number> {
+    const session = await prisma.dailySession.findUnique({
+      where: { id: sessionId },
+    });
+    if (!session) return 0;
+
+    const sessionBusinessDate = session.date;
+
+    const previousClosed = await prisma.dailySession.findFirst({
+      where: {
+        branchId: session.branchId,
+        status: 'CLOSED',
+        date: { lt: sessionBusinessDate },
+      },
+      include: { leftoverRecords: true },
+      orderBy: { date: 'desc' },
+    });
+
+    const openingByProduct: Record<string, number> = {};
+    for (const row of previousClosed?.leftoverRecords ?? []) {
+      openingByProduct[row.productId] = (openingByProduct[row.productId] ?? 0) + row.quantityRemaining;
+    }
+
+    const batches = await prisma.productionBatch.findMany({
+      where: {
+        branchId: session.branchId,
+        date: sessionBusinessDate,
+      },
+      include: { items: { include: { product: true } } },
+    });
+    const producedByProduct: Record<string, number> = {};
+    for (const batch of batches) {
+      for (const item of batch.items) {
+        producedByProduct[item.productId] = (producedByProduct[item.productId] ?? 0) + item.quantityProduced;
+      }
+    }
+
+    const sessionYmd = dateToYmdUtc(sessionBusinessDate);
+    const dayRange = utcDayRangeInclusive(sessionYmd);
+    const boughtByProduct: Record<string, number> = {};
+    if (dayRange) {
+      const dayDeliveries = await prisma.supplierDelivery.findMany({
+        where: {
+          supplier: { branchId: session.branchId },
+          createdAt: { gte: dayRange.start, lte: dayRange.end },
+        },
+      });
+      for (const d of dayDeliveries) {
+        const net = Math.max(0, d.quantityReceived - (d.returnedQuantity ?? 0));
+        if (net <= 0) continue;
+        boughtByProduct[d.productId] = (boughtByProduct[d.productId] ?? 0) + net;
+      }
+    }
+
+    const convertedInByProduct: Record<string, number> = {};
+    const convertedOutByProduct: Record<string, number> = {};
+    if (dayRange) {
+      const dayConversions = await prisma.productConversion.findMany({
+        where: {
+          branchId: session.branchId,
+          createdAt: { gte: dayRange.start, lte: dayRange.end },
+        },
+      });
+      for (const c of dayConversions) {
+        convertedOutByProduct[c.fromProductId] = (convertedOutByProduct[c.fromProductId] ?? 0) + c.fromQuantity;
+        convertedInByProduct[c.toProductId] = (convertedInByProduct[c.toProductId] ?? 0) + c.toQuantity;
+      }
+    }
+
+    const leftovers = await prisma.leftoverRecord.findMany({
+      where: { sessionId },
+      include: { product: true },
+    });
+    const leftoverByProduct: Record<string, number> = {};
+    const damagedByProduct: Record<string, number> = {};
+    for (const r of leftovers) {
+      leftoverByProduct[r.productId] = r.quantityRemaining;
+      damagedByProduct[r.productId] = r.damagedQuantity ?? 0;
+    }
+
+    const productIds = new Set([
+      ...Object.keys(openingByProduct),
+      ...Object.keys(producedByProduct),
+      ...Object.keys(boughtByProduct),
+      ...Object.keys(convertedInByProduct),
+      ...Object.keys(convertedOutByProduct),
+      ...Object.keys(leftoverByProduct),
+    ]);
+
+    const saleItems: { productId: string; quantity: number; unitPrice: number; subtotal: number }[] = [];
+    let totalAmount = 0;
+    const idList = Array.from(productIds);
+    const products = idList.length > 0
+      ? await prisma.product.findMany({ where: { id: { in: idList } } })
+      : [];
+    const productMap = new Map(products.map((p) => [p.id, p]));
+
+    for (const pid of productIds) {
+      const opening = openingByProduct[pid] ?? 0;
+      const produced = producedByProduct[pid] ?? 0;
+      const bought = boughtByProduct[pid] ?? 0;
+      const convertedIn = convertedInByProduct[pid] ?? 0;
+      const convertedOut = convertedOutByProduct[pid] ?? 0;
+      const available = opening + produced + bought + convertedIn - convertedOut;
+      const leftover = leftoverByProduct[pid] ?? 0;
+      const damaged = damagedByProduct[pid] ?? 0;
+      const sold = Math.max(0, available - leftover - damaged);
+
+      if (sold <= 0) continue;
+
+      const product = productMap.get(pid);
+      const unitPrice = product ? Number(product.basePrice) : 0;
+      const subtotal = unitPrice * sold;
+      totalAmount += subtotal;
+
+      saleItems.push({ productId: pid, quantity: sold, unitPrice, subtotal });
+    }
+
+    await prisma.saleItem.deleteMany({ where: { sale: { sessionId } } });
+    await prisma.sale.deleteMany({ where: { sessionId } });
+
+    if (saleItems.length > 0) {
+      const fallbackUser = await prisma.user.findFirst({ select: { id: true } });
+      const effectiveUserId = userId || fallbackUser?.id || sessionId;
+      await prisma.sale.create({
+        data: {
+          sessionId,
+          userId: effectiveUserId,
+          totalAmount: new Prisma.Decimal(Math.round(totalAmount * 100) / 100),
+          paymentMethod: 'CASH',
+          items: {
+            create: saleItems.map((i) => ({
+              productId: i.productId,
+              quantity: i.quantity,
+              unitPrice: new Prisma.Decimal(i.unitPrice.toFixed(2)),
+              subtotal: new Prisma.Decimal(i.subtotal.toFixed(2)),
+            })),
+          },
+        },
+      });
+    }
+
+    return Math.round(totalAmount * 100) / 100;
+  }
+
+  async cascadeRecalculateForwardSessions(branchId: string, fromDate: Date, userId?: string): Promise<void> {
+    const forwardSessions = await prisma.dailySession.findMany({
+      where: {
+        branchId,
+        date: { gt: fromDate },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    for (const fs of forwardSessions) {
+      if (fs.status === 'CLOSED') {
+        await this.recomputeDerivedSaleForSession(fs.id, userId);
+      } else if (fs.status === 'OPEN' || fs.status === 'CLOSE_PENDING') {
+        const prevClosed = await prisma.dailySession.findFirst({
+          where: {
+            branchId,
+            status: 'CLOSED',
+            date: { lt: fs.date },
+          },
+          orderBy: { date: 'desc' },
+        });
+        if (prevClosed?.cashLeftoverAmount != null) {
+          await prisma.dailySession.update({
+            where: { id: fs.id },
+            data: { openingCashFloat: prevClosed.cashLeftoverAmount },
+          });
+        }
+      }
+    }
   }
 }
