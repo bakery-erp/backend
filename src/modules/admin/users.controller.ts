@@ -175,3 +175,14 @@ usersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), handleUserFormUpload, a
     return res.status(500).json({ error: err.message || 'User update upload failed' });
   }
 });
+
+usersRouter.delete('/:id', requireRole('OWNER'), async (req: AuthRequest, res: Response) => {
+  if (req.user?.id === req.params.id) {
+    return res.status(400).json({ error: 'You cannot delete your own account' });
+  }
+  const result = await usersService.deleteUser(req.params.id);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});

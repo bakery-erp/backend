@@ -308,4 +308,55 @@ export class UsersService {
     });
     return { data: user };
   }
+
+  async deleteUser(id: string): ServiceResult {
+    const user = await prisma.user.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            sales: true,
+            expenses: true,
+            productionBatches: true,
+            stockMovements: true,
+            productConversions: true,
+            stockPurchasePayments: true,
+          },
+        },
+      },
+    });
+    if (!user) return { error: 'User not found', status: 404 };
+
+    // Prevent deleting the only remaining OWNER in the system
+    if (user.role === 'OWNER') {
+      const ownerCount = await prisma.user.count({ where: { role: 'OWNER' } });
+      if (ownerCount <= 1) {
+        return { error: 'Cannot delete the only remaining Owner in the system', status: 400 };
+      }
+    }
+
+    const usageCount =
+      user._count.sales +
+      user._count.expenses +
+      user._count.productionBatches +
+      user._count.stockMovements +
+      user._count.productConversions +
+      user._count.stockPurchasePayments;
+
+    if (usageCount > 0) {
+      await prisma.user.update({
+        where: { id },
+        data: { isActive: false },
+      });
+      return {
+        data: {
+          message: 'User has recorded business transactions and has been deactivated to preserve historical audit records.',
+          deactivated: true,
+        },
+      };
+    }
+
+    await prisma.user.delete({ where: { id } });
+    return { data: { message: 'User deleted successfully', deactivated: false } };
+  }
 }

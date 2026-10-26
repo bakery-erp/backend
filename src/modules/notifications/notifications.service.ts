@@ -288,6 +288,8 @@ export class NotificationsService {
             body: resolvedBody,
             variables: variables || {},
             link: link || '/dashboard',
+            icon: '/icons/icon-192.png',
+            badge: '/icons/badge-96.png',
             timestamp: Date.now(),
           });
 
