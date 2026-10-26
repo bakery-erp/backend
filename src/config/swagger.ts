@@ -337,6 +337,12 @@ Production API for Bakery ERP. Used by:
         },
         responses: { 200: { description: 'Updated user', content: { 'application/json': { example: { id: 'clxx...', fullName: 'Ali Updated', phone: '0911111111', role: 'CASHIER', branchId: 'clyy...', branch: null, salary: 5500 } } } } },
       },
+      delete: {
+        tags: ['Users'],
+        summary: 'Delete user (Owner only)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { 200: { description: 'Deleted or deactivated user' }, 400: { description: 'Cannot delete own account or only remaining owner' } },
+      },
     },
     '/api/daily-sessions': {
       get: {
