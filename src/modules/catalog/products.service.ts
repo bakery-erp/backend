@@ -10,10 +10,12 @@ function decimalToNum(v: unknown) {
 
 export class ProductsService {
   private static stockMapCache = new Map<string, { timestamp: number; data: Map<string, number> }>();
+  private static productsResultCache = new Map<string, { timestamp: number; data: any[] }>();
   private static readonly CACHE_TTL_MS = 30 * 1000; // 30 seconds
 
   public static clearCache() {
     ProductsService.stockMapCache.clear();
+    ProductsService.productsResultCache.clear();
   }
 
   async getProducts(
@@ -26,6 +28,12 @@ export class ProductsService {
     includeMetrics: boolean = true
   ): ServiceResult {
     try {
+      const cacheKey = JSON.stringify({ categoryId, includeSubcategories, search, type, isActive, branchId, includeMetrics });
+      const cached = ProductsService.productsResultCache.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp) < ProductsService.CACHE_TTL_MS) {
+        return { data: cached.data };
+      }
+
       let categoryIds: string[] | undefined;
 
     if (categoryId) {
@@ -95,14 +103,21 @@ export class ProductsService {
     });
 
     if (!includeMetrics) {
+      ProductsService.productsResultCache.set(cacheKey, { timestamp: Date.now(), data: list });
       return { data: list };
     }
 
-    const stockMap = await this.calculateHouseStockMap(branchId);
-
-    // Compute cumulative metrics (produced, delivered, sold, damaged) in small batches
-    // to avoid connection pool exhaustion on serverless databases
-    const [producedAgg, deliveredAgg] = await Promise.all([
+    // Run stock map and cumulative metrics in parallel to eliminate sequential round-trip waterfalls
+    const [
+      stockMap,
+      producedAgg,
+      deliveredAgg,
+      conversionsToAgg,
+      conversionsFromAgg,
+      salesAgg,
+      damagedAgg,
+    ] = await Promise.all([
+      this.calculateHouseStockMap(branchId),
       prisma.productionItem.groupBy({
         by: ['productId'],
         _sum: { quantityProduced: true },
@@ -118,9 +133,6 @@ export class ProductsService {
         _sum: { quantityReceived: true, returnedQuantity: true },
         where: branchId ? { supplier: { branchId } } : {},
       }),
-    ]);
-
-    const [conversionsToAgg, conversionsFromAgg] = await Promise.all([
       prisma.productConversion.groupBy({
         by: ['toProductId'],
         _sum: { toQuantity: true },
@@ -131,9 +143,6 @@ export class ProductsService {
         _sum: { fromQuantity: true },
         where: branchId ? { branchId } : {},
       }),
-    ]);
-
-    const [salesAgg, damagedAgg] = await Promise.all([
       prisma.saleItem.groupBy({
         by: ['productId'],
         _sum: { quantity: true },
@@ -179,7 +188,8 @@ export class ProductsService {
       };
     });
 
-      return { data: enrichedList };
+    ProductsService.productsResultCache.set(cacheKey, { timestamp: Date.now(), data: enrichedList });
+    return { data: enrichedList };
     } catch (err: any) {
       console.error('[ProductsService.getProducts] Error:', err);
       return { error: err.message || 'Failed to fetch products', status: 500 };

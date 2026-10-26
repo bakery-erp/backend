@@ -159,6 +159,7 @@ export class FinancialReportsService {
       prisma.dailySession.findMany({
         where: { branchId, status: 'CLOSED' },
         orderBy: { date: 'desc' },
+        take: 20,
         select: { date: true, cashLeftoverAmount: true, actualCashAmount: true },
       }),
       prisma.sale.findMany({
