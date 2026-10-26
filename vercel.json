@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "regions": ["dub1", "arn1"],
+  "regions": ["dub1"],
   "buildCommand": "npm run build",
   "rewrites": [
     {
