@@ -2,7 +2,20 @@ import { prisma } from '../../lib/prisma.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
 export class ProductCategoriesService {
+  private static categoriesCache = new Map<string, { timestamp: number; data: any }>();
+  private static readonly CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
+  public static clearCache() {
+    ProductCategoriesService.categoriesCache.clear();
+  }
+
   async getCategories(tree?: boolean, role?: string): ServiceResult {
+    const cacheKey = `${tree ? '1' : '0'}_${role || 'ALL'}`;
+    const cached = ProductCategoriesService.categoriesCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < ProductCategoriesService.CACHE_TTL_MS) {
+      return { data: cached.data };
+    }
+
     const where: any = {};
     if (role && role !== 'OWNER' && role !== 'ADMIN') {
       where.OR = [
@@ -34,9 +47,11 @@ export class ProductCategoriesService {
           roots.push(mapped);
         }
       }
+      ProductCategoriesService.categoriesCache.set(cacheKey, { timestamp: Date.now(), data: roots });
       return { data: roots };
     }
 
+    ProductCategoriesService.categoriesCache.set(cacheKey, { timestamp: Date.now(), data: list });
     return { data: list };
   }
 
@@ -90,6 +105,7 @@ export class ProductCategoriesService {
           _count: { select: { products: true, children: true } },
         },
       });
+      ProductCategoriesService.clearCache();
       return { data: category };
     } catch (err: any) {
       if (err.code === 'P2002') {
@@ -145,6 +161,7 @@ export class ProductCategoriesService {
           _count: { select: { products: true, children: true } },
         },
       });
+      ProductCategoriesService.clearCache();
       return { data: category };
     } catch (err: any) {
       if (err.code === 'P2002') {
@@ -169,6 +186,7 @@ export class ProductCategoriesService {
       return { error: 'Cannot delete a category that has subcategories', status: 400 };
     }
     await prisma.productCategory.delete({ where: { id } });
+    ProductCategoriesService.clearCache();
     return { data: undefined };
   }
 

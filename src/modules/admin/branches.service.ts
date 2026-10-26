@@ -2,8 +2,20 @@ import { prisma } from '../../lib/prisma.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
 export class BranchesService {
+  private static branchesCache: { timestamp: number; data: any[] } | null = null;
+  private static readonly CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
+  public static clearCache() {
+    BranchesService.branchesCache = null;
+  }
+
   async getBranches(user?: { role: string; branchId?: string | null }): ServiceResult {
-    if (!user || user.role === 'OWNER') {
+    const isOwner = !user || user.role === 'OWNER';
+    if (isOwner && BranchesService.branchesCache && (Date.now() - BranchesService.branchesCache.timestamp) < BranchesService.CACHE_TTL_MS) {
+      return { data: BranchesService.branchesCache.data };
+    }
+
+    if (isOwner) {
       const list = await prisma.branch.findMany({ orderBy: { name: 'asc' } });
       
       // Ensure the main branch always appears first
@@ -15,6 +27,7 @@ export class BranchesService {
         return 0;
       });
 
+      BranchesService.branchesCache = { timestamp: Date.now(), data: list };
       return { data: list };
     }
 
@@ -54,6 +67,7 @@ export class BranchesService {
     const branch = await prisma.branch.create({
       data: { name: name.trim(), address: address?.trim() || null, companyId },
     });
+    BranchesService.clearCache();
     return { data: branch };
   }
 
@@ -81,6 +95,7 @@ export class BranchesService {
       });
     }
 
+    BranchesService.clearCache();
     return { data: branch };
   }
 
@@ -107,6 +122,7 @@ export class BranchesService {
       where: { id },
     });
 
+    BranchesService.clearCache();
     return { data: { success: true } };
   }
 }
