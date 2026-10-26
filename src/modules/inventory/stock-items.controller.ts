@@ -76,19 +76,3 @@ stockItemsRouter.post('/:id/reduce', requireRole('OWNER', 'ADMIN', 'STOCK_KEEPER
   }
   res.json(result.data);
 });
-
-stockItemsRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
-  const result = await stockItemsService.updateStockItem(req.params.id, req.user!.id, req.body);
-  if (result.error) {
-    return res.status(result.status || 500).json({ error: result.error });
-  }
-  res.json(result.data);
-});
-
-stockItemsRouter.delete('/:id', requireRole('OWNER', 'ADMIN'), async (req, res: Response) => {
-  const result = await stockItemsService.deleteStockItem(req.params.id);
-  if (result.error) {
-    return res.status(result.status || 500).json({ error: result.error });
-  }
-  res.json(result.data);
-});

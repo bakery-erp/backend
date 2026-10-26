@@ -939,19 +939,6 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { 200: { description: 'Stock item', content: { 'application/json': { example: { id: 'clxx...', branchId: 'clyy...', name: 'Flour', unitType: 'KG', currentQuantity: 100, minStockLevel: 10 } } } } },
       },
-      patch: {
-        tags: ['Stock items'],
-        summary: 'Update stock item',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { name: {}, currentQuantity: {}, minStockLevel: {} } }, example: { currentQuantity: 150 } } } },
-        responses: { 200: { description: 'Updated stock item' } },
-      },
-      delete: {
-        tags: ['Stock items'],
-        summary: 'Delete stock item',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { 200: { description: 'Deleted stock item' }, 400: { description: 'Failed to delete (referenced elsewhere)' } },
-      },
     },
     '/api/stock-movements': {
       get: {
