@@ -54,8 +54,11 @@ export class ProductionBatchesService {
       if (p) where.date = businessDateUtcNoon(p.y, p.mo, p.day);
     }
 
-    if (role) {
-      where.user = { role };
+    if (role && role !== 'ALL') {
+      where.OR = [
+        { user: { role: role as any } },
+        { items: { some: { product: { category: { productionRole: role as any } } } } },
+      ];
     }
 
     if (seenFilter === 'FLAGGED') {
