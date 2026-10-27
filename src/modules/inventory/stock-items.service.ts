@@ -261,6 +261,34 @@ export class StockItemsService {
       }
     }
 
+    const adjustmentMovements = await prisma.stockMovement.findMany({
+      where: { stockItemId: id, type: 'ADJUSTMENT' },
+      select: { quantity: true, unitPrice: true, totalValue: true, reason: true },
+    });
+
+    let totalAdjustmentPos = 0;
+    let totalAdjustmentNeg = 0;
+    let totalAdjustmentValuePos = 0;
+    let totalAdjustmentValueNeg = 0;
+    const totalAdjustmentCount = adjustmentMovements.length;
+
+    for (const adj of adjustmentMovements) {
+      const q = Number(adj.quantity || 0);
+      const price = Number(adj.unitPrice ?? stockItem.unitPrice ?? 0);
+      const val = Number(adj.totalValue ?? (q * price));
+      const reasonStr = adj.reason || '';
+      const isNeg = reasonStr.startsWith('[-]') || 
+                    /spoilage|expired|damaged|shrinkage|loss|waste|spill|torn/i.test(reasonStr);
+
+      if (isNeg) {
+        totalAdjustmentNeg += q;
+        totalAdjustmentValueNeg += val;
+      } else {
+        totalAdjustmentPos += q;
+        totalAdjustmentValuePos += val;
+      }
+    }
+
     const currentValuation = Number(stockItem.currentQuantity) * Number(stockItem.unitPrice ?? 0);
     const paginatedMovements = buildPaginatedResponse(movements, total, page, limit);
 
@@ -277,6 +305,11 @@ export class StockItemsService {
         totalOut,
         totalValueIn,
         totalValueOut,
+        totalAdjustmentPos,
+        totalAdjustmentNeg,
+        totalAdjustmentCount,
+        totalAdjustmentValuePos,
+        totalAdjustmentValueNeg,
         currentValuation,
       },
     };
