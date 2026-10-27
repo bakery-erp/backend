@@ -296,7 +296,8 @@ export class LoansService {
       include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
     });
 
-    if (loan.type === 'EMPLOYEE' && loan.userId) {
+    const isStaffLoan = ['EMPLOYEE', 'STAFF_LOAN', 'SALARY_ADVANCE'].includes(loan.type) && Boolean(loan.userId);
+    if (isStaffLoan && loan.userId) {
       notificationsService.notifyUser(
         loan.userId,
         'LOAN_ISSUED',
@@ -364,7 +365,8 @@ export class LoansService {
       include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
     });
 
-    if (updated.type === 'EMPLOYEE' && updated.userId) {
+    const isStaffLoan = ['EMPLOYEE', 'STAFF_LOAN', 'SALARY_ADVANCE'].includes(updated.type) && Boolean(updated.userId);
+    if (isStaffLoan && updated.userId) {
       notificationsService.notifyUser(
         updated.userId,
         'LOAN_APPROVED',
@@ -393,7 +395,8 @@ export class LoansService {
       include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
     });
 
-    if (updated.type === 'EMPLOYEE' && updated.userId) {
+    const isStaffLoan = ['EMPLOYEE', 'STAFF_LOAN', 'SALARY_ADVANCE'].includes(updated.type) && Boolean(updated.userId);
+    if (isStaffLoan && updated.userId) {
       notificationsService.notifyUser(
         updated.userId,
         'LOAN_REJECTED',
