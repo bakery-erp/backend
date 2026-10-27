@@ -1016,17 +1016,18 @@ export class DailySessionsService {
       const submitter = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } });
       const branch = await prisma.branch.findUnique({ where: { id: session.branchId }, select: { name: true } });
       const dateFormatted = updated.date.toISOString().slice(0, 10);
-      notificationsService.notifyAdminsAndOwners(
+      notificationsService.notifyBranchRoles(
         session.branchId,
+        [Role.OWNER],
         'DAILY_CLOSE_SUBMITTED',
         'notifications.dailyCloseSubmittedTitle',
         'notifications.dailyCloseSubmittedBody',
         {
-          cashierName: submitter?.fullName || 'Cashier',
+          cashierName: submitter?.fullName || 'Branch Admin',
           branchName: branch?.name || '',
           date: dateFormatted,
         },
-        `/dashboard/sessions/${sessionId}`
+        '/daily-sessions'
       ).catch((err) => console.error('[Notification] submitCloseRequest error:', err));
     } catch (err) {
       console.error('[Notification] submitCloseRequest error:', err);
@@ -1370,10 +1371,14 @@ export class DailySessionsService {
       try {
         const branch = await prisma.branch.findUnique({ where: { id: updated.branchId }, select: { name: true } });
         const dateFormatted = updated.date.toISOString().slice(0, 10);
-        const cashierIds = Array.from(new Set(updated.sales.map((s) => s.userId).filter(Boolean)));
-        if (cashierIds.length > 0) {
+        const branchAdmins = await prisma.user.findMany({
+          where: { branchId: updated.branchId, role: 'ADMIN', isActive: true },
+          select: { id: true },
+        });
+        const adminIds = branchAdmins.map((a) => a.id);
+        if (adminIds.length > 0) {
           notificationsService.notifyUsers({
-            userIds: cashierIds,
+            userIds: adminIds,
             branchId: updated.branchId,
             type: 'DAILY_CLOSE_APPROVED',
             titleKey: 'notifications.dailyCloseApprovedTitle',

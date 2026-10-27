@@ -94,7 +94,7 @@ export class PenaltiesService {
         amount: decimalToNum(amount),
         reason: reason.trim(),
       },
-      '/dashboard/penalties'
+      '/my-profile'
     ).catch((err) => console.error('[Notification] penalty issued error:', err));
 
     return { data: penalty };
@@ -153,7 +153,7 @@ export class PenaltiesService {
         amount: Number(updated.amount),
         reason: updated.reason,
       },
-      '/dashboard/penalties'
+      '/my-profile'
     ).catch((err) => console.error('[Notification] penalty approved error:', err));
 
     return { data: updated };
