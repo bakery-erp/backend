@@ -91,7 +91,7 @@ notificationsRouter.post('/test', async (req: AuthRequest, res: Response) => {
     titleKey: 'notifications.testTitle',
     bodyKey: 'notifications.testBody',
     variables: { userId: req.user!.id },
-    link: '/dashboard',
+    link: '/my-profile',
   });
 
   res.json({ success: true, message: 'Test notification sent' });

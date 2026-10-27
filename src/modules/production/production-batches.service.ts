@@ -257,7 +257,7 @@ export class ProductionBatchesService {
         .join(', ');
       notificationsService.notifyBranchRoles(
         bid,
-        [Role.CASHIER, Role.ADMIN, Role.OWNER],
+        [Role.ADMIN, Role.OWNER],
         'PRODUCTION_COMPLETED',
         'notifications.productionCompletedTitle',
         'notifications.productionCompletedBody',
@@ -266,7 +266,7 @@ export class ProductionBatchesService {
           products: productSummaries || 'Baked goods',
           count: result.items?.length || 1,
         },
-        '/dashboard/production'
+        '/production'
       ).catch((err) => console.error('[Notification] createProductionBatch error:', err));
     } catch (err) {
       console.error('[Notification] createProductionBatch error:', err);

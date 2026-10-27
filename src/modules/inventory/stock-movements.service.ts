@@ -239,7 +239,7 @@ export class StockMovementsService {
               amount: Number(movement.totalValue),
               supplierName: body.loanInfo.supplierName || 'Supplier',
             },
-            '/dashboard/stock/loans'
+            '/owner-loans'
           ).catch((err) => console.error('[Notification] stockPurchaseLoan error:', err));
         }
 
@@ -314,7 +314,7 @@ export class StockMovementsService {
             quantity: current,
             unit: item.unitType,
           },
-          '/dashboard/stock'
+          '/stock'
         );
       } else if (current <= min) {
         await notificationsService.notifyBranchRoles(
@@ -329,7 +329,7 @@ export class StockMovementsService {
             minLevel: min,
             unit: item.unitType,
           },
-          '/dashboard/stock'
+          '/stock'
         );
       }
     } catch (err) {
@@ -388,7 +388,7 @@ export class StockMovementsService {
           unit: updated.stockItem.unitType,
           confirmedBy: updated.confirmedBy?.fullName || 'Stock Keeper',
         },
-        '/dashboard/stock'
+        '/stock-movements'
       ).catch((err) => console.error('[Notification] confirmStockMovement error:', err));
     }
 

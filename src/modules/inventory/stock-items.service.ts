@@ -415,7 +415,7 @@ export class StockItemsService {
           amount: totalValue,
           supplierName: loanInfo.supplierName || 'Supplier',
         },
-        '/dashboard/stock/loans'
+        '/owner-loans'
       ).catch((err) => console.error('[Notification] addStockItem loan error:', err));
     }
 
@@ -514,7 +514,7 @@ export class StockItemsService {
             quantity: remaining,
             unit: item.unitType,
           },
-          '/dashboard/stock'
+          '/stock'
         );
       } else if (remaining <= min) {
         await notificationsService.notifyBranchRoles(
@@ -529,7 +529,7 @@ export class StockItemsService {
             minLevel: min,
             unit: item.unitType,
           },
-          '/dashboard/stock'
+          '/stock'
         );
       }
     } catch (err) {

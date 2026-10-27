@@ -170,7 +170,7 @@ export class PayrollService {
           year: record.year,
           netPay: Number(record.finalAmount),
         },
-        '/dashboard/payroll'
+        '/my-profile'
       ).catch((err) => console.error('[Notification] payroll generated error:', err));
 
       return { data: record };
@@ -304,7 +304,7 @@ export class PayrollService {
           month: updated.month,
           year: updated.year,
         },
-        '/dashboard/payroll'
+        '/payroll'
       ).catch((err) => console.error('[Notification] payroll signed error:', err));
     }
 

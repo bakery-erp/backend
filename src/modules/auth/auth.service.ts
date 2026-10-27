@@ -155,7 +155,7 @@ export class AuthService {
           employeeName: user.fullName,
           phone: user.phone || phoneTrim,
         },
-        '/dashboard/users'
+        '/users'
       ).catch((err) => console.error('[Notification] password reset requested error:', err));
     }
 

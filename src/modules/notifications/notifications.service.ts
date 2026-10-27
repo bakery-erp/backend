@@ -58,11 +58,16 @@ function resolvePushContent(type: string, titleKey: string, bodyKey: string, var
       break;
     case 'DAILY_CLOSE_SUBMITTED':
       title = '📋 Daily Close Submitted';
-      body = `${variables.cashierName || 'Cashier'} submitted daily closing report for ${variables.branchName || 'branch'}.`;
+      body = `${variables.cashierName || 'Branch Admin'} submitted daily closing report for ${variables.branchName || 'branch'}.`;
       break;
     case 'DAILY_CLOSE_APPROVED':
       title = '✅ Daily Close Approved';
       body = `Daily session report for ${variables.branchName || 'branch'} has been approved.`;
+      break;
+    case 'LOAN_ISSUED':
+    case 'LOAN_RECORDED':
+      title = '💰 Staff Loan Recorded';
+      body = `A staff loan of ${variables.amount || 0} ETB has been recorded for you.`;
       break;
     case 'LOAN_REQUESTED':
       title = '💰 New Employee Loan Request';
@@ -266,7 +271,7 @@ export class NotificationsService {
           titleKey,
           bodyKey,
           variables: variablesJson,
-          link: link || '/dashboard',
+          link: link || '/',
           isRead: false,
         })),
       });
@@ -287,7 +292,7 @@ export class NotificationsService {
             title: resolvedTitle,
             body: resolvedBody,
             variables: variables || {},
-            link: link || '/dashboard',
+            link: link || '/',
             icon: '/icons/icon-192.png',
             badge: '/icons/badge-96.png',
             timestamp: Date.now(),

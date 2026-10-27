@@ -296,18 +296,18 @@ export class LoansService {
       include: { user: { select: { id: true, fullName: true, phone: true } }, payments: true },
     });
 
-    if (loan.type === 'EMPLOYEE') {
-      notificationsService.notifyAdminsAndOwners(
-        loan.branchId,
-        'LOAN_REQUESTED',
-        'notifications.loanRequestedTitle',
-        'notifications.loanRequestedBody',
+    if (loan.type === 'EMPLOYEE' && loan.userId) {
+      notificationsService.notifyUser(
+        loan.userId,
+        'LOAN_ISSUED',
+        'notifications.loanIssuedTitle',
+        'notifications.loanIssuedBody',
         {
-          employeeName: loan.user?.fullName || 'Employee',
-          amount,
+          amount: Number(loan.totalAmount),
         },
-        '/dashboard/loans'
-      ).catch((err) => console.error('[Notification] loan requested error:', err));
+        '/my-profile',
+        loan.branchId
+      ).catch((err) => console.error('[Notification] loan issued error:', err));
     }
 
     return { data: loan };
@@ -371,7 +371,7 @@ export class LoansService {
         'notifications.loanApprovedTitle',
         'notifications.loanApprovedBody',
         { amount: Number(updated.totalAmount) },
-        '/dashboard/loans',
+        '/my-profile',
         updated.branchId
       ).catch((err) => console.error('[Notification] loan approved error:', err));
     }
@@ -400,7 +400,7 @@ export class LoansService {
         'notifications.loanRejectedTitle',
         'notifications.loanRejectedBody',
         { amount: Number(updated.totalAmount) },
-        '/dashboard/loans',
+        '/my-profile',
         updated.branchId
       ).catch((err) => console.error('[Notification] loan rejected error:', err));
     }
