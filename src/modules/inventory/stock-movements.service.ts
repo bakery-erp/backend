@@ -187,7 +187,7 @@ export class StockMovementsService {
           type: type as any,
           status: movementStatus,
           receivedBy: receivedBy?.trim() || null,
-          reason: reason || (type === 'IN' && !isAuto ? 'Inward stock added (Awaiting Stock Keeper approval)' : null),
+          reason: reason?.trim() || (type === 'IN' ? 'Manual Stock Addition' : null),
           ...(isAuto ? { confirmedAt: new Date(), confirmedById: userId } : {}),
         },
         include: {
@@ -361,12 +361,22 @@ export class StockMovementsService {
         });
       }
 
+      // Clean up reason upon confirmation: remove temporary awaiting/verification phrases
+      let cleanedReason = (movement.reason || 'Manual Stock Addition')
+        .replace(/Added by Admin\/Owner \(Awaiting Stock Keeper Verification\)/gi, 'Manual Stock Addition')
+        .replace(/\(Awaiting Stock Keeper.*?\)/gi, '')
+        .trim();
+      if (!cleanedReason) {
+        cleanedReason = 'Manual Stock Addition';
+      }
+
       return await tx.stockMovement.update({
         where: { id },
         data: {
           status: 'CONFIRMED',
           confirmedAt: new Date(),
           confirmedById: userId,
+          reason: cleanedReason,
         },
         include: {
           stockItem: true,
@@ -489,7 +499,13 @@ export class StockMovementsService {
     const newTotalValue = newUnitPrice !== undefined ? newQty * newUnitPrice : undefined;
 
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } });
-    const cleanReason = (data.reason || movement.reason || 'Manual Stock Addition').replace(/\s*\[Rejected:.*?\]/g, '').replace(/\s*\[Resubmitted by.*?\]/g, '').trim();
+    const rawReason = data.reason || movement.reason || 'Manual Stock Addition';
+    const cleanReason = rawReason
+      .replace(/Added by Admin\/Owner \(Awaiting Stock Keeper Verification\)/gi, 'Manual Stock Addition')
+      .replace(/\(Awaiting Stock Keeper.*?\)/gi, '')
+      .replace(/\s*\[Rejected:.*?\]/g, '')
+      .replace(/\s*\[Resubmitted by.*?\]/g, '')
+      .trim() || 'Manual Stock Addition';
     const updatedReason = `${cleanReason} [Resubmitted by ${user?.fullName || 'Management'}]`;
 
     const updated = await prisma.$transaction(async (tx) => {
