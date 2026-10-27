@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { authMiddleware, requireRole } from '../../middleware/auth.js';
+import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/auth.js';
 import { ProductsService } from './products.service.js';
 
 export const productsRouter = Router();
@@ -7,8 +7,8 @@ const productsService = new ProductsService();
 
 productsRouter.use(authMiddleware);
 
-// GET /api/products?categoryId=...&includeSubcategories=true&search=cake&type=PRODUCED&isActive=true
-productsRouter.get('/', async (req, res: Response) => {
+// GET /api/products?categoryId=...&includeSubcategories=true&search=cake&type=PRODUCED&isActive=true&productionRole=BAKER
+productsRouter.get('/', async (req: AuthRequest, res: Response) => {
   try {
     const categoryId = req.query.categoryId as string | undefined;
     const includeSubcategories = req.query.includeSubcategories === 'true';
@@ -20,7 +20,21 @@ productsRouter.get('/', async (req, res: Response) => {
     const isMinimal = req.query.minimal === 'true' || req.query.metrics === 'false';
     const includeMetrics = !isMinimal;
 
-    const result = await productsService.getProducts(categoryId, includeSubcategories, search, type, isActive, branchId, includeMetrics);
+    const userRole = req.user?.role;
+    const isWorkerRole = userRole === 'BAKER' || userRole === 'CAKE_WORKER' || userRole === 'SAMBUSA_WORKER';
+    const productionRoleQuery = (req.query.productionRole as string) || (req.query.role as string) || undefined;
+    const roleFilter = isWorkerRole ? userRole : productionRoleQuery;
+
+    const result = await productsService.getProducts(
+      categoryId,
+      includeSubcategories,
+      search,
+      type,
+      isActive,
+      branchId,
+      includeMetrics,
+      roleFilter
+    );
     if (result.error) {
       return res.status(result.status || 500).json({ error: result.error });
     }

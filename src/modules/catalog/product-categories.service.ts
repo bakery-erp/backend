@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
+import { ProductsService } from './products.service.js';
 
 export class ProductCategoriesService {
   private static categoriesCache = new Map<string, { timestamp: number; data: any }>();
@@ -7,6 +8,7 @@ export class ProductCategoriesService {
 
   public static clearCache() {
     ProductCategoriesService.categoriesCache.clear();
+    ProductsService.clearCache();
   }
 
   async getCategories(tree?: boolean, role?: string): ServiceResult {
@@ -20,7 +22,7 @@ export class ProductCategoriesService {
     if (role && role !== 'OWNER' && role !== 'ADMIN') {
       where.OR = [
         { productionRole: role as any },
-        { productionRole: null },
+        { parent: { productionRole: role as any } },
       ];
     }
 
@@ -28,7 +30,7 @@ export class ProductCategoriesService {
       where,
       orderBy: [{ parentId: 'asc' }, { name: 'asc' }],
       include: {
-        parent: { select: { id: true, name: true, type: true } },
+        parent: { select: { id: true, name: true, type: true, productionRole: true } },
         _count: { select: { products: true, children: true } },
       },
     });
@@ -59,7 +61,7 @@ export class ProductCategoriesService {
     const cat = await prisma.productCategory.findUnique({
       where: { id },
       include: {
-        parent: { select: { id: true, name: true, type: true } },
+        parent: { select: { id: true, name: true, type: true, productionRole: true } },
         children: { include: { _count: { select: { products: true } } }, orderBy: { name: 'asc' } },
         products: true,
       },
@@ -74,6 +76,15 @@ export class ProductCategoriesService {
     const { name, type, parentId, productionRole } = body;
     if (!name?.trim() || !type) {
       return { error: 'name and type (PRODUCED|RESELL) required', status: 400 };
+    }
+
+    if (type === 'PRODUCED') {
+      if (!productionRole || !['BAKER', 'CAKE_WORKER', 'SAMBUSA_WORKER'].includes(productionRole)) {
+        return {
+          error: 'productionRole is required for PRODUCED categories (must be BAKER, CAKE_WORKER, or SAMBUSA_WORKER)',
+          status: 400,
+        };
+      }
     }
 
     const trimmedName = name.trim();
@@ -98,10 +109,10 @@ export class ProductCategoriesService {
           name: trimmedName,
           type: type as any,
           parentId: parent ? parent.id : null,
-          productionRole: productionRole ? (productionRole as any) : null,
+          productionRole: type === 'PRODUCED' ? (productionRole as any) : null,
         },
         include: {
-          parent: { select: { id: true, name: true, type: true } },
+          parent: { select: { id: true, name: true, type: true, productionRole: true } },
           _count: { select: { products: true, children: true } },
         },
       });
@@ -139,6 +150,16 @@ export class ProductCategoriesService {
     const resolvedType = type !== undefined ? type : existing.type;
     const resolvedParentId = parentId !== undefined ? parentId : existing.parentId;
 
+    if (resolvedType === 'PRODUCED') {
+      const roleToUse = productionRole !== undefined ? productionRole : existing.productionRole;
+      if (!roleToUse || !['BAKER', 'CAKE_WORKER', 'SAMBUSA_WORKER'].includes(roleToUse)) {
+        return {
+          error: 'productionRole is required for PRODUCED categories (must be BAKER, CAKE_WORKER, or SAMBUSA_WORKER)',
+          status: 400,
+        };
+      }
+    }
+
     const parent = await this.resolveParentCategory(resolvedParentId, id);
     if (typeof parent === 'string') {
       return { error: parent, status: 400 };
@@ -154,10 +175,12 @@ export class ProductCategoriesService {
           ...(trimmedName !== undefined && { name: trimmedName }),
           ...(type !== undefined && { type: type as any }),
           ...(parentId !== undefined && { parentId: parent ? parent.id : null }),
-          ...(productionRole !== undefined && { productionRole: productionRole ? (productionRole as any) : null }),
+          ...(resolvedType === 'RESELL'
+            ? { productionRole: null }
+            : productionRole !== undefined && { productionRole: productionRole ? (productionRole as any) : null }),
         },
         include: {
-          parent: { select: { id: true, name: true, type: true } },
+          parent: { select: { id: true, name: true, type: true, productionRole: true } },
           _count: { select: { products: true, children: true } },
         },
       });
