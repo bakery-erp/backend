@@ -23,7 +23,7 @@ productCategoriesRouter.get('/', async (_req, res) => {
   const list = await prisma.productCategory.findMany({
     orderBy: [{ parentId: 'asc' }, { name: 'asc' }],
     include: {
-      parent: { select: { id: true, name: true, type: true } },
+      parent: { select: { id: true, name: true, type: true, productionRole: true } },
       _count: { select: { products: true, children: true } },
     },
   });
@@ -34,7 +34,7 @@ productCategoriesRouter.get('/:id', async (req, res) => {
   const cat = await prisma.productCategory.findUnique({
     where: { id: req.params.id },
     include: {
-      parent: { select: { id: true, name: true, type: true } },
+      parent: { select: { id: true, name: true, type: true, productionRole: true } },
       children: { include: { _count: { select: { products: true } } }, orderBy: { name: 'asc' } },
       products: true,
     },
@@ -44,21 +44,38 @@ productCategoriesRouter.get('/:id', async (req, res) => {
 });
 
 productCategoriesRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res) => {
-  const { name, type, parentId } = req.body as { name: string; type: string; parentId?: string | null };
+  const { name, type, parentId, productionRole } = req.body as {
+    name: string;
+    type: string;
+    parentId?: string | null;
+    productionRole?: string | null;
+  };
   if (!name?.trim() || !type) return res.status(400).json({ error: 'name and type (PRODUCED|RESELL) required' });
+
+  // For PRODUCED categories, productionRole is mandatory
+  if (type === 'PRODUCED') {
+    if (!productionRole || !['BAKER', 'CAKE_WORKER', 'SAMBUSA_WORKER'].includes(productionRole)) {
+      return res.status(400).json({
+        error: 'productionRole is required for PRODUCED categories (must be BAKER, CAKE_WORKER, or SAMBUSA_WORKER)',
+      });
+    }
+  }
+
   const parent = await resolveParentCategory(parentId);
   if (typeof parent === 'string') return res.status(400).json({ error: parent });
   if (parent && parent.type !== type) {
     return res.status(400).json({ error: 'parent category must have the same type' });
   }
+
   const category = await prisma.productCategory.create({
     data: {
       name: name.trim(),
       type: type as any,
+      productionRole: type === 'PRODUCED' ? (productionRole as any) : null,
       parentId: parent ? parent.id : null,
     },
     include: {
-      parent: { select: { id: true, name: true, type: true } },
+      parent: { select: { id: true, name: true, type: true, productionRole: true } },
       _count: { select: { products: true, children: true } },
     },
   });
@@ -66,21 +83,44 @@ productCategoriesRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req, res
 });
 
 productCategoriesRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), async (req, res) => {
-  const { name, type, parentId } = req.body as { name?: string; type?: string; parentId?: string | null };
+  const { name, type, parentId, productionRole } = req.body as {
+    name?: string;
+    type?: string;
+    parentId?: string | null;
+    productionRole?: string | null;
+  };
+
+  const existing = await prisma.productCategory.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: 'Category not found' });
+
+  const effectiveType = type || existing.type;
+  if (effectiveType === 'PRODUCED') {
+    const roleToUse = productionRole !== undefined ? productionRole : existing.productionRole;
+    if (!roleToUse || !['BAKER', 'CAKE_WORKER', 'SAMBUSA_WORKER'].includes(roleToUse)) {
+      return res.status(400).json({
+        error: 'productionRole is required for PRODUCED categories (must be BAKER, CAKE_WORKER, or SAMBUSA_WORKER)',
+      });
+    }
+  }
+
   const parent = parentId !== undefined ? await resolveParentCategory(parentId, req.params.id) : null;
   if (typeof parent === 'string') return res.status(400).json({ error: parent });
   if (parent && type && parent.type !== type) {
     return res.status(400).json({ error: 'parent category must have the same type' });
   }
+
   const category = await prisma.productCategory.update({
     where: { id: req.params.id },
     data: {
       ...(name !== undefined && { name: name.trim() }),
       ...(type !== undefined && { type: type as any }),
+      ...(effectiveType === 'RESELL'
+        ? { productionRole: null }
+        : productionRole !== undefined && { productionRole: productionRole as any }),
       ...(parentId !== undefined && { parentId: parent ? parent.id : null }),
     },
     include: {
-      parent: { select: { id: true, name: true, type: true } },
+      parent: { select: { id: true, name: true, type: true, productionRole: true } },
       _count: { select: { products: true, children: true } },
     },
   });

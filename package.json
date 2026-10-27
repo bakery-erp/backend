@@ -13,6 +13,7 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
+    "seed:roles": "tsx src/scripts/seed_roles.ts",
     "db:studio": "prisma studio"
   },
   "dependencies": {
