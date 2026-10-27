@@ -19,11 +19,23 @@ async function main() {
 
   if (!branch) {
     console.log('📍 No active branch found. Creating primary test branch: "Central Bakery - Bole"...');
+    const company = await prisma.company.findFirst();
     branch = await prisma.branch.create({
       data: {
         name: 'Central Bakery - Bole',
         address: 'Bole Subcity, Next to Edna Mall, Addis Ababa',
         isActive: true,
+        ...(company
+          ? { companyId: company.id }
+          : {
+              company: {
+                create: {
+                  name: 'Koket Bakery Group',
+                  phone: '0912345678',
+                  address: 'Addis Ababa',
+                },
+              },
+            }),
       },
     });
   }
