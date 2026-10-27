@@ -354,7 +354,7 @@ export class StockItemsService {
           totalValue,
           type: 'IN',
           status: autoConfirm ? 'CONFIRMED' : 'PENDING_CONFIRMATION',
-          reason: reason?.trim() || (autoConfirm ? 'Manual stock addition' : 'Added by Admin/Owner (Awaiting Stock Keeper approval)'),
+          reason: reason?.trim() || 'Manual Stock Addition',
           ...(autoConfirm ? { confirmedAt: new Date(), confirmedById: userId } : {}),
         },
       });

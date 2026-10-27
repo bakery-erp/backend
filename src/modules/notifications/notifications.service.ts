@@ -52,6 +52,14 @@ function resolvePushContent(type: string, titleKey: string, bodyKey: string, var
       title = '✅ Inward Stock Confirmed';
       body = `${variables.confirmedBy || 'Stock Keeper'} verified receipt of ${variables.quantity ?? 0} ${variables.unit || ''} "${variables.itemName || 'Item'}".`;
       break;
+    case 'STOCK_REJECTED':
+      title = '❌ Inward Stock Rejected';
+      body = `${variables.rejectedBy || 'Stock Keeper'} rejected ${variables.quantity ?? 0} ${variables.unit || ''} of "${variables.itemName || 'Item'}". Reason: ${variables.reason || 'No reason provided'}.`;
+      break;
+    case 'STOCK_RESUBMITTED':
+      title = '🔄 Inward Stock Resubmitted';
+      body = `${variables.resubmittedBy || 'Management'} updated and resubmitted ${variables.quantity ?? 0} ${variables.unit || ''} of "${variables.itemName || 'Item'}". Please inspect and verify receipt.`;
+      break;
     case 'STOCK_PURCHASE_LOAN':
       title = '💳 Stock Purchased on Credit';
       body = `Credit purchase of "${variables.itemName || 'Item'}" logged from ${variables.supplierName || 'supplier'} for ${variables.amount || 0} ETB.`;
