@@ -171,6 +171,7 @@ model User {
   isActive      Boolean   @default(true)
   // Salary / billing (all users are staff; optional for OWNER/ADMIN if not paid via payroll)
   salary        Decimal?  @db.Decimal(12, 2)
+  dailyExpense  Decimal?  @db.Decimal(12, 2)
   startDate     DateTime?
   lastPaidDate  DateTime?
   shift         Shift?
