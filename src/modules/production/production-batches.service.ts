@@ -57,7 +57,20 @@ export class ProductionBatchesService {
     if (role && role !== 'ALL') {
       where.OR = [
         { user: { role: role as any } },
-        { items: { some: { product: { category: { productionRole: role as any } } } } },
+        {
+          items: {
+            some: {
+              product: {
+                category: {
+                  OR: [
+                    { productionRole: role as any },
+                    { parent: { productionRole: role as any } },
+                  ],
+                },
+              },
+            },
+          },
+        },
       ];
     }
 

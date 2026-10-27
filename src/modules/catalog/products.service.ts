@@ -25,10 +25,11 @@ export class ProductsService {
     type?: string,
     isActive?: boolean,
     branchId?: string,
-    includeMetrics: boolean = true
+    includeMetrics: boolean = true,
+    productionRole?: string
   ): ServiceResult {
     try {
-      const cacheKey = JSON.stringify({ categoryId, includeSubcategories, search, type, isActive, branchId, includeMetrics });
+      const cacheKey = JSON.stringify({ categoryId, includeSubcategories, search, type, isActive, branchId, includeMetrics, productionRole });
       const cached = ProductsService.productsResultCache.get(cacheKey);
       if (cached && (Date.now() - cached.timestamp) < ProductsService.CACHE_TTL_MS) {
         return { data: cached.data };
@@ -84,6 +85,16 @@ export class ProductsService {
       ];
     }
 
+    if (productionRole) {
+      where.category = {
+        type: 'PRODUCED',
+        OR: [
+          { productionRole: productionRole as any },
+          { parent: { productionRole: productionRole as any } },
+        ],
+      };
+    }
+
     const list = await prisma.product.findMany({
       where,
       include: {
@@ -92,8 +103,9 @@ export class ProductsService {
             id: true,
             name: true,
             type: true,
+            productionRole: true,
             parentId: true,
-            parent: { select: { id: true, name: true, type: true } },
+            parent: { select: { id: true, name: true, type: true, productionRole: true } },
           },
         },
         financialCategory: { select: { id: true, name: true, type: true } },
@@ -397,7 +409,7 @@ export class ProductsService {
       include: {
         category: {
           include: {
-            parent: { select: { id: true, name: true, type: true } },
+            parent: { select: { id: true, name: true, type: true, productionRole: true } },
           },
         },
         financialCategory: true,
