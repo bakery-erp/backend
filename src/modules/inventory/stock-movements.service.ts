@@ -142,7 +142,14 @@ export class StockMovementsService {
             where: { id: stockItemId }, 
             data: { currentQuantity: adjQty } 
           });
-          const deltaQty = Math.abs(adjQty - current);
+          const delta = adjQty - current;
+          const deltaQty = Math.abs(delta);
+          const isLoss = delta < 0;
+          const isGain = delta > 0;
+          const signPrefix = isLoss ? '[-] ' : isGain ? '[+] ' : '';
+          const cleanReason = (reason?.trim() || `Adjusted to ${adjQty}`).replace(/^\[[-+]\]\s*/, '');
+          const finalReason = `${signPrefix}${cleanReason}`;
+
           const movement = await tx.stockMovement.create({
             data: {
               stockItemId,
@@ -154,7 +161,7 @@ export class StockMovementsService {
               status: 'CONFIRMED',
               confirmedAt: new Date(),
               confirmedById: userId,
-              reason: reason || `Adjusted to ${adjQty}`,
+              reason: finalReason,
             },
             include: { 
               stockItem: true, 
