@@ -48,7 +48,7 @@ usersRouter.get('/me/dashboard', async (req: AuthRequest, res) => {
           FROM (
             SELECT 
               usr.id, usr."fullName", usr.phone, usr.role, usr."branchId", usr."isActive", 
-              usr."createdAt", usr.salary, usr."startDate", usr."lastPaidDate", usr.shift, usr."filesUrl",
+              usr."createdAt", usr.salary, usr."dailyExpense", usr."startDate", usr."lastPaidDate", usr.shift, usr."filesUrl",
               CASE WHEN b.id IS NOT NULL THEN json_build_object('id', b.id, 'name', b.name) ELSE NULL END AS branch
             FROM "User" usr
             LEFT JOIN "Branch" b ON b.id = usr."branchId"
@@ -128,7 +128,7 @@ usersRouter.get('/me/dashboard', async (req: AuthRequest, res) => {
   }
 });
 
-const userSelect = { id: true, fullName: true, phone: true, role: true, branchId: true, isActive: true, createdAt: true, salary: true, startDate: true, lastPaidDate: true, shift: true, filesUrl: true } as const;
+const userSelect = { id: true, fullName: true, phone: true, role: true, branchId: true, isActive: true, createdAt: true, salary: true, dailyExpense: true, startDate: true, lastPaidDate: true, shift: true, filesUrl: true } as const;
 
 usersRouter.get('/', requireRole('OWNER', 'ADMIN', 'STOCK_KEEPER'), async (req: AuthRequest, res) => {
   const branchId = req.query.branchId as string | undefined;
@@ -145,6 +145,7 @@ usersRouter.get('/', requireRole('OWNER', 'ADMIN', 'STOCK_KEEPER'), async (req: 
       isActive: true,
       createdAt: true,
       salary: isPrivileged,
+      dailyExpense: isPrivileged,
       startDate: true,
       lastPaidDate: true,
       shift: true,
@@ -173,13 +174,14 @@ function toDecimal(v: unknown): number | null {
 }
 
 usersRouter.post('/', requireRole('OWNER', 'ADMIN'), upload.single('file'), async (req, res) => {
-  const { fullName, phone, password, role, branchId, salary, startDate, lastPaidDate, shift } = req.body as {
+  const { fullName, phone, password, role, branchId, salary, dailyExpense, startDate, lastPaidDate, shift } = req.body as {
     fullName: string;
     phone: string;
     password: string;
     role: string;
     branchId?: string;
     salary?: number | string;
+    dailyExpense?: number | string;
     startDate?: string;
     lastPaidDate?: string;
     shift?: string;
@@ -198,6 +200,7 @@ usersRouter.post('/', requireRole('OWNER', 'ADMIN'), upload.single('file'), asyn
   if (existing) return res.status(400).json({ error: 'Phone already exists' });
   const passwordHash = await bcrypt.hash(password, 10);
   const salaryNum = toDecimal(salary);
+  const dailyExpenseNum = toDecimal(dailyExpense);
   const user = await prisma.user.create({
     data: {
       fullName: fullName.trim(),
@@ -206,6 +209,7 @@ usersRouter.post('/', requireRole('OWNER', 'ADMIN'), upload.single('file'), asyn
       role: role as any,
       branchId: branchId || null,
       salary: salaryNum ?? undefined,
+      dailyExpense: dailyExpenseNum ?? undefined,
       startDate: startDate ? new Date(startDate) : undefined,
       lastPaidDate: lastPaidDate ? new Date(lastPaidDate) : undefined,
       shift: shift === 'DAY' || shift === 'NIGHT' ? shift : undefined,
@@ -217,7 +221,7 @@ usersRouter.post('/', requireRole('OWNER', 'ADMIN'), upload.single('file'), asyn
 });
 
 usersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), upload.single('file'), async (req, res) => {
-  const { fullName, phone, password, role, branchId, isActive, salary, startDate, lastPaidDate, shift } = req.body as Record<string, unknown>;
+  const { fullName, phone, password, role, branchId, isActive, salary, dailyExpense, startDate, lastPaidDate, shift } = req.body as Record<string, unknown>;
   
   let filesUrl = req.body.filesUrl as string | undefined;
   if (req.file) {
@@ -231,6 +235,7 @@ usersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), upload.single('file'), 
   if (branchId !== undefined) data.branchId = branchId || null;
   if (typeof isActive === 'boolean') data.isActive = isActive;
   if (salary !== undefined) data.salary = toDecimal(salary);
+  if (dailyExpense !== undefined) data.dailyExpense = toDecimal(dailyExpense);
   if (startDate !== undefined) data.startDate = startDate ? new Date(startDate as string) : null;
   if (lastPaidDate !== undefined) data.lastPaidDate = lastPaidDate ? new Date(lastPaidDate as string) : null;
   if (shift === 'DAY' || shift === 'NIGHT') data.shift = shift;
