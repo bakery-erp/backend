@@ -100,6 +100,15 @@ stockMovementsRouter.post('/:id/reject', requireRole('OWNER', 'STOCK_KEEPER'), a
   res.json(result.data);
 });
 
+// PATCH /api/stock-movements/:id/resubmit — edit and resubmit rejected stock intake
+stockMovementsRouter.patch('/:id/resubmit', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
+  const result = await stockMovementsService.resubmitStockMovement(req.params.id, req.user!.id, req.body);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
 // GET /api/stock-movements/:id
 stockMovementsRouter.get('/:id', async (req, res: Response) => {
   const result = await stockMovementsService.getStockMovementById(req.params.id);

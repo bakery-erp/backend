@@ -398,6 +398,7 @@ export class StockMovementsService {
   async rejectStockMovement(id: string, userId: string, reason?: string): ServiceResult {
     const movement = await prisma.stockMovement.findUnique({
       where: { id },
+      include: { stockItem: true },
     });
     if (!movement) {
       return { error: 'Stock movement not found', status: 404 };
@@ -406,13 +407,14 @@ export class StockMovementsService {
       return { error: `Stock movement cannot be rejected because status is ${movement.status}`, status: 400 };
     }
 
+    const rejectionReason = reason?.trim() || 'No reason provided';
     const updated = await prisma.stockMovement.update({
       where: { id },
       data: {
         status: 'REJECTED',
         confirmedAt: new Date(),
         confirmedById: userId,
-        reason: reason ? `${movement.reason || ''} [Rejected: ${reason}]`.trim() : movement.reason,
+        reason: movement.reason ? `${movement.reason} [Rejected: ${rejectionReason}]` : `[Rejected: ${rejectionReason}]`,
       },
       include: {
         stockItem: true,
@@ -420,6 +422,129 @@ export class StockMovementsService {
         confirmedBy: { select: { id: true, fullName: true, role: true } },
       },
     });
+
+    // Notify the user who recorded it + branch Admins and Owners
+    const userIdsToNotify = new Set<string>();
+    if (movement.userId && movement.userId !== userId) {
+      userIdsToNotify.add(movement.userId);
+    }
+
+    const branchAdmins = await prisma.user.findMany({
+      where: {
+        isActive: true,
+        role: { in: ['OWNER', 'ADMIN'] },
+        OR: [
+          { branchId: updated.stockItem?.branchId || null },
+          { role: 'OWNER' },
+        ],
+      },
+      select: { id: true },
+    });
+    branchAdmins.forEach((u) => userIdsToNotify.add(u.id));
+    userIdsToNotify.delete(userId);
+
+    if (userIdsToNotify.size > 0 && updated.stockItem) {
+      notificationsService.notifyUsers({
+        userIds: Array.from(userIdsToNotify),
+        branchId: updated.stockItem.branchId,
+        type: 'STOCK_REJECTED',
+        titleKey: 'notifications.stockRejectedTitle',
+        bodyKey: 'notifications.stockRejectedBody',
+        variables: {
+          itemName: updated.stockItem.name,
+          quantity: Number(updated.quantity),
+          unit: updated.stockItem.unitType,
+          rejectedBy: updated.confirmedBy?.fullName || 'Stock Keeper',
+          reason: rejectionReason,
+        },
+        link: '/stock-movements?tab=rejected',
+      }).catch((err) => console.error('[Notification] rejectStockMovement error:', err));
+    }
+
+    return { data: updated };
+  }
+
+  async resubmitStockMovement(
+    id: string,
+    userId: string,
+    data: { quantity?: number; unitPrice?: number; reason?: string }
+  ): ServiceResult {
+    const movement = await prisma.stockMovement.findUnique({
+      where: { id },
+      include: { stockItem: true, user: true, purchaseLoan: true },
+    });
+    if (!movement) {
+      return { error: 'Stock movement not found', status: 404 };
+    }
+    if (movement.status !== 'REJECTED' && movement.status !== 'PENDING_CONFIRMATION') {
+      return { error: `Stock movement cannot be resubmitted because status is ${movement.status}`, status: 400 };
+    }
+
+    const newQty = data.quantity !== undefined ? Number(data.quantity) : Number(movement.quantity);
+    if (newQty <= 0 || isNaN(newQty)) {
+      return { error: 'Quantity must be greater than 0', status: 400 };
+    }
+
+    const newUnitPrice = data.unitPrice !== undefined ? Number(data.unitPrice) : (movement.unitPrice ? Number(movement.unitPrice) : undefined);
+    const newTotalValue = newUnitPrice !== undefined ? newQty * newUnitPrice : undefined;
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } });
+    const cleanReason = (data.reason || movement.reason || 'Manual Stock Addition').replace(/\s*\[Rejected:.*?\]/g, '').replace(/\s*\[Resubmitted by.*?\]/g, '').trim();
+    const updatedReason = `${cleanReason} [Resubmitted by ${user?.fullName || 'Management'}]`;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const m = await tx.stockMovement.update({
+        where: { id },
+        data: {
+          quantity: newQty,
+          unitPrice: newUnitPrice,
+          totalValue: newTotalValue,
+          reason: updatedReason,
+          status: 'PENDING_CONFIRMATION',
+          confirmedAt: null,
+          confirmedById: null,
+        },
+        include: {
+          stockItem: true,
+          user: { select: { id: true, fullName: true, role: true } },
+        },
+      });
+
+      if (movement.purchaseLoan) {
+        const paidAmount = Number(movement.purchaseLoan.paidAmount || 0);
+        const remainingBalance = Math.max(0, (newTotalValue || 0) - paidAmount);
+        const loanStatus = remainingBalance <= 0 ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'UNPAID');
+
+        await tx.stockPurchaseLoan.update({
+          where: { id: movement.purchaseLoan.id },
+          data: {
+            totalAmount: newTotalValue || 0,
+            remainingBalance,
+            status: loanStatus,
+          },
+        });
+      }
+
+      return m;
+    });
+
+    // Notify Stock Keepers in this branch
+    if (updated.stockItem?.branchId) {
+      notificationsService.notifyBranchRoles(
+        updated.stockItem.branchId,
+        ['STOCK_KEEPER'],
+        'STOCK_RESUBMITTED',
+        'notifications.stockResubmittedTitle',
+        'notifications.stockResubmittedBody',
+        {
+          itemName: updated.stockItem.name,
+          quantity: newQty,
+          unit: updated.stockItem.unitType,
+          resubmittedBy: user?.fullName || 'Management',
+        },
+        '/stock-movements?tab=approvals'
+      ).catch((err) => console.error('[Notification] resubmitStockMovement error:', err));
+    }
 
     return { data: updated };
   }
