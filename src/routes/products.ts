@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
-import { authMiddleware, requireRole } from '../middleware/auth.js';
+import { authMiddleware, requireRole, type AuthRequest } from '../middleware/auth.js';
 
 async function validateProductFinancialCategory(financialCategoryId: string | null | undefined) {
   if (financialCategoryId == null || financialCategoryId === '') return null;
@@ -20,9 +20,34 @@ function decimalToNum(v: unknown) {
 export const productsRouter = Router();
 productsRouter.use(authMiddleware);
 
-productsRouter.get('/', async (req, res) => {
+productsRouter.get('/', async (req: AuthRequest, res) => {
   const categoryId = req.query.categoryId as string | undefined;
-  const where = categoryId ? { categoryId } : {};
+  const productionRoleQuery = req.query.productionRole as string | undefined;
+  const producedOnly = req.query.producedOnly === 'true';
+
+  const userRole = req.user?.role;
+  const isWorkerRole = userRole === 'BAKER' || userRole === 'CAKE_WORKER' || userRole === 'SAMBUSA_WORKER';
+  const roleFilter = isWorkerRole ? userRole : productionRoleQuery;
+
+  const where: any = {};
+  if (categoryId) {
+    where.categoryId = categoryId;
+  }
+
+  if (roleFilter) {
+    where.category = {
+      type: 'PRODUCED',
+      OR: [
+        { productionRole: roleFilter as any },
+        { parent: { productionRole: roleFilter as any } },
+      ],
+    };
+  } else if (producedOnly) {
+    where.category = {
+      type: 'PRODUCED',
+    };
+  }
+
   const list = await prisma.product.findMany({
     where,
     include: {
