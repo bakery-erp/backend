@@ -14,6 +14,9 @@ export class AuthService {
     if (!currentPassword || !newPassword) {
       return { error: 'Current password and new password are required', status: 400 };
     }
+    if (newPassword.length < 4) {
+      return { error: 'New password must be at least 4 characters long', status: 400 };
+    }
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
