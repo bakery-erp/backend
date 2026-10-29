@@ -14,7 +14,7 @@ productionBatchesRouter.get('/', async (req: AuthRequest, res: Response) => {
   const shift = req.query.shift as string | undefined;
   const role = req.query.role as string | undefined;
   const userId = req.query.userId as string | undefined;
-  const seen = req.query.seen as string | undefined;
+  const seen = (req.query.seen as string) || (req.query.seenFilter as string) || undefined;
   const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
   const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
   const result = await productionBatchesService.getProductionBatches(
@@ -82,7 +82,7 @@ productionBatchesRouter.get('/:id', async (req: AuthRequest, res: Response) => {
   res.json(result.data);
 });
 
-productionBatchesRouter.post('/:id/seen', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
+productionBatchesRouter.post('/:id/seen', requireRole('OWNER'), async (req: AuthRequest, res: Response) => {
   const result = await productionBatchesService.markBatchSeen(req.params.id, req.user!);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -90,7 +90,7 @@ productionBatchesRouter.post('/:id/seen', requireRole('OWNER', 'ADMIN'), async (
   res.json(result.data);
 });
 
-productionBatchesRouter.post('/:id/flag', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
+productionBatchesRouter.post('/:id/flag', requireRole('OWNER'), async (req: AuthRequest, res: Response) => {
   const { isFlagged, reason } = req.body;
   const result = await productionBatchesService.toggleBatchFlag(req.params.id, isFlagged !== false, reason, req.user);
   if (result.error) {

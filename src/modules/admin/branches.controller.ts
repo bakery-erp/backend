@@ -46,7 +46,8 @@ branchesRouter.patch('/:id', requireRole('OWNER'), async (req: AuthRequest, res:
 });
 
 branchesRouter.delete('/:id', requireRole('OWNER'), async (req: AuthRequest, res: Response) => {
-  const result = await branchesService.deleteBranch(req.params.id);
+  const password = req.body?.password || (req.headers['x-password'] as string);
+  const result = await branchesService.deleteBranch(req.params.id, req.user?.id, password);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
