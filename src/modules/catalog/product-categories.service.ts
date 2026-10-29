@@ -72,8 +72,8 @@ export class ProductCategoriesService {
     return { data: cat };
   }
 
-  async createCategory(body: { name: string; type: string; parentId?: string | null; productionRole?: any }): ServiceResult {
-    const { name, type, parentId, productionRole } = body;
+  async createCategory(body: { name: string; nameLatin?: string; type: string; parentId?: string | null; productionRole?: any }): ServiceResult {
+    const { name, nameLatin, type, parentId, productionRole } = body;
     if (!name?.trim() || !type) {
       return { error: 'name and type (PRODUCED|RESELL) required', status: 400 };
     }
@@ -107,6 +107,7 @@ export class ProductCategoriesService {
       const category = await prisma.productCategory.create({
         data: {
           name: trimmedName,
+          nameLatin: nameLatin ? nameLatin.trim() : null,
           type: type as any,
           parentId: parent ? parent.id : null,
           productionRole: type === 'PRODUCED' ? (productionRole as any) : null,
@@ -126,13 +127,13 @@ export class ProductCategoriesService {
     }
   }
 
-  async updateCategory(id: string, body: { name?: string; type?: string; parentId?: string | null; productionRole?: any }): ServiceResult {
+  async updateCategory(id: string, body: { name?: string; nameLatin?: string; type?: string; parentId?: string | null; productionRole?: any }): ServiceResult {
     const existing = await prisma.productCategory.findUnique({ where: { id } });
     if (!existing) {
       return { error: 'Category not found', status: 404 };
     }
 
-    const { name, type, parentId, productionRole } = body;
+    const { name, nameLatin, type, parentId, productionRole } = body;
     const trimmedName = name !== undefined ? name.trim() : undefined;
 
     if (trimmedName && trimmedName.toLowerCase() !== existing.name.toLowerCase()) {
@@ -173,6 +174,7 @@ export class ProductCategoriesService {
         where: { id },
         data: {
           ...(trimmedName !== undefined && { name: trimmedName }),
+          ...(nameLatin !== undefined && { nameLatin: nameLatin ? nameLatin.trim() : null }),
           ...(type !== undefined && { type: type as any }),
           ...(parentId !== undefined && { parentId: parent ? parent.id : null }),
           ...(resolvedType === 'RESELL'

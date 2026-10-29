@@ -69,8 +69,9 @@ export class ProductsService {
     if (typeof isActive === 'boolean') where.isActive = isActive;
     if (search?.trim()) {
       where.OR = [
-        { name: { contains: search.trim() } },
-        { flavor: { contains: search.trim() } },
+        { name: { contains: search.trim(), mode: 'insensitive' } },
+        { nameLatin: { contains: search.trim(), mode: 'insensitive' } },
+        { flavor: { contains: search.trim(), mode: 'insensitive' } },
       ];
     }
     if (branchId) {
@@ -501,7 +502,7 @@ export class ProductsService {
   }
 
   async createProduct(body: Record<string, unknown>): ServiceResult {
-    const { categoryId, name, flavor, unitType, basePrice, buyPrice, imageUrl, financialCategoryId, branchIds } = body;
+    const { categoryId, name, nameLatin, flavor, unitType, basePrice, buyPrice, imageUrl, financialCategoryId, branchIds } = body;
     
     if (!categoryId || !name || !unitType || basePrice == null) {
       return { error: 'categoryId, name, unitType, basePrice required', status: 400 };
@@ -542,6 +543,7 @@ export class ProductsService {
             ? String(financialCategoryId)
             : null,
         name: trimmedName,
+        nameLatin: nameLatin ? String(nameLatin).trim() : null,
         flavor: flavor ? String(flavor).trim() : null,
         unitType: unitType as any,
         basePrice: decimalToNum(basePrice) ?? 0,
@@ -557,7 +559,7 @@ export class ProductsService {
   }
 
   async updateProduct(id: string, body: Record<string, unknown>): ServiceResult {
-    const { categoryId, name, flavor, unitType, basePrice, buyPrice, imageUrl, isActive, financialCategoryId, branchIds } = body;
+    const { categoryId, name, nameLatin, flavor, unitType, basePrice, buyPrice, imageUrl, isActive, financialCategoryId, branchIds } = body;
     
     if (financialCategoryId !== undefined) {
       const fcErr = await this.validateProductFinancialCategory(
@@ -586,6 +588,7 @@ export class ProductsService {
       }
       data.name = trimmedName;
     }
+    if (nameLatin !== undefined) data.nameLatin = nameLatin ? String(nameLatin).trim() : null;
     if (flavor !== undefined) data.flavor = flavor ? String(flavor).trim() : null;
     if (unitType != null) data.unitType = unitType;
     if (basePrice != null) data.basePrice = decimalToNum(basePrice);

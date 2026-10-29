@@ -8,13 +8,14 @@ const stockItemsService = new StockItemsService();
 
 stockItemsRouter.use(authMiddleware);
 
-// GET /api/stock-items?branchId=...&search=flour&unitType=KG&lowStockOnly=true
+// GET /api/stock-items?branchId=...&search=flour&unitType=KG&lowStockOnly=true&category=...
 stockItemsRouter.get('/', async (req: AuthRequest, res: Response) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const search = req.query.search as string | undefined;
   const unitType = req.query.unitType as string | undefined;
+  const category = req.query.category as string | undefined;
   const lowStockOnly = req.query.lowStockOnly === 'true';
-  const result = await stockItemsService.getStockItems(branchId, search, unitType, lowStockOnly);
+  const result = await stockItemsService.getStockItems(branchId, search, unitType, lowStockOnly, category);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

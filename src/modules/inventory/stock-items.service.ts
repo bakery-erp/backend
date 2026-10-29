@@ -17,7 +17,8 @@ export class StockItemsService {
     branchId?: string | null,
     search?: string,
     unitType?: string,
-    lowStockOnly?: boolean
+    lowStockOnly?: boolean,
+    category?: string
   ): ServiceResult {
     if (!branchId) {
       return { error: 'branchId required', status: 400 };
@@ -25,7 +26,34 @@ export class StockItemsService {
 
     const where: any = { branchId };
     if (unitType) where.unitType = unitType;
-    if (search?.trim()) where.name = { contains: search.trim() };
+
+    const andConditions: any[] = [];
+
+    if (category?.trim()) {
+      const cat = category.trim();
+      andConditions.push({
+        OR: [
+          { category: cat },
+          { categoryLatin: cat },
+        ],
+      });
+    }
+
+    if (search?.trim()) {
+      const term = search.trim();
+      andConditions.push({
+        OR: [
+          { name: { contains: term, mode: 'insensitive' } },
+          { nameLatin: { contains: term, mode: 'insensitive' } },
+          { category: { contains: term, mode: 'insensitive' } },
+          { categoryLatin: { contains: term, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    if (andConditions.length > 0) {
+      where.AND = andConditions;
+    }
 
     const list = await prisma.stockItem.findMany({
       where,
@@ -65,7 +93,7 @@ export class StockItemsService {
   }
 
   async createStockItem(body: Record<string, unknown>, userId: string, userBranchId?: string | null): ServiceResult {
-    const { branchId, name, unitType, currentQuantity, minStockLevel, unitPrice, loanInfo } = body;
+    const { branchId, name, nameLatin, category, categoryLatin, unitType, currentQuantity, minStockLevel, unitPrice, loanInfo } = body;
     let bid = (branchId as string) || userBranchId || undefined;
     if (!bid) {
       const defaultBranch = await prisma.branch.findFirst({ select: { id: true } });
@@ -84,6 +112,9 @@ export class StockItemsService {
         data: {
           branchId: bid,
           name: String(name).trim(),
+          nameLatin: nameLatin ? String(nameLatin).trim() : null,
+          category: category ? String(category).trim() : null,
+          categoryLatin: categoryLatin ? String(categoryLatin).trim() : null,
           unitType: unitType as any,
           currentQuantity: initQty,
           unitPrice: price,
@@ -138,10 +169,13 @@ export class StockItemsService {
       return { error: 'Stock item not found', status: 404 };
     }
 
-    const { name, unitType, currentQuantity, minStockLevel, unitPrice } = body;
+    const { name, nameLatin, category, categoryLatin, unitType, currentQuantity, minStockLevel, unitPrice } = body;
     const data: Record<string, unknown> = {};
     
     if (name != null) data.name = String(name).trim();
+    if (nameLatin !== undefined) data.nameLatin = nameLatin ? String(nameLatin).trim() : null;
+    if (category !== undefined) data.category = category ? String(category).trim() : null;
+    if (categoryLatin !== undefined) data.categoryLatin = categoryLatin ? String(categoryLatin).trim() : null;
     if (unitType != null) data.unitType = unitType;
     if (currentQuantity != null) data.currentQuantity = decimalToNum(currentQuantity);
     if (unitPrice != null) data.unitPrice = decimalToNum(unitPrice);
