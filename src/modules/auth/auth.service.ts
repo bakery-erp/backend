@@ -231,6 +231,11 @@ export class AuthService {
       return { error: 'Target employee user not found', status: 404 };
     }
 
+    // Privilege Escalation Prevention: Only Owners can reset Owner passwords
+    if (targetUser.role === 'OWNER' && admin.role !== 'OWNER') {
+      return { error: 'Access denied: Only Owners can reset Owner credentials', status: 403 };
+    }
+
     // Generate readable random password if customPassword not provided
     let newPassword = body.customPassword?.trim();
     if (!newPassword) {
@@ -243,8 +248,8 @@ export class AuthService {
       newPassword = `Bakery#${code}${digits}`;
     }
 
-    if (newPassword.length < 6) {
-      return { error: 'New password must be at least 6 characters long', status: 400 };
+    if (newPassword.length < 4) {
+      return { error: 'New password must be at least 4 characters long', status: 400 };
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 10);

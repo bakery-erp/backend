@@ -60,7 +60,7 @@ function handleUserFormUpload(req: any, res: any, next: any) {
 }
 
 usersRouter.get('/roles', requireRole('OWNER', 'ADMIN'), (_req, res) => {
-  res.json(['OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER', 'SAMBUSA_WORKER', 'EMPLOYEE']);
+  res.json(['OWNER', 'ADMIN', 'BAKER', 'CAKE_WORKER', 'CASHIER', 'SAMBUSA_WORKER', 'STOCK_KEEPER', 'EMPLOYEE']);
 });
 
 usersRouter.get('/me/dashboard', async (req: AuthRequest, res: Response) => {
@@ -140,7 +140,7 @@ usersRouter.post('/', requireRole('OWNER', 'ADMIN'), handleUserFormUpload, async
       avatarUrl = await uploadToStorage(avatarFile, 'avatars');
     }
 
-    const result = await usersService.createUser({ ...req.body, avatarUrl }, docFileUrl);
+    const result = await usersService.createUser({ ...req.body, avatarUrl }, docFileUrl, req.user);
     if (result.error) {
       return res.status(result.status || 500).json({ error: result.error });
     }
@@ -166,7 +166,7 @@ usersRouter.patch('/:id', requireRole('OWNER', 'ADMIN'), handleUserFormUpload, a
       bodyData.avatarUrl = await uploadToStorage(avatarFile, 'avatars');
     }
 
-    const result = await usersService.updateUser(req.params.id, bodyData, docFileUrl);
+    const result = await usersService.updateUser(req.params.id, bodyData, docFileUrl, req.user);
     if (result.error) {
       return res.status(result.status || 500).json({ error: result.error });
     }
@@ -180,7 +180,8 @@ usersRouter.delete('/:id', requireRole('OWNER'), async (req: AuthRequest, res: R
   if (req.user?.id === req.params.id) {
     return res.status(400).json({ error: 'You cannot delete your own account' });
   }
-  const result = await usersService.deleteUser(req.params.id);
+  const password = req.body?.password || (req.headers['x-password'] as string);
+  const result = await usersService.deleteUser(req.params.id, req.user?.id, password);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

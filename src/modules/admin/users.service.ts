@@ -11,6 +11,7 @@ const userSelect = {
   isActive: true,
   createdAt: true,
   salary: true,
+  dailyExpense: true,
   startDate: true,
   lastPaidDate: true,
   shift: true,
@@ -42,6 +43,7 @@ export class UsersService {
         isActive: true,
         createdAt: true,
         salary: isPrivileged,
+        dailyExpense: isPrivileged,
         startDate: true,
         lastPaidDate: true,
         shift: true,
@@ -162,7 +164,7 @@ export class UsersService {
     }
   }
 
-  async createUser(body: any, fileUrl?: string): ServiceResult {
+  async createUser(body: any, fileUrl?: string, currentUser?: { id: string; role: string }): ServiceResult {
     const {
       fullName,
       phone,
@@ -170,6 +172,7 @@ export class UsersService {
       role,
       branchId,
       salary,
+      dailyExpense,
       startDate,
       lastPaidDate,
       shift,
@@ -177,11 +180,25 @@ export class UsersService {
       avatarUrl,
     } = body;
 
+    // Privilege Escalation Prevention: Only Owners can create Owner accounts
+    if (role === 'OWNER' && currentUser?.role !== 'OWNER') {
+      return { error: 'Access denied: Only Owners can create Owner accounts', status: 403 };
+    }
+
     const finalFilesUrl = fileUrl || bodyFilesUrl;
     const phoneTrim = phone?.trim();
 
     if (!fullName?.trim() || !phoneTrim || !password) {
       return { error: 'fullName, phone, password required', status: 400 };
+    }
+
+    // Phone format validation (Ethiopian mobile numbers)
+    if (!/^(?:\+251|0)[97]\d{8}$/.test(phoneTrim)) {
+      return { error: 'Invalid Ethiopian phone number. Must be 10 digits starting with 09 or 07 (or +251).', status: 400 };
+    }
+
+    if (password.length < 4) {
+      return { error: 'Password must be at least 4 characters long', status: 400 };
     }
 
     if (!finalFilesUrl?.trim()) {
@@ -201,6 +218,7 @@ export class UsersService {
 
     const passwordHash = await bcrypt.hash(password, 10);
     const salaryNum = toDecimal(salary);
+    const dailyExpenseNum = toDecimal(dailyExpense);
 
     const user = await prisma.user.create({
       data: {
@@ -210,6 +228,7 @@ export class UsersService {
         role: role as any,
         branchId: branchId || null,
         salary: salaryNum ?? undefined,
+        dailyExpense: dailyExpenseNum ?? undefined,
         startDate: startDate ? new Date(startDate) : undefined,
         lastPaidDate: lastPaidDate ? new Date(lastPaidDate) : undefined,
         shift: shift === 'DAY' || shift === 'NIGHT' ? shift : undefined,
@@ -222,7 +241,12 @@ export class UsersService {
     return { data: user };
   }
 
-  async updateUser(id: string, body: any, fileUrl?: string): ServiceResult {
+  async updateUser(id: string, body: any, fileUrl?: string, currentUser?: { id: string; role: string }): ServiceResult {
+    const targetUser = await prisma.user.findUnique({ where: { id } });
+    if (!targetUser) {
+      return { error: 'User not found', status: 404 };
+    }
+
     const {
       fullName,
       phone,
@@ -231,6 +255,7 @@ export class UsersService {
       branchId,
       isActive,
       salary,
+      dailyExpense,
       startDate,
       lastPaidDate,
       shift,
@@ -238,12 +263,32 @@ export class UsersService {
       avatarUrl,
     } = body;
 
+    // Privilege Escalation Prevention: Only Owners can edit Owner accounts or assign the Owner role
+    if (targetUser.role === 'OWNER' && currentUser?.role !== 'OWNER') {
+      return { error: 'Access denied: Only Owners can modify Owner accounts', status: 403 };
+    }
+    if (role === 'OWNER' && currentUser?.role !== 'OWNER') {
+      return { error: 'Access denied: Only Owners can assign the Owner role', status: 403 };
+    }
+
+    // Self-deactivation and single owner protection
+    if (isActive === false) {
+      if (currentUser?.id === id) {
+        return { error: 'You cannot deactivate your own account', status: 400 };
+      }
+      if (targetUser.role === 'OWNER') {
+        const activeOwners = await prisma.user.count({ where: { role: 'OWNER', isActive: true } });
+        if (activeOwners <= 1) {
+          return { error: 'Cannot deactivate the only active Owner in the system', status: 400 };
+        }
+      }
+    }
+
     const finalFilesUrl = fileUrl !== undefined ? fileUrl : bodyFilesUrl;
 
     if (startDate !== undefined || lastPaidDate !== undefined) {
-      const current = await prisma.user.findUnique({ where: { id }, select: { startDate: true, lastPaidDate: true } });
-      const s = startDate !== undefined ? (startDate ? new Date(startDate as string) : null) : current?.startDate;
-      const p = lastPaidDate !== undefined ? (lastPaidDate ? new Date(lastPaidDate as string) : null) : current?.lastPaidDate;
+      const s = startDate !== undefined ? (startDate ? new Date(startDate as string) : null) : targetUser.startDate;
+      const p = lastPaidDate !== undefined ? (lastPaidDate ? new Date(lastPaidDate as string) : null) : targetUser.lastPaidDate;
       if (s && p && p.getTime() < s.getTime()) {
         return { error: 'Last paid date cannot be earlier than employment start date', status: 400 };
       }
@@ -252,11 +297,18 @@ export class UsersService {
     const data: Record<string, unknown> = {};
 
     if (typeof fullName === 'string') data.fullName = fullName.trim();
-    if (typeof phone === 'string') data.phone = phone?.trim() || null;
+    if (typeof phone === 'string' && phone.trim()) {
+      const phoneTrim = phone.trim();
+      if (!/^(?:\+251|0)[97]\d{8}$/.test(phoneTrim)) {
+        return { error: 'Invalid Ethiopian phone number. Must be 10 digits starting with 09 or 07 (or +251).', status: 400 };
+      }
+      data.phone = phoneTrim;
+    }
     if (typeof role === 'string') data.role = role;
     if (branchId !== undefined) data.branchId = branchId || null;
     if (typeof isActive === 'boolean') data.isActive = isActive;
     if (salary !== undefined) data.salary = toDecimal(salary);
+    if (dailyExpense !== undefined) data.dailyExpense = toDecimal(dailyExpense);
     if (startDate !== undefined) data.startDate = startDate ? new Date(startDate as string) : null;
     if (lastPaidDate !== undefined) data.lastPaidDate = lastPaidDate ? new Date(lastPaidDate as string) : null;
     if (shift === 'DAY' || shift === 'NIGHT') data.shift = shift;
@@ -269,6 +321,9 @@ export class UsersService {
     }
 
     if (typeof password === 'string' && password) {
+      if (password.length < 4) {
+        return { error: 'Password must be at least 4 characters long', status: 400 };
+      }
       data.passwordHash = await bcrypt.hash(password, 10);
     }
 
@@ -315,7 +370,25 @@ export class UsersService {
     return { data: user };
   }
 
-  async deleteUser(id: string): ServiceResult {
+  async deleteUser(id: string, adminUserId?: string, password?: string): ServiceResult {
+    if (!password || !password.trim()) {
+      return { error: 'Password is required to confirm user deletion', status: 400 };
+    }
+
+    if (adminUserId) {
+      const admin = await prisma.user.findUnique({
+        where: { id: adminUserId },
+        select: { passwordHash: true },
+      });
+      if (!admin) {
+        return { error: 'Admin user not found', status: 404 };
+      }
+      const isMatch = await bcrypt.compare(password, admin.passwordHash);
+      if (!isMatch) {
+        return { error: 'Incorrect password. User deletion cancelled.', status: 403 };
+      }
+    }
+
     const user = await prisma.user.findUnique({
       where: { id },
       include: {

@@ -77,17 +77,9 @@ export class ProductionBatchesService {
     if (seenFilter === 'FLAGGED') {
       where.isFlagged = true;
     } else if (seenFilter === 'UNSEEN') {
-      if (callerRole === 'ADMIN') {
-        where.adminSeenAt = null;
-      } else if (callerRole === 'OWNER') {
-        where.ownerSeenAt = null;
-      }
+      where.ownerSeenAt = null;
     } else if (seenFilter === 'SEEN') {
-      if (callerRole === 'ADMIN') {
-        where.adminSeenAt = { not: null };
-      } else if (callerRole === 'OWNER') {
-        where.ownerSeenAt = { not: null };
-      }
+      where.ownerSeenAt = { not: null };
     }
 
     const pageNum = page ? Math.max(1, Number(page)) : 1;
@@ -150,18 +142,7 @@ export class ProductionBatchesService {
       }
     }
 
-    if (user?.role === 'ADMIN' && !batch.adminSeenAt) {
-      batch = await prisma.productionBatch.update({
-        where: { id },
-        data: { adminSeenAt: new Date() },
-        include: {
-          branch: true,
-          user: true,
-          items: { include: { product: true } },
-          materialUsages: { include: { stockItem: true } },
-        },
-      });
-    } else if (user?.role === 'OWNER' && !batch.ownerSeenAt) {
+    if (user?.role === 'OWNER' && !batch.ownerSeenAt) {
       batch = await prisma.productionBatch.update({
         where: { id },
         data: { ownerSeenAt: new Date() },
@@ -220,9 +201,7 @@ export class ProductionBatchesService {
     const creator = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
     const now = new Date();
     const seenData: any = {};
-    if (creator?.role === 'ADMIN') {
-      seenData.adminSeenAt = now;
-    } else if (creator?.role === 'OWNER') {
+    if (creator?.role === 'OWNER') {
       seenData.ownerSeenAt = now;
     }
 
@@ -377,24 +356,19 @@ export class ProductionBatchesService {
   }
 
   async markBatchSeen(id: string, user: { id: string; role: string; fullName?: string }): ServiceResult {
+    if (user.role !== 'OWNER') {
+      return { error: 'Forbidden: Only Owner can review production batches', status: 403 };
+    }
+
     const batch = await prisma.productionBatch.findUnique({ where: { id } });
     if (!batch) {
       return { error: 'Production batch not found', status: 404 };
     }
 
     const now = new Date();
-    const data: any = {};
-    if (user.role === 'ADMIN') {
-      data.adminSeenAt = now;
-    } else if (user.role === 'OWNER') {
-      data.ownerSeenAt = now;
-    } else {
-      return { data: batch };
-    }
-
     const updated = await prisma.productionBatch.update({
       where: { id },
-      data,
+      data: { ownerSeenAt: now },
       include: {
         user: { select: { id: true, fullName: true, role: true } },
         items: { include: { product: true } },
@@ -411,6 +385,10 @@ export class ProductionBatchesService {
     reason?: string,
     user?: { id: string; role: string; fullName?: string }
   ): ServiceResult {
+    if (user?.role !== 'OWNER') {
+      return { error: 'Forbidden: Only Owner can flag production batches', status: 403 };
+    }
+
     const batch = await prisma.productionBatch.findUnique({ where: { id } });
     if (!batch) {
       return { error: 'Production batch not found', status: 404 };
@@ -420,7 +398,7 @@ export class ProductionBatchesService {
     const data: any = {
       isFlagged: Boolean(isFlagged),
       flagReason: isFlagged ? (reason?.trim() || 'Flagged for clarification') : null,
-      flaggedBy: isFlagged ? (user?.fullName || user?.role || 'Management') : null,
+      flaggedBy: isFlagged ? (user?.fullName || 'Owner') : null,
       flaggedAt: isFlagged ? now : null,
     };
 

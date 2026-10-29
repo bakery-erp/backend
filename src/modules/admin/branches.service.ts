@@ -1,3 +1,4 @@
+import bcrypt from 'bcryptjs';
 import { prisma } from '../../lib/prisma.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
@@ -64,8 +65,19 @@ export class BranchesService {
     if (!name?.trim()) {
       return { error: 'Name required', status: 400 };
     }
+    const trimmedName = name.trim();
+    const existing = await prisma.branch.findFirst({
+      where: {
+        companyId,
+        name: { equals: trimmedName, mode: 'insensitive' },
+      },
+    });
+    if (existing) {
+      return { error: `Branch with name "${trimmedName}" already exists`, status: 400 };
+    }
+
     const branch = await prisma.branch.create({
-      data: { name: name.trim(), address: address?.trim() || null, companyId },
+      data: { name: trimmedName, address: address?.trim() || null, companyId },
     });
     BranchesService.clearCache();
     return { data: branch };
@@ -73,6 +85,28 @@ export class BranchesService {
 
   async updateBranch(id: string, body: { name?: string; address?: string; isActive?: boolean }): ServiceResult {
     const { name, address, isActive } = body;
+    const current = await prisma.branch.findUnique({ where: { id } });
+    if (!current) {
+      return { error: 'Branch not found', status: 404 };
+    }
+
+    if (name !== undefined) {
+      const trimmedName = name.trim();
+      if (!trimmedName) {
+        return { error: 'Name required', status: 400 };
+      }
+      const existing = await prisma.branch.findFirst({
+        where: {
+          companyId: current.companyId,
+          id: { not: id },
+          name: { equals: trimmedName, mode: 'insensitive' },
+        },
+      });
+      if (existing) {
+        return { error: `Branch with name "${trimmedName}" already exists`, status: 400 };
+      }
+    }
+
     const branch = await prisma.branch.update({
       where: { id },
       data: {
@@ -99,7 +133,25 @@ export class BranchesService {
     return { data: branch };
   }
 
-  async deleteBranch(id: string): ServiceResult {
+  async deleteBranch(id: string, userId?: string, password?: string): ServiceResult {
+    if (!password || !password.trim()) {
+      return { error: 'Password is required to confirm branch deletion', status: 400 };
+    }
+
+    if (userId) {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { passwordHash: true },
+      });
+      if (!user) {
+        return { error: 'User not found', status: 404 };
+      }
+      const isMatch = await bcrypt.compare(password, user.passwordHash);
+      if (!isMatch) {
+        return { error: 'Incorrect password. Branch deletion cancelled.', status: 403 };
+      }
+    }
+
     const branch = await prisma.branch.findUnique({ where: { id } });
     if (!branch) {
       return { error: 'Branch not found', status: 404 };
