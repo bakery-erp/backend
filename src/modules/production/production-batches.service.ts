@@ -604,6 +604,14 @@ export class ProductionBatchesService {
 
     const updated = await prisma.$transaction(async (tx) => {
 
+      // Build a map of existing returnedQuantity by productId to preserve return records across edits
+      const returnMap = new Map<string, number>();
+      for (const item of existing.items) {
+        if (item.returnedQuantity && item.returnedQuantity > 0) {
+          returnMap.set(item.productId, item.returnedQuantity);
+        }
+      }
+
       if (items && Array.isArray(items)) {
         await tx.productionItem.deleteMany({ where: { batchId: id } });
       }
@@ -626,6 +634,7 @@ export class ProductionBatchesService {
                 create: items.map((i: any) => ({
                   productId: i.productId,
                   quantityProduced: typeof i.quantityProduced === 'number' ? i.quantityProduced : parseInt(String(i.quantityProduced), 10),
+                  returnedQuantity: returnMap.get(i.productId) ?? 0,
                 })),
               },
             }
