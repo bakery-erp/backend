@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import { Role } from '@prisma/client';
 import { authMiddleware, requireRole, type AuthRequest } from '../../middleware/auth.js';
 import { StockItemsService } from './stock-items.service.js';
 import { parsePagination } from '../../lib/pagination.js';
@@ -8,14 +9,50 @@ const stockItemsService = new StockItemsService();
 
 stockItemsRouter.use(authMiddleware);
 
-// GET /api/stock-items?branchId=...&search=flour&unitType=KG&lowStockOnly=true&category=...
+// GET /api/stock-items?branchId=...&search=flour&unitType=KG&lowStockOnly=true&category=...&forProduction=true
 stockItemsRouter.get('/', async (req: AuthRequest, res: Response) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const search = req.query.search as string | undefined;
   const unitType = req.query.unitType as string | undefined;
   const category = req.query.category as string | undefined;
   const lowStockOnly = req.query.lowStockOnly === 'true';
-  const result = await stockItemsService.getStockItems(branchId, search, unitType, lowStockOnly, category);
+  const forProduction = req.query.forProduction === 'true';
+
+  let forRole: Role | undefined = undefined;
+  if (forProduction && req.user?.role && req.user.role !== 'OWNER') {
+    forRole = req.user.role as Role;
+  } else if (req.query.forRole) {
+    forRole = req.query.forRole as Role;
+  }
+
+  const result = await stockItemsService.getStockItems(branchId, search, unitType, lowStockOnly, category, forRole);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
+// GET /api/stock-items/role-materials — OWNER ONLY
+stockItemsRouter.get('/role-materials', requireRole('OWNER'), async (req: AuthRequest, res: Response) => {
+  const branchId = (req.query.branchId as string) || req.user?.branchId;
+  const result = await stockItemsService.getRoleMaterials(branchId);
+  if (result.error) {
+    return res.status(result.status || 500).json({ error: result.error });
+  }
+  res.json(result.data);
+});
+
+// PUT /api/stock-items/role-materials — OWNER ONLY
+stockItemsRouter.put('/role-materials', requireRole('OWNER'), async (req: AuthRequest, res: Response) => {
+  const branchId = (req.body.branchId as string) || req.user?.branchId;
+  const { role, stockItemIds } = req.body;
+  if (!branchId) {
+    return res.status(400).json({ error: 'branchId required' });
+  }
+  if (!role || !Array.isArray(stockItemIds)) {
+    return res.status(400).json({ error: 'role and stockItemIds array required' });
+  }
+  const result = await stockItemsService.updateRoleMaterials(branchId, role as Role, stockItemIds);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
