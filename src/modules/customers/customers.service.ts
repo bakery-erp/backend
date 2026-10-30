@@ -2,6 +2,7 @@ import { prisma } from '../../lib/prisma.js';
 import { businessDateFromYmdString } from '../../lib/businessDate.js';
 import { parsePagination, buildPaginatedResponse } from '../../lib/pagination.js';
 import type { ServiceResult } from '../../types/service-response.js';
+import { ProductsService } from '../catalog/products.service.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -469,6 +470,7 @@ export class CustomersService {
       },
     });
 
+    ProductsService.clearCache();
     return { data: credit };
   }
 
@@ -617,6 +619,7 @@ export class CustomersService {
       },
     });
 
+    ProductsService.clearCache();
     return { data: updated };
   }
 
@@ -626,7 +629,7 @@ export class CustomersService {
 
     await prisma.customerCreditPayment.deleteMany({ where: { creditId: id } });
     await prisma.customerCredit.delete({ where: { id } });
-
+    ProductsService.clearCache();
     return { data: { success: true } };
   }
 }

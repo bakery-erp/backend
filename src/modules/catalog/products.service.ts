@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
+import { extractCreditItemsFromEntityId } from '../sessions/daily-sessions.service.js';
 
 function decimalToNum(v: unknown) {
   if (v == null) return undefined;
@@ -129,6 +130,7 @@ export class ProductsService {
       conversionsFromAgg,
       salesAgg,
       damagedAgg,
+      customerCreditList,
     ] = await Promise.all([
       this.calculateHouseStockMap(branchId),
       prisma.productionItem.groupBy({
@@ -166,7 +168,25 @@ export class ProductsService {
         _sum: { damagedQuantity: true },
         where: branchId ? { session: { branchId } } : {},
       }),
+      prisma.customerCredit.findMany({
+        where: branchId ? { branchId } : {},
+        select: { description: true },
+      }),
     ]);
+
+    const allProdsForName = await prisma.product.findMany({ select: { id: true, name: true } });
+    const productsByNameForEnrich = new Map<string, string>();
+    for (const p of allProdsForName) {
+      productsByNameForEnrich.set(p.name.trim().toLowerCase(), p.id);
+    }
+
+    const lifetimeCreditMap = new Map<string, number>();
+    for (const cc of customerCreditList) {
+      const items = extractCreditItemsFromEntityId(cc.description, productsByNameForEnrich);
+      for (const it of items) {
+        lifetimeCreditMap.set(it.productId, (lifetimeCreditMap.get(it.productId) || 0) + it.quantity);
+      }
+    }
 
     const producedMap = new Map(producedAgg.map(a => [a.productId, a._sum.quantityProduced || 0]));
     const deliveredMap = new Map(
@@ -184,7 +204,7 @@ export class ProductsService {
       const totalProduced = producedMap.get(p.id) || 0;
       const totalDelivered = deliveredMap.get(p.id) || 0;
       const totalConvertedIn = convToMap.get(p.id) || 0;
-      const totalSold = salesMap.get(p.id) || 0;
+      const totalSold = (salesMap.get(p.id) || 0) + (lifetimeCreditMap.get(p.id) || 0);
       const totalConvertedOut = convFromMap.get(p.id) || 0;
       const totalDamaged = damagedMap.get(p.id) || 0;
       const currentHouseStock = stockMap.get(p.id) ?? 0;
@@ -227,6 +247,12 @@ export class ProductsService {
     }
 
     const stockMap = new Map<string, number>();
+
+    const allProdsList = await prisma.product.findMany({ select: { id: true, name: true } });
+    const productsByName = new Map<string, string>();
+    for (const p of allProdsList) {
+      productsByName.set(p.name.trim().toLowerCase(), p.id);
+    }
 
     const branches = branchId
       ? [{ id: branchId }]
@@ -280,6 +306,18 @@ export class ProductsService {
           }),
         ]);
 
+        const customerCredits = await prisma.customerCredit.findMany({
+          where: { branchId: b.id },
+          select: { description: true },
+        });
+        const creditMap = new Map<string, number>();
+        for (const cc of customerCredits) {
+          const items = extractCreditItemsFromEntityId(cc.description, productsByName);
+          for (const it of items) {
+            creditMap.set(it.productId, (creditMap.get(it.productId) || 0) + it.quantity);
+          }
+        }
+
         const pMap = new Map(producedAgg.map(a => [a.productId, a._sum.quantityProduced || 0]));
         const dMap = new Map(deliveredAgg.map(a => [a.productId, Math.max(0, (a._sum.quantityReceived || 0) - (a._sum.returnedQuantity || 0))]));
         const toMap = new Map(convToAgg.map(a => [a.toProductId, a._sum.toQuantity || 0]));
@@ -287,19 +325,35 @@ export class ProductsService {
         const sMap = new Map(salesAgg.map(a => [a.productId, a._sum.quantity || 0]));
         const damMap = new Map(damagedAgg.map(a => [a.productId, a._sum.damagedQuantity || 0]));
 
-        const allProds = await prisma.product.findMany({ select: { id: true } });
-        for (const p of allProds) {
+        for (const p of allProdsList) {
           const qty = Math.max(
             0,
             (pMap.get(p.id) || 0) + (dMap.get(p.id) || 0) + (toMap.get(p.id) || 0) -
-            (sMap.get(p.id) || 0) - (fromMap.get(p.id) || 0) - (damMap.get(p.id) || 0)
+            (sMap.get(p.id) || 0) - (creditMap.get(p.id) || 0) - (fromMap.get(p.id) || 0) - (damMap.get(p.id) || 0)
           );
           stockMap.set(p.id, (stockMap.get(p.id) || 0) + qty);
         }
       } else if (latestSession.status === 'CLOSED' || latestSession.status === 'CLOSE_PENDING') {
-        // When session is CLOSED (or CLOSE_PENDING), the product count IS strictly the leftover recorded!
+        // When session is CLOSED (or CLOSE_PENDING), the baseline is leftover recorded at close
+        // Minus any customer credits logged after the session close
+        const creditsAfterClose = await prisma.customerCredit.findMany({
+          where: {
+            branchId: b.id,
+            createdAt: { gt: latestSession.updatedAt || latestSession.createdAt },
+          },
+          select: { description: true },
+        });
+        const creditAfterCloseMap = new Map<string, number>();
+        for (const cc of creditsAfterClose) {
+          const items = extractCreditItemsFromEntityId(cc.description, productsByName);
+          for (const it of items) {
+            creditAfterCloseMap.set(it.productId, (creditAfterCloseMap.get(it.productId) || 0) + it.quantity);
+          }
+        }
+
         for (const r of latestSession.leftoverRecords) {
-          stockMap.set(r.productId, (stockMap.get(r.productId) || 0) + (r.quantityRemaining || 0));
+          const currentQty = Math.max(0, (r.quantityRemaining || 0) - (creditAfterCloseMap.get(r.productId) || 0));
+          stockMap.set(r.productId, (stockMap.get(r.productId) || 0) + currentQty);
         }
       } else {
         // Session is OPEN or PAUSED:
@@ -368,6 +422,25 @@ export class ProductsService {
           where: { sale: { sessionId: latestSession.id } },
         });
 
+        const actCredits = await prisma.customerCredit.findMany({
+          where: {
+            branchId: b.id,
+            OR: [
+              { sessionId: latestSession.id },
+              { date: latestSession.date },
+              { createdAt: { gte: latestSession.date } },
+            ],
+          },
+          select: { description: true },
+        });
+        const actCreditMap = new Map<string, number>();
+        for (const cc of actCredits) {
+          const items = extractCreditItemsFromEntityId(cc.description, productsByName);
+          for (const it of items) {
+            actCreditMap.set(it.productId, (actCreditMap.get(it.productId) || 0) + it.quantity);
+          }
+        }
+
         const actProd = new Map(actProdAgg.map(a => [a.productId, a._sum.quantityProduced || 0]));
         const actDeliv = new Map(actDelivAgg.map(a => [a.productId, Math.max(0, (a._sum.quantityReceived || 0) - (a._sum.returnedQuantity || 0))]));
         const actConvTo = new Map(actConvToAgg.map(a => [a.toProductId, a._sum.toQuantity || 0]));
@@ -383,6 +456,7 @@ export class ProductsService {
           ...actConvTo.keys(),
           ...actConvFrom.keys(),
           ...actSale.keys(),
+          ...actCreditMap.keys(),
         ]);
 
         for (const pid of allProdIds) {
@@ -391,10 +465,11 @@ export class ProductsService {
           const deliv = actDeliv.get(pid) || 0;
           const convIn = actConvTo.get(pid) || 0;
           const sold = actSale.get(pid) || 0;
+          const credited = actCreditMap.get(pid) || 0;
           const convOut = actConvFrom.get(pid) || 0;
           const dam = actDam.get(pid) || 0;
 
-          const qty = Math.max(0, (opening + prod + deliv + convIn) - (sold + convOut + dam));
+          const qty = Math.max(0, (opening + prod + deliv + convIn) - (sold + credited + convOut + dam));
           stockMap.set(pid, (stockMap.get(pid) || 0) + qty);
         }
       }

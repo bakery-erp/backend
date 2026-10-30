@@ -48,6 +48,8 @@ export class FinancialReportsService {
       expenses,
       loans,
       customerLoanPayments,
+      customerCredits,
+      customerCreditPayments,
       allDeliveries,
       unpaidStockLoans,
       stockPurchasePayments,
@@ -84,6 +86,19 @@ export class FinancialReportsService {
           date: { gte: fromDate, lte: toDate },
         },
         include: { loan: { select: { id: true, entityId: true } } },
+        orderBy: { date: 'desc' },
+      }),
+      prisma.customerCredit.findMany({
+        where: { branchId, date: { gte: fromDate, lte: toDate } },
+        include: { customer: true, payments: true },
+        orderBy: { date: 'desc' },
+      }),
+      prisma.customerCreditPayment.findMany({
+        where: {
+          credit: { branchId },
+          date: { gte: fromDate, lte: toDate },
+        },
+        include: { credit: { include: { customer: true } } },
         orderBy: { date: 'desc' },
       }),
       prisma.supplierDelivery.findMany({
@@ -192,12 +207,36 @@ export class FinancialReportsService {
     const ownerExpenseTotal = expenses.filter(e => e.type === 'OWNER').reduce((sum, e) => sum + Number(e.amount), 0);
 
     const loanTotal = loans.reduce((sum, l) => sum + Number(l.totalAmount), 0);
-    const customerLoans = loans.filter(l => l.type === 'CUSTOMER');
+    const legacyCustomerLoans = loans.filter(l => l.type === 'CUSTOMER');
+    const customerLoans = [
+      ...customerCredits.map((c) => ({
+        id: c.id,
+        entityId: c.description,
+        totalAmount: Number(c.amount),
+        remainingBalance: Number(c.remainingBalance),
+        status: c.status,
+        date: c.date,
+        createdAt: c.createdAt,
+        customer: c.customer,
+      })),
+      ...legacyCustomerLoans.map((l) => ({
+        id: l.id,
+        entityId: l.entityId,
+        totalAmount: Number(l.totalAmount),
+        remainingBalance: Number(l.remainingBalance),
+        status: l.status,
+        date: l.date,
+        createdAt: l.createdAt,
+        customer: null,
+      })),
+    ];
     const customerCreditSalesTotal = customerLoans.reduce((sum, l) => sum + Number(l.totalAmount), 0);
     const employeeLoans = loans.filter(l => l.type !== 'CUSTOMER');
     const employeeLoanTotal = employeeLoans.reduce((sum, l) => sum + Number(l.totalAmount), 0);
 
-    const customerCreditPaymentTotal = customerLoanPayments.reduce((sum, p) => sum + Number(p.amountPaid), 0);
+    const customerCreditPaymentTotal =
+      customerLoanPayments.reduce((sum, p) => sum + Number(p.amountPaid), 0) +
+      customerCreditPayments.reduce((sum, p) => sum + Number(p.amount), 0);
 
     // On dashboard, show supplier purchases only if taken from daily cash drawer
     const deliveries = allDeliveries.filter((d) => d.paymentSource === 'DAILY_CASH');
