@@ -201,11 +201,13 @@ export class ProductsService {
     const damagedMap = new Map(damagedAgg.map(a => [a.productId, a._sum.damagedQuantity || 0]));
 
     const enrichedList = list.map((p) => {
-      const totalProduced = producedMap.get(p.id) || 0;
-      const totalDelivered = deliveredMap.get(p.id) || 0;
+      const batchProduced = producedMap.get(p.id) || 0;
       const totalConvertedIn = convToMap.get(p.id) || 0;
-      const totalSold = (salesMap.get(p.id) || 0) + (lifetimeCreditMap.get(p.id) || 0);
       const totalConvertedOut = convFromMap.get(p.id) || 0;
+      // Converting into a product counts as producing it; converting from reduces its production count.
+      const totalProduced = Math.max(0, batchProduced + totalConvertedIn - totalConvertedOut);
+      const totalDelivered = deliveredMap.get(p.id) || 0;
+      const totalSold = (salesMap.get(p.id) || 0) + (lifetimeCreditMap.get(p.id) || 0);
       const totalDamaged = damagedMap.get(p.id) || 0;
       const currentHouseStock = stockMap.get(p.id) ?? 0;
 
@@ -238,7 +240,7 @@ export class ProductsService {
    * 3. If no session exists:
    *    Fallback to lifetime produced + delivered - sold.
    */
-  private async calculateHouseStockMap(branchId?: string): Promise<Map<string, number>> {
+  public async calculateHouseStockMap(branchId?: string): Promise<Map<string, number>> {
     const cacheKey = branchId || 'ALL';
     const cached = ProductsService.stockMapCache.get(cacheKey);
     const now = Date.now();
@@ -335,14 +337,28 @@ export class ProductsService {
         }
       } else if (latestSession.status === 'CLOSED' || latestSession.status === 'CLOSE_PENDING') {
         // When session is CLOSED (or CLOSE_PENDING), the baseline is leftover recorded at close
-        // Minus any customer credits logged after the session close
-        const creditsAfterClose = await prisma.customerCredit.findMany({
-          where: {
-            branchId: b.id,
-            createdAt: { gt: latestSession.updatedAt || latestSession.createdAt },
-          },
-          select: { description: true },
-        });
+        // Minus any customer credits logged after the session close, plus/minus any conversions after close
+        const sessionCloseTime = latestSession.updatedAt || latestSession.createdAt;
+        const [creditsAfterClose, convToAfterClose, convFromAfterClose] = await Promise.all([
+          prisma.customerCredit.findMany({
+            where: {
+              branchId: b.id,
+              createdAt: { gt: sessionCloseTime },
+            },
+            select: { description: true },
+          }),
+          prisma.productConversion.groupBy({
+            by: ['toProductId'],
+            _sum: { toQuantity: true },
+            where: { branchId: b.id, createdAt: { gt: sessionCloseTime } },
+          }),
+          prisma.productConversion.groupBy({
+            by: ['fromProductId'],
+            _sum: { fromQuantity: true },
+            where: { branchId: b.id, createdAt: { gt: sessionCloseTime } },
+          }),
+        ]);
+
         const creditAfterCloseMap = new Map<string, number>();
         for (const cc of creditsAfterClose) {
           const items = extractCreditItemsFromEntityId(cc.description, productsByName);
@@ -351,9 +367,20 @@ export class ProductsService {
           }
         }
 
+        const convToMap = new Map(convToAfterClose.map((c) => [c.toProductId, c._sum.toQuantity || 0]));
+        const convFromMap = new Map(convFromAfterClose.map((c) => [c.fromProductId, c._sum.fromQuantity || 0]));
+
         for (const r of latestSession.leftoverRecords) {
-          const currentQty = Math.max(0, (r.quantityRemaining || 0) - (creditAfterCloseMap.get(r.productId) || 0));
+          const toAdd = convToMap.get(r.productId) || 0;
+          const fromSub = convFromMap.get(r.productId) || 0;
+          const currentQty = Math.max(0, (r.quantityRemaining || 0) - (creditAfterCloseMap.get(r.productId) || 0) + toAdd - fromSub);
           stockMap.set(r.productId, (stockMap.get(r.productId) || 0) + currentQty);
+        }
+
+        for (const [toPid, toQty] of convToMap.entries()) {
+          if (!stockMap.has(toPid)) {
+            stockMap.set(toPid, toQty);
+          }
         }
       } else {
         // Session is OPEN or PAUSED:
@@ -552,13 +579,14 @@ export class ProductsService {
       }),
     ]);
 
-    const totalProduced = producedAgg._sum.quantityProduced || 0;
+    const batchProduced = producedAgg._sum.quantityProduced || 0;
     const totalDelivered = Math.max(
       0,
       (deliveredAgg._sum.quantityReceived || 0) - (deliveredAgg._sum.returnedQuantity || 0)
     );
     const totalConvertedIn = convToAgg._sum.toQuantity || 0;
     const totalConvertedOut = convFromAgg._sum.fromQuantity || 0;
+    const totalProduced = Math.max(0, batchProduced + totalConvertedIn - totalConvertedOut);
     const totalSold = salesAgg._sum.quantity || 0;
     const totalDamaged = damagedAgg._sum.damagedQuantity || 0;
 

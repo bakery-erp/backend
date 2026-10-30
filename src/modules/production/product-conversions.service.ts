@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
+import { ProductsService } from '../catalog/products.service.js';
 
 export class ProductConversionsService {
   async getProductConversions(
@@ -100,55 +101,21 @@ export class ProductConversionsService {
       return { error: `Target product not found: ${toProductId}`, status: 404 };
     }
 
-    // Validate available shop stock for fromProduct
-    const [sessionBatches, sessionSales, sessionDeliveries, previousConversions] = await Promise.all([
-      prisma.productionBatch.findMany({
-        where: { branchId: bid, date: targetDate },
-        include: { items: true },
-      }),
-      prisma.sale.findMany({
-        where: { branchId: bid, date: targetDate },
-        include: { items: true },
-      }),
-      prisma.supplierDelivery.findMany({
-        where: activeSession ? { sessionId: activeSession.id } : { supplier: { branchId: bid } },
-      }),
-      prisma.productConversion.findMany({
-        where: { branchId: bid, createdAt: { gte: targetDate } },
-      }),
-    ]);
+    // Validate live shop stock for fromProduct
+    const productsService = new ProductsService();
+    const stockMap = await productsService.calculateHouseStockMap(bid);
+    const currentStock = stockMap.get(fromProductId) ?? 0;
 
-    let prodQty = 0;
-    for (const b of sessionBatches) {
-      for (const item of b.items) {
-        if (item.productId === fromProductId) prodQty += item.quantityProduced;
-      }
-    }
-
-    let delivQty = 0;
-    for (const d of sessionDeliveries) {
-      if (d.productId === fromProductId) delivQty += d.quantityReceived;
-    }
-
-    let soldQty = 0;
-    for (const s of sessionSales) {
-      for (const item of s.items) {
-        if (item.productId === fromProductId) soldQty += item.quantity;
-      }
-    }
-
-    let convertedOut = 0;
-    let convertedIn = 0;
-    for (const c of previousConversions) {
-      if (c.fromProductId === fromProductId) convertedOut += c.fromQuantity;
-      if (c.toProductId === fromProductId) convertedIn += c.toQuantity;
-    }
-
-    const maxAvailable = Math.max(0, prodQty + delivQty + convertedIn - soldQty - convertedOut);
-
-    if (fromQ > maxAvailable) {
+    if (currentStock <= 0) {
       return {
-        error: `Source conversion quantity (${fromQ}) exceeds available shop stock (${maxAvailable} ${fromProduct.unitType}) for "${fromProduct.name}". Maximum convert allowed currently is ${maxAvailable}.`,
+        error: `Cannot convert: No units of "${fromProduct.name}" are currently available in the shop (0 ${fromProduct.unitType} in stock). Products cannot be converted without available pieces in the shop.`,
+        status: 400,
+      };
+    }
+
+    if (fromQ > currentStock) {
+      return {
+        error: `Source conversion quantity (${fromQ}) exceeds current available shop stock (${currentStock} ${fromProduct.unitType}) for "${fromProduct.name}". Maximum convertible currently is ${currentStock}.`,
         status: 400,
       };
     }
@@ -168,6 +135,8 @@ export class ProductConversionsService {
         user: { select: { id: true, fullName: true, role: true } },
       },
     });
+
+    ProductsService.clearCache();
     return { data: conversion };
   }
 
@@ -193,6 +162,28 @@ export class ProductConversionsService {
       return { error: 'Quantities must be positive whole numbers', status: 400 };
     }
 
+    // Check available stock (restoring existing fromQuantity if fromProductId is unchanged)
+    const productsService = new ProductsService();
+    const stockMap = await productsService.calculateHouseStockMap(existing.branchId);
+    let currentStock = stockMap.get(fromProductId) ?? 0;
+    if (existing.fromProductId === fromProductId) {
+      currentStock += existing.fromQuantity;
+    }
+
+    if (currentStock <= 0) {
+      return {
+        error: `Cannot convert: No units currently available in the shop for this product.`,
+        status: 400,
+      };
+    }
+
+    if (fromQ > currentStock) {
+      return {
+        error: `Source conversion quantity (${fromQ}) exceeds current available shop stock (${currentStock}).`,
+        status: 400,
+      };
+    }
+
     const updated = await prisma.productConversion.update({
       where: { id },
       data: {
@@ -208,12 +199,14 @@ export class ProductConversionsService {
       },
     });
 
+    ProductsService.clearCache();
     return { data: updated };
   }
 
   async deleteProductConversion(id: string): ServiceResult {
     try {
       await prisma.productConversion.delete({ where: { id } });
+      ProductsService.clearCache();
       return { data: { message: 'Conversion record deleted successfully' } };
     } catch (e) {
       return { error: 'Conversion record not found', status: 404 };

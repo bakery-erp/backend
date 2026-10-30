@@ -199,6 +199,7 @@ export class DailySessionsService {
       },
     });
 
+    const rawBatchMap: Record<string, number> = {};
     const prodMap: Record<
       string,
       {
@@ -212,6 +213,7 @@ export class DailySessionsService {
     > = {};
     for (const b of batches) {
       for (const item of b.items) {
+        rawBatchMap[item.productId] = (rawBatchMap[item.productId] || 0) + item.quantityProduced;
         if (!prodMap[item.productId]) {
           prodMap[item.productId] = {
             productId: item.productId,
@@ -225,7 +227,6 @@ export class DailySessionsService {
         prodMap[item.productId].totalProduced += item.quantityProduced;
       }
     }
-    const productionSummary = Object.values(prodMap);
 
     // Compute Sales and Max Available Stock per product for session validation
     const sales = await prisma.sale.findMany({
@@ -247,13 +248,38 @@ export class DailySessionsService {
     // Compute Product Conversions in this session
     const conversions = await prisma.productConversion.findMany({
       where: { branchId: session.branchId, createdAt: { gte: session.date } },
+      include: {
+        toProduct: { include: { category: true } },
+        fromProduct: { include: { category: true } },
+      },
     });
     const convertedOutMap: Record<string, number> = {};
     const convertedInMap: Record<string, number> = {};
     for (const c of conversions) {
       convertedOutMap[c.fromProductId] = (convertedOutMap[c.fromProductId] || 0) + c.fromQuantity;
       convertedInMap[c.toProductId] = (convertedInMap[c.toProductId] || 0) + c.toQuantity;
+
+      // Adjust production numbers for conversion:
+      // Target product converted into is produced via conversion
+      if (c.toProduct) {
+        if (!prodMap[c.toProductId]) {
+          prodMap[c.toProductId] = {
+            productId: c.toProductId,
+            productName: c.toProduct.name,
+            unitType: c.toProduct.unitType,
+            categoryName: c.toProduct.category?.name || 'Uncategorized',
+            categoryType: c.toProduct.category?.type || 'PRODUCED',
+            totalProduced: 0,
+          };
+        }
+        prodMap[c.toProductId].totalProduced += c.toQuantity;
+      }
+      // Source product converted from is reduced from production
+      if (prodMap[c.fromProductId]) {
+        prodMap[c.fromProductId].totalProduced = Math.max(0, prodMap[c.fromProductId].totalProduced - c.fromQuantity);
+      }
     }
+    const productionSummary = Object.values(prodMap);
 
     // Compute Previous Closed Session Leftovers (Opening Adari)
     const prevClosed = await prisma.dailySession.findFirst({
@@ -353,7 +379,8 @@ export class DailySessionsService {
     for (const pid of allPids) {
       const prodItem = prodMap[pid];
       const delivQty = delivMap[pid] || 0;
-      const prodQty = prodItem?.totalProduced || 0;
+      const rawProducedQty = rawBatchMap[pid] || 0;
+      const netProducedQty = prodItem?.totalProduced ?? rawProducedQty;
       const soldQty = soldMap[pid] || 0;
       const convertedOutQty = convertedOutMap[pid] || 0;
       const convertedInQty = convertedInMap[pid] || 0;
@@ -370,7 +397,7 @@ export class DailySessionsService {
         session.leftoverRecords.find((r) => r.productId === pid)?.product?.unitType ||
         'Pcs';
       const catName = prodItem?.categoryName || 'Bakery';
-      const maxAvailable = Math.max(0, openingAdariQty + prodQty + delivQty + convertedInQty - soldQty - convertedOutQty - creditLentQty);
+      const maxAvailable = Math.max(0, openingAdariQty + rawProducedQty + delivQty + convertedInQty - soldQty - convertedOutQty - creditLentQty);
 
       availableStockSummary[pid] = {
         productId: pid,
@@ -378,7 +405,7 @@ export class DailySessionsService {
         unitType: uType,
         categoryName: catName,
         openingAdariQty,
-        producedQty: prodQty,
+        producedQty: netProducedQty,
         deliveredQty: delivQty,
         convertedInQty,
         soldQty,
