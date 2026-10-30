@@ -17,6 +17,7 @@ import { financialCategoriesRouter, expensesRouter, loansRouter, penaltiesRouter
 import { analyticsRouter, dashboardRouter, financialReportsRouter } from './modules/reporting/index.js';
 import { customersRouter } from './modules/customers/customers.controller.js';
 import { notificationsRouter } from './modules/notifications/notifications.controller.js';
+import { settingsRouter } from './routes/settings.js';
 import { prisma } from './lib/prisma.js';
 import path from 'path';
 import fs from 'fs';
@@ -170,6 +171,7 @@ app.use('/api/notifications', notificationsRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/reports', financialReportsRouter);
+app.use('/api/settings', settingsRouter);
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
