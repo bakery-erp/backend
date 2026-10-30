@@ -251,6 +251,7 @@ export class UsersService {
       fullName,
       phone,
       password,
+      currentPassword,
       role,
       branchId,
       isActive,
@@ -271,16 +272,29 @@ export class UsersService {
       return { error: 'Access denied: Only Owners can assign the Owner role', status: 403 };
     }
 
-    // Self-deactivation and single owner protection
+    // Owner account edit verification: require current password to modify Owner accounts
+    if (targetUser.role === 'OWNER') {
+      if (!currentPassword || typeof currentPassword !== 'string' || !currentPassword.trim()) {
+        return { error: 'Current password is required to modify an Owner account', status: 400 };
+      }
+      const isMatch = await bcrypt.compare(currentPassword, targetUser.passwordHash);
+      if (!isMatch) {
+        return { error: 'Incorrect current password. Account modification rejected.', status: 403 };
+      }
+    }
+
+    // Prevent owners from demoting their own role
+    if (targetUser.role === 'OWNER' && currentUser?.id === id && role && role !== 'OWNER') {
+      return { error: 'Owners cannot change their own role', status: 400 };
+    }
+
+    // Self-deactivation and Owner deactivation protection
     if (isActive === false) {
       if (currentUser?.id === id) {
         return { error: 'You cannot deactivate your own account', status: 400 };
       }
       if (targetUser.role === 'OWNER') {
-        const activeOwners = await prisma.user.count({ where: { role: 'OWNER', isActive: true } });
-        if (activeOwners <= 1) {
-          return { error: 'Cannot deactivate the only active Owner in the system', status: 400 };
-        }
+        return { error: 'Owner accounts cannot be deactivated', status: 400 };
       }
     }
 
@@ -375,6 +389,10 @@ export class UsersService {
       return { error: 'Password is required to confirm user deletion', status: 400 };
     }
 
+    if (adminUserId && adminUserId === id) {
+      return { error: 'You cannot delete your own account', status: 400 };
+    }
+
     if (adminUserId) {
       const admin = await prisma.user.findUnique({
         where: { id: adminUserId },
@@ -406,12 +424,9 @@ export class UsersService {
     });
     if (!user) return { error: 'User not found', status: 404 };
 
-    // Prevent deleting the only remaining OWNER in the system
+    // Prevent deleting OWNER accounts
     if (user.role === 'OWNER') {
-      const ownerCount = await prisma.user.count({ where: { role: 'OWNER' } });
-      if (ownerCount <= 1) {
-        return { error: 'Cannot delete the only remaining Owner in the system', status: 400 };
-      }
+      return { error: 'Owner accounts cannot be deleted from the system', status: 400 };
     }
 
     const usageCount =
