@@ -59,10 +59,10 @@ stockItemsRouter.post('/', requireRole('OWNER', 'ADMIN'), async (req: AuthReques
 });
 
 stockItemsRouter.post('/:id/add', requireRole('OWNER', 'ADMIN'), async (req: AuthRequest, res: Response) => {
-  const { quantity, reason, loanInfo, unitPrice, autoConfirm } = req.body;
+  const { quantity, reason, loanInfo, unitPrice, autoConfirm, date } = req.body;
   const isOwner = req.user?.role === 'OWNER';
   const effectiveAutoConfirm = isOwner ? Boolean(autoConfirm) : false;
-  const result = await stockItemsService.addStockItem(req.params.id, req.user!.id, quantity, reason, loanInfo, unitPrice, effectiveAutoConfirm);
+  const result = await stockItemsService.addStockItem(req.params.id, req.user!.id, quantity, reason, loanInfo, unitPrice, effectiveAutoConfirm, date);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

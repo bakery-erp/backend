@@ -93,7 +93,7 @@ export class StockItemsService {
   }
 
   async createStockItem(body: Record<string, unknown>, userId: string, userBranchId?: string | null): ServiceResult {
-    const { branchId, name, nameLatin, category, categoryLatin, unitType, currentQuantity, minStockLevel, unitPrice, loanInfo } = body;
+    const { branchId, name, nameLatin, category, categoryLatin, unitType, currentQuantity, minStockLevel, unitPrice, loanInfo, date } = body;
     let bid = (branchId as string) || userBranchId || undefined;
     if (!bid) {
       const defaultBranch = await prisma.branch.findFirst({ select: { id: true } });
@@ -106,6 +106,7 @@ export class StockItemsService {
 
     const initQty = decimalToNum(currentQuantity) ?? 0;
     const price = unitPrice != null ? decimalToNum(unitPrice) ?? 0 : 0;
+    const itemDate = date ? new Date(date as string) : new Date();
 
     const result = await prisma.$transaction(async (tx) => {
       const item = await tx.stockItem.create({
@@ -119,6 +120,7 @@ export class StockItemsService {
           currentQuantity: initQty,
           unitPrice: price,
           minStockLevel: minStockLevel != null ? decimalToNum(minStockLevel) : null,
+          createdAt: itemDate,
         },
       });
 
@@ -133,6 +135,7 @@ export class StockItemsService {
             totalValue,
             type: 'IN',
             reason: 'Initial stock item creation',
+            createdAt: itemDate,
           },
         });
 
@@ -152,6 +155,7 @@ export class StockItemsService {
               paidAmount,
               remainingBalance,
               status,
+              createdAt: itemDate,
             },
           });
         }
@@ -378,7 +382,8 @@ export class StockItemsService {
     reason?: string,
     loanInfo?: { isLoan?: boolean; paidAmount?: number; supplierName?: string },
     newUnitPrice?: number | string,
-    autoConfirm: boolean = false
+    autoConfirm: boolean = false,
+    date?: string | Date
   ): ServiceResult {
     const qty = Number(quantityToAdd);
     if (isNaN(qty) || qty <= 0) {
@@ -397,6 +402,7 @@ export class StockItemsService {
       ? parsedPrice
       : Number(item.unitPrice ?? 0);
     const totalValue = qty * price;
+    const movementDate = date ? new Date(date) : new Date();
 
     const result = await prisma.$transaction(async (tx) => {
       let updatedItem = item;
@@ -422,7 +428,8 @@ export class StockItemsService {
           type: 'IN',
           status: autoConfirm ? 'CONFIRMED' : 'PENDING_CONFIRMATION',
           reason: reason?.trim() || 'Manual Stock Addition',
-          ...(autoConfirm ? { confirmedAt: new Date(), confirmedById: userId } : {}),
+          createdAt: movementDate,
+          ...(autoConfirm ? { confirmedAt: movementDate, confirmedById: userId } : {}),
         },
       });
 
@@ -441,6 +448,7 @@ export class StockItemsService {
             paidAmount,
             remainingBalance,
             status,
+            createdAt: movementDate,
           },
         });
       }

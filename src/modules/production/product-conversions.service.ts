@@ -1,6 +1,8 @@
 import { prisma } from '../../lib/prisma.js';
+import { Role } from '@prisma/client';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 import { ProductsService } from '../catalog/products.service.js';
+import { notificationsService } from '../notifications/notifications.service.js';
 
 export class ProductConversionsService {
   async getProductConversions(
@@ -137,6 +139,23 @@ export class ProductConversionsService {
     });
 
     ProductsService.clearCache();
+
+    notificationsService.notifyBranchRoles(
+      bid,
+      [Role.OWNER, Role.ADMIN],
+      'PRODUCT_CONVERSION_CREATED',
+      'notifications.productConversionCreatedTitle',
+      'notifications.productConversionCreatedBody',
+      {
+        fromProductName: fromProduct.name,
+        toProductName: toProduct.name,
+        fromQuantity: fromQ,
+        toQuantity: toQ,
+        userName: conversion.user?.fullName || 'Staff',
+      },
+      `/product-conversions`
+    ).catch(err => console.error('[Notification] Product conversion notification error:', err));
+
     return { data: conversion };
   }
 

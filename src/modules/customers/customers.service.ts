@@ -1,8 +1,10 @@
 import { prisma } from '../../lib/prisma.js';
+import { Role } from '@prisma/client';
 import { businessDateFromYmdString } from '../../lib/businessDate.js';
 import { parsePagination, buildPaginatedResponse } from '../../lib/pagination.js';
 import type { ServiceResult } from '../../types/service-response.js';
 import { ProductsService } from '../catalog/products.service.js';
+import { notificationsService } from '../notifications/notifications.service.js';
 
 function decimalToNum(v: unknown): number {
   if (v == null) return 0;
@@ -471,6 +473,21 @@ export class CustomersService {
     });
 
     ProductsService.clearCache();
+
+    notificationsService.notifyBranchRoles(
+      bid,
+      [Role.OWNER, Role.ADMIN],
+      'CUSTOMER_CREDIT_CREATED',
+      'notifications.customerCreditCreatedTitle',
+      'notifications.customerCreditCreatedBody',
+      {
+        customerName: credit.customer?.fullName || 'Customer',
+        amount: Number(credit.amount).toFixed(2),
+        branchName: credit.branch?.name || '',
+      },
+      `/customer-credits`
+    ).catch(err => console.error('[Notification] Customer credit notification error:', err));
+
     return { data: credit };
   }
 
