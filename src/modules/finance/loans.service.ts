@@ -428,7 +428,7 @@ export class LoansService {
       }
     }
     if (status !== undefined) data.status = status;
-    if (date !== undefined) data.date = date ? new Date(date) : loan.date;
+    if (date !== undefined) data.date = date ? businessDateFromYmdString(date) : loan.date;
     if (body.userId !== undefined) data.userId = body.userId;
 
     const updated = await prisma.loan.update({
