@@ -763,4 +763,12 @@ model PushSubscription {
   @@index([userId])
 }
 
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+
 
