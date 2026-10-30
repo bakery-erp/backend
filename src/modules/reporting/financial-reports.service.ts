@@ -231,6 +231,7 @@ export class FinancialReportsService {
       })),
     ];
     const customerCreditSalesTotal = customerLoans.reduce((sum, l) => sum + Number(l.totalAmount), 0);
+    const customerCreditRemainingBalanceTotal = customerLoans.reduce((sum, l) => sum + Number(l.remainingBalance), 0);
     const employeeLoans = loans.filter(l => l.type !== 'CUSTOMER');
     const employeeLoanTotal = employeeLoans.reduce((sum, l) => sum + Number(l.totalAmount), 0);
 
@@ -370,7 +371,15 @@ export class FinancialReportsService {
       entry.loanTotal += Number(l.totalAmount);
       if (l.type === 'CUSTOMER') {
         entry.customerCreditSalesTotal += Number(l.totalAmount);
+        entry.customerCreditRemainingBalanceTotal = (entry.customerCreditRemainingBalanceTotal || 0) + Number(l.remainingBalance);
       }
+    }
+
+    for (const cc of customerCredits) {
+      const dayKey = cc.date ? new Date(cc.date).toISOString().slice(0, 10) : new Date(cc.createdAt).toISOString().slice(0, 10);
+      const entry = getOrCreateDailyEntry(dayKey);
+      entry.customerCreditSalesTotal += Number(cc.amount);
+      entry.customerCreditRemainingBalanceTotal = (entry.customerCreditRemainingBalanceTotal || 0) + Number(cc.remainingBalance);
     }
 
     for (const cp of customerLoanPayments) {
@@ -378,6 +387,13 @@ export class FinancialReportsService {
       const entry = getOrCreateDailyEntry(dayKey);
       entry.creditReceivedFromLoan += Number(cp.amountPaid);
       entry.customerCreditPaymentTotal += Number(cp.amountPaid);
+    }
+
+    for (const ccp of customerCreditPayments) {
+      const dayKey = ccp.date ? new Date(ccp.date).toISOString().slice(0, 10) : new Date(ccp.createdAt).toISOString().slice(0, 10);
+      const entry = getOrCreateDailyEntry(dayKey);
+      entry.creditReceivedFromLoan += Number(ccp.amount);
+      entry.customerCreditPaymentTotal += Number(ccp.amount);
     }
 
     for (const d of deliveries) {
@@ -434,6 +450,7 @@ export class FinancialReportsService {
       // Compatibility & Extended reporting:
       openingLeftoverQuantity,
       customerCreditSalesTotal,
+      customerCreditRemainingBalanceTotal,
       customerCreditPaymentTotal,
       grossRevenueTotal,
       totalCashCollected,
@@ -473,6 +490,7 @@ export class FinancialReportsService {
         dailyTotalRevenue: totals.dailyTotalRevenue,
         dailyTotalRevenueWithCredit: totals.dailyTotalRevenueWithCredit,
         customerCreditSalesTotal,
+        customerCreditRemainingBalanceTotal,
         customerCreditPaymentTotal,
         grossRevenueTotal,
         totalCashCollected,

@@ -1242,6 +1242,47 @@ export class DailySessionsService {
 
     const productMap = new Map(products.map((p) => [p.id, p]));
 
+    // Load customer credits taken for this session or date to deduct them from derived cash sales
+    const [sessionCustomerCredits, sessionLegacyLoans] = await Promise.all([
+      prisma.customerCredit.findMany({
+        where: {
+          OR: [
+            { sessionId },
+            { branchId: session.branchId, date: sessionBusinessDate },
+          ],
+        },
+        select: { description: true },
+      }),
+      prisma.loan.findMany({
+        where: {
+          branchId: session.branchId,
+          type: 'CUSTOMER',
+          date: sessionBusinessDate,
+        },
+        select: { entityId: true },
+      }),
+    ]);
+
+    const allProdsForCredits = await prisma.product.findMany({ select: { id: true, name: true } });
+    const productsByNameForSession = new Map<string, string>();
+    for (const p of allProdsForCredits) {
+      productsByNameForSession.set(p.name.trim().toLowerCase(), p.id);
+    }
+
+    const creditTakenByProduct: Record<string, number> = {};
+    for (const l of sessionLegacyLoans) {
+      const items = extractCreditItemsFromEntityId(l.entityId, productsByNameForSession);
+      for (const it of items) {
+        creditTakenByProduct[it.productId] = (creditTakenByProduct[it.productId] ?? 0) + it.quantity;
+      }
+    }
+    for (const cc of sessionCustomerCredits) {
+      const items = extractCreditItemsFromEntityId(cc.description, productsByNameForSession);
+      for (const it of items) {
+        creditTakenByProduct[it.productId] = (creditTakenByProduct[it.productId] ?? 0) + it.quantity;
+      }
+    }
+
     for (const pid of productIds) {
       const opening = openingByProduct[pid] ?? 0;
       const produced = producedByProduct[pid] ?? 0;
@@ -1251,7 +1292,8 @@ export class DailySessionsService {
       const available = opening + produced + bought + convertedIn - convertedOut;
       const leftover = leftoverByProduct[pid] ?? 0;
       const damaged = damagedByProduct[pid] ?? 0;
-      const sold = Math.max(0, available - leftover - damaged);
+      const creditTaken = creditTakenByProduct[pid] ?? 0;
+      const sold = Math.max(0, available - leftover - damaged - creditTaken);
 
       if (sold <= 0) continue;
 
@@ -1738,6 +1780,47 @@ export class DailySessionsService {
       : [];
     const productMap = new Map(products.map((p) => [p.id, p]));
 
+    // Load customer credits taken for this session or date to deduct them from derived cash sales
+    const [sessionCustomerCredits, sessionLegacyLoans] = await Promise.all([
+      prisma.customerCredit.findMany({
+        where: {
+          OR: [
+            { sessionId },
+            { branchId: session.branchId, date: sessionBusinessDate },
+          ],
+        },
+        select: { description: true },
+      }),
+      prisma.loan.findMany({
+        where: {
+          branchId: session.branchId,
+          type: 'CUSTOMER',
+          date: sessionBusinessDate,
+        },
+        select: { entityId: true },
+      }),
+    ]);
+
+    const allProdsForCredits = await prisma.product.findMany({ select: { id: true, name: true } });
+    const productsByNameForSession = new Map<string, string>();
+    for (const p of allProdsForCredits) {
+      productsByNameForSession.set(p.name.trim().toLowerCase(), p.id);
+    }
+
+    const creditTakenByProduct: Record<string, number> = {};
+    for (const l of sessionLegacyLoans) {
+      const items = extractCreditItemsFromEntityId(l.entityId, productsByNameForSession);
+      for (const it of items) {
+        creditTakenByProduct[it.productId] = (creditTakenByProduct[it.productId] ?? 0) + it.quantity;
+      }
+    }
+    for (const cc of sessionCustomerCredits) {
+      const items = extractCreditItemsFromEntityId(cc.description, productsByNameForSession);
+      for (const it of items) {
+        creditTakenByProduct[it.productId] = (creditTakenByProduct[it.productId] ?? 0) + it.quantity;
+      }
+    }
+
     for (const pid of productIds) {
       const opening = openingByProduct[pid] ?? 0;
       const produced = producedByProduct[pid] ?? 0;
@@ -1747,7 +1830,8 @@ export class DailySessionsService {
       const available = opening + produced + bought + convertedIn - convertedOut;
       const leftover = leftoverByProduct[pid] ?? 0;
       const damaged = damagedByProduct[pid] ?? 0;
-      const sold = Math.max(0, available - leftover - damaged);
+      const creditTaken = creditTakenByProduct[pid] ?? 0;
+      const sold = Math.max(0, available - leftover - damaged - creditTaken);
 
       if (sold <= 0) continue;
 
