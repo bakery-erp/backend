@@ -18,7 +18,8 @@ export class StockItemsService {
     search?: string,
     unitType?: string,
     lowStockOnly?: boolean,
-    category?: string
+    category?: string,
+    forRole?: Role
   ): ServiceResult {
     if (!branchId) {
       return { error: 'branchId required', status: 400 };
@@ -28,6 +29,12 @@ export class StockItemsService {
     if (unitType) where.unitType = unitType;
 
     const andConditions: any[] = [];
+
+    if (forRole) {
+      andConditions.push({
+        allowedRoles: { has: forRole },
+      });
+    }
 
     if (category?.trim()) {
       const cat = category.trim();
@@ -93,7 +100,7 @@ export class StockItemsService {
   }
 
   async createStockItem(body: Record<string, unknown>, userId: string, userBranchId?: string | null): ServiceResult {
-    const { branchId, name, nameLatin, category, categoryLatin, unitType, currentQuantity, minStockLevel, unitPrice, loanInfo, date } = body;
+    const { branchId, name, nameLatin, category, categoryLatin, unitType, currentQuantity, minStockLevel, unitPrice, loanInfo, date, allowedRoles } = body;
     let bid = (branchId as string) || userBranchId || undefined;
     if (!bid) {
       const defaultBranch = await prisma.branch.findFirst({ select: { id: true } });
@@ -120,6 +127,7 @@ export class StockItemsService {
           currentQuantity: initQty,
           unitPrice: price,
           minStockLevel: minStockLevel != null ? decimalToNum(minStockLevel) : null,
+          allowedRoles: Array.isArray(allowedRoles) ? (allowedRoles as Role[]) : [],
           createdAt: itemDate,
         },
       });
@@ -173,7 +181,7 @@ export class StockItemsService {
       return { error: 'Stock item not found', status: 404 };
     }
 
-    const { name, nameLatin, category, categoryLatin, unitType, currentQuantity, minStockLevel, unitPrice } = body;
+    const { name, nameLatin, category, categoryLatin, unitType, currentQuantity, minStockLevel, unitPrice, allowedRoles } = body;
     const data: Record<string, unknown> = {};
     
     if (name != null) data.name = String(name).trim();
@@ -184,6 +192,7 @@ export class StockItemsService {
     if (currentQuantity != null) data.currentQuantity = decimalToNum(currentQuantity);
     if (unitPrice != null) data.unitPrice = decimalToNum(unitPrice);
     if (minStockLevel !== undefined) data.minStockLevel = minStockLevel != null ? decimalToNum(minStockLevel) : null;
+    if (allowedRoles !== undefined) data.allowedRoles = Array.isArray(allowedRoles) ? (allowedRoles as Role[]) : [];
 
     const result = await prisma.$transaction(async (tx) => {
       const updated = await tx.stockItem.update({
@@ -222,6 +231,78 @@ export class StockItemsService {
     );
 
     return { data: result };
+  }
+
+  async getRoleMaterials(branchId?: string | null): ServiceResult {
+    if (!branchId) {
+      return { error: 'branchId required', status: 400 };
+    }
+
+    const items = await prisma.stockItem.findMany({
+      where: { branchId },
+      select: {
+        id: true,
+        name: true,
+        nameLatin: true,
+        category: true,
+        categoryLatin: true,
+        unitType: true,
+        currentQuantity: true,
+        allowedRoles: true,
+      },
+      orderBy: [{ category: 'asc' }, { name: 'asc' }],
+    });
+
+    return { data: items };
+  }
+
+  async updateRoleMaterials(branchId: string, role: Role, stockItemIds: string[]): ServiceResult {
+    if (!branchId || !role) {
+      return { error: 'branchId and role required', status: 400 };
+    }
+
+    const targetSet = new Set(stockItemIds);
+    const branchItems = await prisma.stockItem.findMany({
+      where: { branchId },
+      select: { id: true, allowedRoles: true },
+    });
+
+    const toAdd: string[] = [];
+    const toRemove: string[] = [];
+
+    for (const item of branchItems) {
+      const currentRoles = (item.allowedRoles as Role[]) || [];
+      const hasRole = currentRoles.includes(role);
+      const shouldHaveRole = targetSet.has(item.id);
+
+      if (shouldHaveRole && !hasRole) {
+        toAdd.push(item.id);
+      } else if (!shouldHaveRole && hasRole) {
+        toRemove.push(item.id);
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const id of toAdd) {
+        const item = branchItems.find((i) => i.id === id);
+        const nextRoles = Array.from(new Set([...(item?.allowedRoles || []), role]));
+        await tx.stockItem.update({
+          where: { id },
+          data: { allowedRoles: nextRoles },
+        });
+      }
+
+      for (const id of toRemove) {
+        const item = branchItems.find((i) => i.id === id);
+        const nextRoles = ((item?.allowedRoles || []) as Role[]).filter((r) => r !== role);
+        await tx.stockItem.update({
+          where: { id },
+          data: { allowedRoles: nextRoles },
+        });
+      }
+    });
+
+    return { data: { success: true, updatedCount: toAdd.length + toRemove.length } };
   }
 
   async getItemHistory(
