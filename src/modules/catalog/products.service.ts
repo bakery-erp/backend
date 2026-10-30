@@ -232,13 +232,9 @@ export class ProductsService {
   }
 
   /**
-   * Calculates real-time house stock anchored to daily session leftovers:
-   * 1. If latest session is CLOSED or CLOSE_PENDING:
-   *    Stock IS the leftover quantity remaining recorded at session close.
-   * 2. If latest session is OPEN or PAUSED:
-   *    Stock = (previous closed leftover) + (produced today) + (delivered today) + (converted in) - (sold today) - (converted out) - (damaged today).
-   * 3. If no session exists:
-   *    Fallback to lifetime produced + delivered - sold.
+   * Calculates real-time house stock across branches:
+   * Stock = (Produced + Resell Delivered + Converted In) - (Sold + Customer Credited + Converted Out + Damaged)
+   * Guaranteed to be real-time and fully synchronized when batches are created, edited, converted, or sold.
    */
   public async calculateHouseStockMap(branchId?: string): Promise<Map<string, number>> {
     const cacheKey = branchId || 'ALL';
@@ -261,244 +257,77 @@ export class ProductsService {
       : await prisma.branch.findMany({ where: { isActive: true }, select: { id: true } });
 
     for (const b of branches) {
-      const latestSession = await prisma.dailySession.findFirst({
-        where: { branchId: b.id },
-        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
-        include: { leftoverRecords: true },
-      });
-
-      if (!latestSession) {
-        // Fallback for brand new branch with no session yet (batch queries in pairs)
-        const [producedAgg, deliveredAgg] = await Promise.all([
-          prisma.productionItem.groupBy({
-            by: ['productId'],
-            _sum: { quantityProduced: true },
-            where: { batch: { branchId: b.id, status: { in: ['COMPLETED', 'STARTED'] } } },
-          }),
-          prisma.supplierDelivery.groupBy({
-            by: ['productId'],
-            _sum: { quantityReceived: true, returnedQuantity: true },
-            where: { supplier: { branchId: b.id } },
-          }),
-        ]);
-
-        const [convToAgg, convFromAgg] = await Promise.all([
-          prisma.productConversion.groupBy({
-            by: ['toProductId'],
-            _sum: { toQuantity: true },
-            where: { branchId: b.id },
-          }),
-          prisma.productConversion.groupBy({
-            by: ['fromProductId'],
-            _sum: { fromQuantity: true },
-            where: { branchId: b.id },
-          }),
-        ]);
-
-        const [salesAgg, damagedAgg] = await Promise.all([
-          prisma.saleItem.groupBy({
-            by: ['productId'],
-            _sum: { quantity: true },
-            where: { sale: { session: { branchId: b.id } } },
-          }),
-          prisma.leftoverRecord.groupBy({
-            by: ['productId'],
-            _sum: { damagedQuantity: true },
-            where: { session: { branchId: b.id } },
-          }),
-        ]);
-
-        const customerCredits = await prisma.customerCredit.findMany({
+      const [producedAgg, deliveredAgg, convToAgg, convFromAgg, salesAgg, damagedAgg, customerCredits] = await Promise.all([
+        prisma.productionItem.groupBy({
+          by: ['productId'],
+          _sum: { quantityProduced: true },
+          where: { batch: { branchId: b.id, status: { in: ['COMPLETED', 'STARTED'] } } },
+        }),
+        prisma.supplierDelivery.groupBy({
+          by: ['productId'],
+          _sum: { quantityReceived: true, returnedQuantity: true },
+          where: { supplier: { branchId: b.id } },
+        }),
+        prisma.productConversion.groupBy({
+          by: ['toProductId'],
+          _sum: { toQuantity: true },
           where: { branchId: b.id },
-          select: { description: true },
-        });
-        const creditMap = new Map<string, number>();
-        for (const cc of customerCredits) {
-          const items = extractCreditItemsFromEntityId(cc.description, productsByName);
-          for (const it of items) {
-            creditMap.set(it.productId, (creditMap.get(it.productId) || 0) + it.quantity);
-          }
-        }
-
-        const pMap = new Map(producedAgg.map(a => [a.productId, a._sum.quantityProduced || 0]));
-        const dMap = new Map(deliveredAgg.map(a => [a.productId, Math.max(0, (a._sum.quantityReceived || 0) - (a._sum.returnedQuantity || 0))]));
-        const toMap = new Map(convToAgg.map(a => [a.toProductId, a._sum.toQuantity || 0]));
-        const fromMap = new Map(convFromAgg.map(a => [a.fromProductId, a._sum.fromQuantity || 0]));
-        const sMap = new Map(salesAgg.map(a => [a.productId, a._sum.quantity || 0]));
-        const damMap = new Map(damagedAgg.map(a => [a.productId, a._sum.damagedQuantity || 0]));
-
-        for (const p of allProdsList) {
-          const qty = Math.max(
-            0,
-            (pMap.get(p.id) || 0) + (dMap.get(p.id) || 0) + (toMap.get(p.id) || 0) -
-            (sMap.get(p.id) || 0) - (creditMap.get(p.id) || 0) - (fromMap.get(p.id) || 0) - (damMap.get(p.id) || 0)
-          );
-          stockMap.set(p.id, (stockMap.get(p.id) || 0) + qty);
-        }
-      } else if (latestSession.status === 'CLOSED' || latestSession.status === 'CLOSE_PENDING') {
-        // When session is CLOSED (or CLOSE_PENDING), the baseline is leftover recorded at close
-        // Minus any customer credits logged after the session close, plus/minus any conversions after close
-        const sessionCloseTime = latestSession.updatedAt || latestSession.createdAt;
-        const [creditsAfterClose, convToAfterClose, convFromAfterClose] = await Promise.all([
-          prisma.customerCredit.findMany({
-            where: {
-              branchId: b.id,
-              createdAt: { gt: sessionCloseTime },
-            },
-            select: { description: true },
-          }),
-          prisma.productConversion.groupBy({
-            by: ['toProductId'],
-            _sum: { toQuantity: true },
-            where: { branchId: b.id, createdAt: { gt: sessionCloseTime } },
-          }),
-          prisma.productConversion.groupBy({
-            by: ['fromProductId'],
-            _sum: { fromQuantity: true },
-            where: { branchId: b.id, createdAt: { gt: sessionCloseTime } },
-          }),
-        ]);
-
-        const creditAfterCloseMap = new Map<string, number>();
-        for (const cc of creditsAfterClose) {
-          const items = extractCreditItemsFromEntityId(cc.description, productsByName);
-          for (const it of items) {
-            creditAfterCloseMap.set(it.productId, (creditAfterCloseMap.get(it.productId) || 0) + it.quantity);
-          }
-        }
-
-        const convToMap = new Map(convToAfterClose.map((c) => [c.toProductId, c._sum.toQuantity || 0]));
-        const convFromMap = new Map(convFromAfterClose.map((c) => [c.fromProductId, c._sum.fromQuantity || 0]));
-
-        for (const r of latestSession.leftoverRecords) {
-          const toAdd = convToMap.get(r.productId) || 0;
-          const fromSub = convFromMap.get(r.productId) || 0;
-          const currentQty = Math.max(0, (r.quantityRemaining || 0) - (creditAfterCloseMap.get(r.productId) || 0) + toAdd - fromSub);
-          stockMap.set(r.productId, (stockMap.get(r.productId) || 0) + currentQty);
-        }
-
-        for (const [toPid, toQty] of convToMap.entries()) {
-          if (!stockMap.has(toPid)) {
-            stockMap.set(toPid, toQty);
-          }
-        }
-      } else {
-        // Session is OPEN or PAUSED:
-        // Baseline is previous closed session's leftover (or seeded leftovers)
-        const prevClosed = await prisma.dailySession.findFirst({
-          where: {
-            branchId: b.id,
-            status: 'CLOSED',
-            date: { lt: latestSession.date },
-          },
-          orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
-          include: { leftoverRecords: true },
-        });
-
-        const openingMap: Record<string, number> = {};
-        if (latestSession.leftoverRecords && latestSession.leftoverRecords.length > 0) {
-          for (const r of latestSession.leftoverRecords) {
-            openingMap[r.productId] = r.quantityRemaining || 0;
-          }
-        } else if (prevClosed?.leftoverRecords) {
-          for (const r of prevClosed.leftoverRecords) {
-            openingMap[r.productId] = r.quantityRemaining || 0;
-          }
-        }
-
-        const [actProdAgg, actDelivAgg] = await Promise.all([
-          prisma.productionItem.groupBy({
-            by: ['productId'],
-            _sum: { quantityProduced: true },
-            where: {
-              batch: {
-                branchId: b.id,
-                status: { in: ['COMPLETED', 'STARTED'] },
-                OR: [{ sessionId: latestSession.id }, { date: latestSession.date }],
-              },
-            },
-          }),
-          prisma.supplierDelivery.groupBy({
-            by: ['productId'],
-            _sum: { quantityReceived: true, returnedQuantity: true },
-            where: {
-              OR: [
-                { sessionId: latestSession.id },
-                { supplier: { branchId: b.id }, createdAt: { gte: latestSession.date } },
-              ],
-            },
-          }),
-        ]);
-
-        const [actConvToAgg, actConvFromAgg] = await Promise.all([
-          prisma.productConversion.groupBy({
-            by: ['toProductId'],
-            _sum: { toQuantity: true },
-            where: { branchId: b.id, createdAt: { gte: latestSession.date } },
-          }),
-          prisma.productConversion.groupBy({
-            by: ['fromProductId'],
-            _sum: { fromQuantity: true },
-            where: { branchId: b.id, createdAt: { gte: latestSession.date } },
-          }),
-        ]);
-
-        const actSaleAgg = await prisma.saleItem.groupBy({
+        }),
+        prisma.productConversion.groupBy({
+          by: ['fromProductId'],
+          _sum: { fromQuantity: true },
+          where: { branchId: b.id },
+        }),
+        prisma.saleItem.groupBy({
           by: ['productId'],
           _sum: { quantity: true },
-          where: { sale: { sessionId: latestSession.id } },
-        });
-
-        const actCredits = await prisma.customerCredit.findMany({
           where: {
-            branchId: b.id,
             OR: [
-              { sessionId: latestSession.id },
-              { date: latestSession.date },
-              { createdAt: { gte: latestSession.date } },
+              { sale: { branchId: b.id } },
+              { sale: { session: { branchId: b.id } } },
             ],
           },
+        }),
+        prisma.leftoverRecord.groupBy({
+          by: ['productId'],
+          _sum: { damagedQuantity: true },
+          where: { session: { branchId: b.id } },
+        }),
+        prisma.customerCredit.findMany({
+          where: { branchId: b.id },
           select: { description: true },
-        });
-        const actCreditMap = new Map<string, number>();
-        for (const cc of actCredits) {
-          const items = extractCreditItemsFromEntityId(cc.description, productsByName);
-          for (const it of items) {
-            actCreditMap.set(it.productId, (actCreditMap.get(it.productId) || 0) + it.quantity);
-          }
+        }),
+      ]);
+
+      const creditMap = new Map<string, number>();
+      for (const cc of customerCredits) {
+        const items = extractCreditItemsFromEntityId(cc.description, productsByName);
+        for (const it of items) {
+          creditMap.set(it.productId, (creditMap.get(it.productId) || 0) + it.quantity);
         }
+      }
 
-        const actProd = new Map(actProdAgg.map(a => [a.productId, a._sum.quantityProduced || 0]));
-        const actDeliv = new Map(actDelivAgg.map(a => [a.productId, Math.max(0, (a._sum.quantityReceived || 0) - (a._sum.returnedQuantity || 0))]));
-        const actConvTo = new Map(actConvToAgg.map(a => [a.toProductId, a._sum.toQuantity || 0]));
-        const actConvFrom = new Map(actConvFromAgg.map(a => [a.fromProductId, a._sum.fromQuantity || 0]));
-        const actSale = new Map(actSaleAgg.map(a => [a.productId, a._sum.quantity || 0]));
-        // Damaged quantity is already included in-memory within latestSession.leftoverRecords:
-        const actDam = new Map((latestSession.leftoverRecords || []).map(r => [r.productId, r.damagedQuantity || 0]));
+      const pMap = new Map(producedAgg.map((a) => [a.productId, a._sum.quantityProduced || 0]));
+      const dMap = new Map(deliveredAgg.map((a) => [a.productId, Math.max(0, (a._sum.quantityReceived || 0) - (a._sum.returnedQuantity || 0))]));
+      const toMap = new Map(convToAgg.map((a) => [a.toProductId, a._sum.toQuantity || 0]));
+      const fromMap = new Map(convFromAgg.map((a) => [a.fromProductId, a._sum.fromQuantity || 0]));
+      const sMap = new Map(salesAgg.map((a) => [a.productId, a._sum.quantity || 0]));
+      const damMap = new Map(damagedAgg.map((a) => [a.productId, a._sum.damagedQuantity || 0]));
 
-        const allProdIds = new Set([
-          ...Object.keys(openingMap),
-          ...actProd.keys(),
-          ...actDeliv.keys(),
-          ...actConvTo.keys(),
-          ...actConvFrom.keys(),
-          ...actSale.keys(),
-          ...actCreditMap.keys(),
-        ]);
+      for (const p of allProdsList) {
+        const produced = pMap.get(p.id) || 0;
+        const delivered = dMap.get(p.id) || 0;
+        const convIn = toMap.get(p.id) || 0;
+        const sold = sMap.get(p.id) || 0;
+        const credited = creditMap.get(p.id) || 0;
+        const convOut = fromMap.get(p.id) || 0;
+        const damaged = damMap.get(p.id) || 0;
 
-        for (const pid of allProdIds) {
-          const opening = openingMap[pid] || 0;
-          const prod = actProd.get(pid) || 0;
-          const deliv = actDeliv.get(pid) || 0;
-          const convIn = actConvTo.get(pid) || 0;
-          const sold = actSale.get(pid) || 0;
-          const credited = actCreditMap.get(pid) || 0;
-          const convOut = actConvFrom.get(pid) || 0;
-          const dam = actDam.get(pid) || 0;
-
-          const qty = Math.max(0, (opening + prod + deliv + convIn) - (sold + credited + convOut + dam));
-          stockMap.set(pid, (stockMap.get(pid) || 0) + qty);
-        }
+        const currentQty = Math.max(
+          0,
+          (produced + delivered + convIn) - (sold + credited + convOut + damaged)
+        );
+        stockMap.set(p.id, (stockMap.get(p.id) || 0) + currentQty);
       }
     }
 
