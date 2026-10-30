@@ -142,7 +142,7 @@ export class ProductionBatchesService {
       }
     }
 
-    if (user?.role === 'OWNER' && !batch.ownerSeenAt) {
+    if (user?.role === 'OWNER' && (!batch.ownerSeenAt || (batch.editedAt && batch.ownerSeenAt < batch.editedAt))) {
       batch = await prisma.productionBatch.update({
         where: { id },
         data: { ownerSeenAt: new Date() },
@@ -589,15 +589,41 @@ export class ProductionBatchesService {
 
     if (hasChanges) {
       const editor = user ? await prisma.user.findUnique({ where: { id: user.id }, select: { id: true, fullName: true, role: true } }) : null;
+      const editorName = editor?.fullName || (user as any)?.fullName || 'Employee';
+      const editorRole = editor?.role || user?.role || 'BAKER';
+      const editorId = editor?.id || user?.id || 'unknown';
+
       const newHistoryEntry = {
         editedAt: new Date().toISOString(),
+        editorId,
+        editorName,
+        editorRole,
         editedBy: {
-          id: editor?.id || user?.id || 'unknown',
-          fullName: editor?.fullName || 'Employee',
-          role: editor?.role || user?.role || 'BAKER',
+          id: editorId,
+          fullName: editorName,
+          role: editorRole,
         },
         productChanges,
-        materialChanges,
+        itemChanges: productChanges.map(pc => ({
+          productId: pc.productId,
+          name: pc.productName,
+          productName: pc.productName,
+          unit: pc.unitType,
+          unitType: pc.unitType,
+          oldQty: pc.oldQty,
+          newQty: pc.newQty,
+          diff: pc.diff,
+        })),
+        materialChanges: materialChanges.map(mc => ({
+          stockItemId: mc.stockItemId,
+          name: mc.materialName,
+          materialName: mc.materialName,
+          unit: mc.unitType,
+          unitType: mc.unitType,
+          oldQty: mc.oldQty,
+          newQty: mc.newQty,
+          diff: mc.diff,
+        })),
       };
       updatedHistory.unshift(newHistoryEntry);
     }
@@ -628,6 +654,7 @@ export class ProductionBatchesService {
           isEdited: hasChanges ? true : existing.isEdited,
           editedAt: hasChanges ? new Date() : existing.editedAt,
           editHistory: updatedHistory,
+          ...(hasChanges ? { ownerSeenAt: null, adminSeenAt: null } : {}),
           ...(items && Array.isArray(items)
             ? {
               items: {
