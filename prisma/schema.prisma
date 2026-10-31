@@ -34,6 +34,7 @@ enum UnitType {
   PIECE
   KG
   LITER
+  GRAM
 }
 
 enum BatchStatus {

@@ -853,7 +853,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
       post: {
         tags: ['Products'],
         summary: 'Create product',
-        description: 'Web only. Required: categoryId, name, unitType, basePrice. unitType: PIECE | KG | LITER. Optional financialCategoryId must reference a REVENUE financial category.',
+        description: 'Web only. Required: categoryId, name, unitType, basePrice. unitType: PIECE | KG | LITER | GRAM. Optional financialCategoryId must reference a REVENUE financial category.',
         requestBody: {
           required: true,
           content: {
@@ -861,7 +861,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
               schema: {
                 type: 'object',
                 required: ['categoryId', 'name', 'unitType', 'basePrice'],
-                properties: { categoryId: { type: 'string' }, financialCategoryId: { type: 'string', nullable: true }, name: { type: 'string' }, flavor: { type: 'string', nullable: true }, unitType: { enum: ['PIECE', 'KG', 'LITER'] }, basePrice: { type: 'number' }, buyPrice: { type: 'number', nullable: true } },
+                properties: { categoryId: { type: 'string' }, financialCategoryId: { type: 'string', nullable: true }, name: { type: 'string' }, flavor: { type: 'string', nullable: true }, unitType: { enum: ['PIECE', 'KG', 'LITER', 'GRAM'] }, basePrice: { type: 'number' }, buyPrice: { type: 'number', nullable: true } },
               },
               example: { categoryId: 'clyy...', financialCategoryId: 'clfc...', name: 'Injera', unitType: 'PIECE', basePrice: 25 },
             },
@@ -900,7 +900,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
         parameters: [
           { name: 'branchId', in: 'query', required: true, schema: { type: 'string' } },
           { name: 'search', in: 'query', schema: { type: 'string' }, description: 'Search by item name (e.g. "flour")' },
-          { name: 'unitType', in: 'query', schema: { type: 'string', enum: ['PIECE', 'KG', 'LITER'] }, description: 'Filter by unit type' },
+          { name: 'unitType', in: 'query', schema: { type: 'string', enum: ['PIECE', 'KG', 'LITER', 'GRAM'] }, description: 'Filter by unit type' },
           { name: 'lowStockOnly', in: 'query', schema: { type: 'boolean' }, description: 'If true, returns only items at or below minStockLevel' },
         ],
         responses: {
@@ -917,7 +917,7 @@ Call this after the cashier has counted and reported leftovers. Sales are then d
           required: true,
           content: {
             'application/json': {
-              schema: { type: 'object', required: ['branchId', 'name', 'unitType'], properties: { branchId: { type: 'string' }, name: { type: 'string' }, unitType: { enum: ['PIECE', 'KG', 'LITER'] }, currentQuantity: { type: 'number' }, minStockLevel: { type: 'number' } } },
+              schema: { type: 'object', required: ['branchId', 'name', 'unitType'], properties: { branchId: { type: 'string' }, name: { type: 'string' }, unitType: { enum: ['PIECE', 'KG', 'LITER', 'GRAM'] }, currentQuantity: { type: 'number' }, minStockLevel: { type: 'number' } } },
               example: { branchId: 'clyy...', name: 'Flour', unitType: 'KG', currentQuantity: 0, minStockLevel: 10 },
             },
           },
