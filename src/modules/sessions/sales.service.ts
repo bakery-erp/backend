@@ -3,12 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PaymentMethod } from '../../lib/paymentMethod.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
-function decimalToNum(v: unknown): number {
-  if (v == null) return 0;
-  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
-  if (typeof v === 'string') return parseFloat(v) || 0;
-  return 0;
-}
+import { decimalToNum } from '../../lib/decimal.js';
 
 function parsePaymentMethod(v: unknown): PaymentMethod {
   const s = String(v ?? 'CASH')

@@ -3,12 +3,7 @@ import { parseExpenseType, isValidExpenseTypeForPatch } from '../../lib/expenseT
 import { buildPaginatedResponse } from '../../lib/pagination.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
-function decimalToNum(v: unknown): number {
-  if (v == null) return 0;
-  if (typeof v === 'number') return v;
-  if (typeof v === 'string') return parseFloat(v);
-  return 0;
-}
+import { decimalToNum } from '../../lib/decimal.js';
 
 async function validateExpenseFinancialCategory(financialCategoryId: string | null | undefined) {
   if (financialCategoryId == null || financialCategoryId === '') return null;

@@ -5,12 +5,7 @@ import { parsePagination, buildPaginatedResponse } from '../../lib/pagination.js
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 import { notificationsService } from '../notifications/notifications.service.js';
 
-function decimalToNum(v: unknown): number {
-  if (v == null) return 0;
-  if (typeof v === 'number') return v;
-  if (typeof v === 'string') return parseFloat(v);
-  return 0;
-}
+import { decimalToNum } from '../../lib/decimal.js';
 
 export class SupplierDeliveriesService {
   async getSupplierDeliveries(params: {

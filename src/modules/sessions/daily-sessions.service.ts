@@ -5,12 +5,7 @@ import { businessDateUtcNoon, dateToYmdUtc, parseYmd, utcDayRangeInclusive } fro
 import { parsePagination, buildPaginatedResponse } from '../../lib/pagination.js';
 import type { ServiceResponse, ServiceResult } from '../../types/service-response.js';
 
-function decimalToNum(v: unknown): number {
-  if (v == null) return 0;
-  if (typeof v === 'number') return v;
-  if (typeof v === 'string') return parseFloat(v);
-  return 0;
-}
+import { decimalToNum } from '../../lib/decimal.js';
 
 export function extractCreditItemsFromEntityId(
   entityId: string | null | undefined,

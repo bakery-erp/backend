@@ -5,7 +5,12 @@ import { extractCreditItemsFromEntityId } from '../sessions/daily-sessions.servi
 function decimalToNum(v: unknown) {
   if (v == null) return undefined;
   if (typeof v === 'number') return v;
-  if (typeof v === 'string') return parseFloat(v);
+  if (typeof v === 'string') return parseFloat(v) || 0;
+  if (typeof v === 'object' && v !== null) {
+    if (typeof (v as any).toNumber === 'function') return (v as any).toNumber();
+    const num = Number(v);
+    return isNaN(num) ? undefined : num;
+  }
   return undefined;
 }
 
