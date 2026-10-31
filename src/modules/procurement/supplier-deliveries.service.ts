@@ -29,7 +29,11 @@ export class SupplierDeliveriesService {
     if (branchId) where.supplier = { branchId };
     if (sessionId) where.sessionId = sessionId;
     if (paymentStatus && paymentStatus !== 'ALL') {
-      where.paymentStatus = paymentStatus;
+      if (paymentStatus === 'UNPAID' || paymentStatus === 'PENDING') {
+        where.paymentStatus = { in: ['PENDING', 'PARTIAL'] };
+      } else {
+        where.paymentStatus = paymentStatus;
+      }
     } else if (isPaid !== undefined) {
       where.isPaid = isPaid === 'true';
     }
@@ -460,17 +464,17 @@ export class SupplierDeliveriesService {
     }
 
     const netQty = Math.max(0, delivery.quantityReceived - delivery.returnedQuantity);
-    const totalCost = netQty * decimalToNum(delivery.unitBuyPrice);
-    const currentPaid = delivery.isPaid && decimalToNum(delivery.paidAmount) === 0 ? totalCost : decimalToNum(delivery.paidAmount);
-    const remainingBalance = Math.max(0, totalCost - currentPaid);
+    const totalCost = Number((netQty * decimalToNum(delivery.unitBuyPrice)).toFixed(2));
+    const currentPaid = Number(decimalToNum(delivery.paidAmount || 0).toFixed(2));
+    const remainingBalance = Math.max(0, Number((totalCost - currentPaid).toFixed(2)));
 
-    if (remainingBalance <= 0) {
+    if (remainingBalance <= 0.001) {
       return { error: 'Delivery is already fully paid', status: 400 };
     }
 
     const actualPayAmount = Math.min(remainingBalance, paymentAmount);
-    const newPaidAmount = currentPaid + actualPayAmount;
-    const isNowPaid = newPaidAmount >= totalCost;
+    const newPaidAmount = Number((currentPaid + actualPayAmount).toFixed(2));
+    const isNowPaid = newPaidAmount >= totalCost - 0.001;
     const newStatus: 'PENDING' | 'PARTIAL' | 'PAID' = isNowPaid ? 'PAID' : 'PARTIAL';
     const paySource = (body.paymentSource === 'OWNER' ? 'OWNER' : 'DAILY_CASH') as any;
 

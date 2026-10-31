@@ -51,6 +51,8 @@ export class FinancialReportsService {
       customerCredits,
       customerCreditPayments,
       allDeliveries,
+      pendingSupplierDeliveries,
+      supplierDeliveryPayments,
       unpaidStockLoans,
       stockPurchasePayments,
       payroll,
@@ -122,6 +124,41 @@ export class FinancialReportsService {
           supplier: { select: { id: true, name: true, branchId: true } },
           product: { select: { id: true, name: true, unitType: true, basePrice: true, buyPrice: true } },
           session: { select: { id: true, date: true, status: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.supplierDelivery.findMany({
+        where: {
+          OR: [
+            { supplier: { branchId } },
+            { session: { branchId } },
+          ],
+          paymentStatus: { not: 'PAID' },
+        },
+        include: {
+          supplier: { select: { id: true, name: true, branchId: true } },
+          product: { select: { id: true, name: true, unitType: true, basePrice: true, buyPrice: true } },
+          session: { select: { id: true, date: true, status: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.supplierDeliveryPayment.findMany({
+        where: {
+          delivery: {
+            OR: [
+              { supplier: { branchId } },
+              { session: { branchId } },
+            ],
+          },
+          createdAt: { gte: timestampStart, lte: timestampEnd },
+        },
+        include: {
+          delivery: {
+            include: {
+              supplier: { select: { id: true, name: true } },
+              product: { select: { id: true, name: true, unitType: true } },
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
       }),
@@ -239,30 +276,72 @@ export class FinancialReportsService {
       customerLoanPayments.reduce((sum, p) => sum + Number(p.amountPaid), 0) +
       customerCreditPayments.reduce((sum, p) => sum + Number(p.amount), 0);
 
-    // On dashboard, show supplier purchases only if taken from daily cash drawer
-    const deliveries = allDeliveries.filter((d) => d.paymentSource === 'DAILY_CASH');
-    const ownerDeliveries = allDeliveries.filter((d) => d.paymentSource === 'OWNER');
-    const supplierDeliveryCost = deliveries.reduce(
-      (s, d) => s + Number(d.unitBuyPrice) * Math.max(0, d.quantityReceived - (d.returnedQuantity || 0)),
-      0
-    );
-    const supplierDeliveryOwnerCost = ownerDeliveries.reduce(
-      (s, d) => s + Number(d.unitBuyPrice) * Math.max(0, d.quantityReceived - (d.returnedQuantity || 0)),
-      0
-    );
+    // Unpaid deliveries (Payables / Credits that owner has to pay - ONLY REMAINING UNPAID BALANCE)
+    const allPendingDeliveryCandidates = [...allDeliveries, ...pendingSupplierDeliveries];
+    const uniquePendingDeliveryMap = new Map<string, any>();
+    for (const d of allPendingDeliveryCandidates) {
+      if (!uniquePendingDeliveryMap.has(d.id)) {
+        uniquePendingDeliveryMap.set(d.id, d);
+      }
+    }
+    const unpaidSupplierDeliveries = Array.from(uniquePendingDeliveryMap.values())
+      .map((d) => {
+        const netQty = Math.max(0, d.quantityReceived - (d.returnedQuantity || 0));
+        const totalCost = Number((netQty * Number(d.unitBuyPrice)).toFixed(2));
+        const paidAmount = Number(Number(d.paidAmount || 0).toFixed(2));
+        const remainingBalance = Math.max(0, Number((totalCost - paidAmount).toFixed(2)));
+        return {
+          ...d,
+          totalCost,
+          paidAmount,
+          remainingBalance,
+        };
+      })
+      .filter((d) => d.remainingBalance > 0.001);
 
-    // Unpaid deliveries (Payables / Credits that owner has to pay)
-    const unpaidSupplierDeliveries = allDeliveries.filter((d) => !d.isPaid);
     const unpaidSupplierDeliveriesTotal = unpaidSupplierDeliveries.reduce(
-      (s, d) => s + Number(d.unitBuyPrice) * Math.max(0, d.quantityReceived - (d.returnedQuantity || 0)),
+      (s, d) => s + d.remainingBalance,
       0
     );
 
-    // Unpaid stock purchase loans (Credits/debts that owner has to pay to suppliers)
-    const unpaidStockLoansTotal = unpaidStockLoans.reduce((sum, sl) => sum + Number(sl.remainingBalance), 0);
+    // Unpaid stock purchase loans (Credits/debts that owner has to pay to suppliers - ONLY REMAINING UNPAID BALANCE)
+    const activeUnpaidStockLoans = unpaidStockLoans
+      .map((sl) => {
+        const totalAmount = Number(Number(sl.totalAmount).toFixed(2));
+        const paidAmount = Number(Number(sl.paidAmount || 0).toFixed(2));
+        const remainingBalance = Math.max(0, Number((Number(sl.remainingBalance) || (totalAmount - paidAmount)).toFixed(2)));
+        return {
+          ...sl,
+          totalAmount,
+          paidAmount,
+          remainingBalance,
+        };
+      })
+      .filter((sl) => sl.remainingBalance > 0.001);
+
+    const unpaidStockLoansTotal = activeUnpaidStockLoans.reduce(
+      (sum, sl) => sum + sl.remainingBalance,
+      0
+    );
     const totalPendingOwnerLiabilities = unpaidSupplierDeliveriesTotal + unpaidStockLoansTotal;
 
+    // Paid credit amounts in this period (MUST BE COUNTED AS EXPENSES)
     const stockLoanPaymentTotal = stockPurchasePayments.reduce((sum, sp) => sum + Number(sp.amount), 0);
+    const supplierDeliveryPaymentTotal = supplierDeliveryPayments.reduce((sum, sdp) => sum + Number(sdp.amount), 0);
+
+    // Initial cash paid on deliveries created in this range without separate payment record
+    const initialCashDeliveriesInPeriod = allDeliveries.filter((d) =>
+      d.paymentSource === 'DAILY_CASH' &&
+      Number(d.paidAmount) > 0 &&
+      !supplierDeliveryPayments.some((sdp) => sdp.deliveryId === d.id)
+    );
+    const initialCashPaidDeliveryTotal = initialCashDeliveriesInPeriod.reduce((sum, d) => sum + Number(d.paidAmount), 0);
+    const totalSupplierDeliveryPaid = supplierDeliveryPaymentTotal + initialCashPaidDeliveryTotal;
+
+    const totalStockAndSupplierCreditPaid = stockLoanPaymentTotal + totalSupplierDeliveryPaid;
+    const pureCompanyExpenseTotal = companyExpenseTotal;
+    const fullCompanyExpenseTotal = pureCompanyExpenseTotal + totalStockAndSupplierCreditPaid;
+
     const payrollTotal = payroll.reduce((sum, p) => sum + Number(p.finalAmount), 0);
 
     // Total Revenue (Accrual: POS cash/bank sales + Customer Credited product sales)
@@ -271,9 +350,9 @@ export class FinancialReportsService {
     // Cash Realized / Cash Collections (POS sales + Customer Credit repayments collected)
     const totalCashCollected = salesTotal + customerCreditPaymentTotal;
 
-    // Total Operating Expenses (Daily operating costs + payroll + stock loan payments)
-    const totalOperatingExpenses = companyExpenseTotal + payrollTotal + stockLoanPaymentTotal;
-    const totalMaterialCosts = supplierDeliveryCost;
+    // Total Operating Expenses (Daily operating costs + payroll + stock/supplier credit payments)
+    const totalOperatingExpenses = fullCompanyExpenseTotal + payrollTotal;
+    const totalMaterialCosts = totalSupplierDeliveryPaid;
     const totalCompanyCosts = totalOperatingExpenses + totalMaterialCosts;
 
     // Gross & Operating Net Profit (Accrual: including credited products sold)
@@ -281,7 +360,7 @@ export class FinancialReportsService {
     const operatingNetIncome = grossRevenueTotal - totalCompanyCosts;
 
     // Net Cash Position Change (Cash Inflows - Cash Outflows)
-    const netCashPositionChange = totalCashCollected - (companyExpenseTotal + stockLoanPaymentTotal + payrollTotal + ownerExpenseTotal);
+    const netCashPositionChange = totalCashCollected - (fullCompanyExpenseTotal + payrollTotal + ownerExpenseTotal);
 
     // Net Income after Owner Personal Expenses / Withdrawals
     const netIncomeAfterOwnerDrawings = operatingNetIncome - ownerExpenseTotal;
@@ -396,19 +475,30 @@ export class FinancialReportsService {
       entry.customerCreditPaymentTotal += Number(ccp.amount);
     }
 
-    for (const d of deliveries) {
+    for (const d of initialCashDeliveriesInPeriod) {
       const dayKey = d.session?.date
         ? new Date(d.session.date).toISOString().slice(0, 10)
         : new Date(d.createdAt).toISOString().slice(0, 10);
       const entry = getOrCreateDailyEntry(dayKey);
-      const netQty = Math.max(0, d.quantityReceived - (d.returnedQuantity || 0));
-      entry.supplierDeliveryCost += Number(d.unitBuyPrice) * netQty;
+      const amt = Number(d.paidAmount);
+      entry.supplierDeliveryCost += amt;
+      entry.companyExpenseTotal += amt;
     }
 
     for (const sp of stockPurchasePayments) {
       const dayKey = new Date(sp.createdAt).toISOString().slice(0, 10);
       const entry = getOrCreateDailyEntry(dayKey);
-      entry.stockLoanPaymentTotal += Number(sp.amount);
+      const amt = Number(sp.amount);
+      entry.stockLoanPaymentTotal += amt;
+      entry.companyExpenseTotal += amt;
+    }
+
+    for (const sdp of supplierDeliveryPayments) {
+      const dayKey = new Date(sdp.createdAt).toISOString().slice(0, 10);
+      const entry = getOrCreateDailyEntry(dayKey);
+      const amt = Number(sdp.amount);
+      entry.supplierDeliveryPaymentTotal = (entry.supplierDeliveryPaymentTotal || 0) + amt;
+      entry.companyExpenseTotal += amt;
     }
 
     for (const p of payroll) {
@@ -421,13 +511,13 @@ export class FinancialReportsService {
     for (const entry of dailyBreakdown) {
       // Exact user formula: Yesterday Leftover + Sales Income + Credit Received - Tomorrow Leftover
       entry.dailyTotalRevenue = entry.yesterdayCashLeftover + entry.salesTotal + entry.creditReceivedFromLoan - entry.tomorrowCashLeftover;
-      // Net Income: Total Revenue - Total Expense
+      // Net Income: Total Revenue - Total Expense (including paid credits)
       entry.dailyNetIncome = entry.dailyTotalRevenue - entry.companyExpenseTotal;
 
       entry.grossRevenueTotal = entry.salesTotal + entry.customerCreditSalesTotal;
       entry.totalCashCollected = entry.salesTotal + entry.customerCreditPaymentTotal;
       entry.operatingNetIncome = entry.dailyNetIncome;
-      entry.netCashPositionChange = entry.totalCashCollected - (entry.companyExpenseTotal + entry.stockLoanPaymentTotal + entry.payrollTotal + entry.ownerExpenseTotal);
+      entry.netCashPositionChange = entry.totalCashCollected - (entry.companyExpenseTotal + entry.payrollTotal + entry.ownerExpenseTotal);
     }
 
     const rangeYesterdayCash = dailyBreakdown.length > 0 ? dailyBreakdown[0].yesterdayCashLeftover : 0;
@@ -443,7 +533,9 @@ export class FinancialReportsService {
       creditReceivedFromLoans: totalCreditReceived,
       tomorrowLeftoverCash: rangeTomorrowCash,
       dailyTotalRevenue: totalDailyRevenue,
-      companyExpenseTotal,
+      companyExpenseTotal: fullCompanyExpenseTotal,
+      pureCompanyExpenseTotal,
+      paidStockCreditExpenseTotal: totalStockAndSupplierCreditPaid,
       ownerExpenseTotal,
       dailyNetIncome: totalDailyNetIncome,
 
@@ -457,13 +549,14 @@ export class FinancialReportsService {
       cashLeftoverTotal: rangeTomorrowCash || cashLeftoverTotal,
       loanTotal,
       employeeLoanTotal,
-      supplierDeliveryCost,
+      supplierDeliveryCost: totalSupplierDeliveryPaid,
       stockLoanPaymentTotal,
+      supplierDeliveryPaymentTotal: totalSupplierDeliveryPaid,
       payrollTotal,
-      totalOperatingExpenses: companyExpenseTotal,
-      totalExpense: companyExpenseTotal,
-      totalExpenses: companyExpenseTotal,
-      grossProfit: totalDailyRevenue - companyExpenseTotal,
+      totalOperatingExpenses: fullCompanyExpenseTotal,
+      totalExpense: fullCompanyExpenseTotal,
+      totalExpenses: fullCompanyExpenseTotal,
+      grossProfit: totalDailyRevenue - fullCompanyExpenseTotal,
       operatingNetIncome: totalDailyNetIncome,
       netIncome: totalDailyNetIncome,
       netCashPositionChange,
@@ -495,7 +588,9 @@ export class FinancialReportsService {
         grossRevenueTotal,
         totalCashCollected,
         cashLeftoverTotal: totals.tomorrowLeftoverCash || cashLeftoverTotal,
-        companyExpenseTotal,
+        companyExpenseTotal: totals.companyExpenseTotal,
+        pureCompanyExpenseTotal: totals.pureCompanyExpenseTotal,
+        paidStockCreditExpenseTotal: totals.paidStockCreditExpenseTotal,
         ownerExpenseTotal,
         ownerExpenseWithLiabilities: totals.ownerExpenseWithLiabilities,
         unpaidSupplierDeliveriesTotal,
@@ -503,12 +598,13 @@ export class FinancialReportsService {
         totalPendingOwnerLiabilities,
         loanTotal,
         employeeLoanTotal,
-        supplierDeliveryCost,
+        supplierDeliveryCost: totals.supplierDeliveryCost,
         stockLoanPaymentTotal,
+        supplierDeliveryPaymentTotal: totals.supplierDeliveryPaymentTotal,
         payrollTotal,
-        totalOperatingExpenses: companyExpenseTotal,
-        totalExpense: companyExpenseTotal,
-        totalExpenses: companyExpenseTotal,
+        totalOperatingExpenses: totals.totalOperatingExpenses,
+        totalExpense: totals.totalExpense,
+        totalExpenses: totals.totalExpenses,
         grossProfit: totals.grossProfit,
         operatingNetIncome: totals.dailyNetIncome,
         netIncome: totals.dailyNetIncome,
@@ -526,10 +622,11 @@ export class FinancialReportsService {
         customerLoans,
         employeeLoans,
         customerLoanPayments,
-        supplierDeliveries: deliveries,
+        supplierDeliveries: unpaidSupplierDeliveries,
         unpaidSupplierDeliveries,
-        unpaidStockLoans,
+        unpaidStockLoans: activeUnpaidStockLoans,
         stockPurchasePayments,
+        supplierDeliveryPayments,
         payrollRecords: payroll,
       },
     };
@@ -615,7 +712,7 @@ export class FinancialReportsService {
     const timestampStart = startOfDayUtc(fromDate);
     const timestampEnd = endOfDayUtc(toDate);
 
-    const [expenses, allSupplierDeliveries, stockPurchasePayments, sessions, payrollRecords] = await Promise.all([
+    const [expenses, allSupplierDeliveries, supplierDeliveryPayments, stockPurchasePayments, sessions, payrollRecords] = await Promise.all([
       prisma.expense.findMany({
         where: { branchId, date: { gte: fromDate, lte: toDate } },
         include: {
@@ -648,6 +745,26 @@ export class FinancialReportsService {
         },
         orderBy: { createdAt: 'desc' },
       }),
+      prisma.supplierDeliveryPayment.findMany({
+        where: {
+          delivery: {
+            OR: [
+              { supplier: { branchId } },
+              { session: { branchId } },
+            ],
+          },
+          createdAt: { gte: timestampStart, lte: timestampEnd },
+        },
+        include: {
+          delivery: {
+            include: {
+              supplier: { select: { id: true, name: true, type: true } },
+              product: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
       prisma.stockPurchasePayment.findMany({
         where: { loan: { branchId }, createdAt: { gte: timestampStart, lte: timestampEnd } },
         include: {
@@ -676,14 +793,22 @@ export class FinancialReportsService {
 
     const companyExpenses = expenses.filter(e => e.type === 'COMPANY');
     const ownerExpenses = expenses.filter(e => e.type === 'OWNER');
-    const companyExpenseTotal = companyExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+    const pureCompanyExpenseTotal = companyExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
     const ownerExpenseTotal = ownerExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
-    const supplierDeliveries = allSupplierDeliveries.filter((d) => d.paymentSource === 'DAILY_CASH');
-    const supplierTotal = supplierDeliveries.reduce(
-      (sum, d) => sum + Number(d.unitBuyPrice) * Math.max(0, d.quantityReceived - (d.returnedQuantity || 0)),
-      0
+
+    const supplierDeliveryPaymentTotal = supplierDeliveryPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+    const initialCashDeliveriesInPeriod = allSupplierDeliveries.filter(d =>
+      d.paymentSource === 'DAILY_CASH' &&
+      Number(d.paidAmount) > 0 &&
+      !supplierDeliveryPayments.some(p => p.deliveryId === d.id)
     );
+    const initialCashPaidDeliveryTotal = initialCashDeliveriesInPeriod.reduce((sum, d) => sum + Number(d.paidAmount), 0);
+    const totalSupplierPaid = supplierDeliveryPaymentTotal + initialCashPaidDeliveryTotal;
+
     const stockLoanTotal = stockPurchasePayments.reduce((sum, sp) => sum + Number(sp.amount), 0);
+    const totalCreditPaidAsExpense = totalSupplierPaid + stockLoanTotal;
+    const companyExpenseTotal = pureCompanyExpenseTotal + totalCreditPaidAsExpense;
+
     const payrollTotal = payrollRecords.reduce((sum, p) => sum + Number(p.finalAmount), 0);
     const cashLeftoverTotal = sessions.reduce((sum, s) => sum + (s.cashLeftoverAmount ? Number(s.cashLeftoverAmount) : 0), 0);
 
@@ -692,18 +817,21 @@ export class FinancialReportsService {
         fromDate: fromDate.toISOString().slice(0, 10),
         toDate: toDate.toISOString().slice(0, 10),
         companyExpenseTotal,
+        pureCompanyExpenseTotal,
+        paidStockCreditExpenseTotal: totalCreditPaidAsExpense,
         ownerExpenseTotal,
-        supplierTotal,
+        supplierTotal: totalSupplierPaid,
         stockLoanTotal,
         payrollTotal,
         cashLeftoverTotal,
-        totalCompanyExpenses: companyExpenseTotal + supplierTotal + stockLoanTotal + payrollTotal,
-        totalExpensed: companyExpenseTotal + ownerExpenseTotal + supplierTotal + stockLoanTotal + payrollTotal,
+        totalCompanyExpenses: companyExpenseTotal + payrollTotal,
+        totalExpensed: companyExpenseTotal + ownerExpenseTotal + payrollTotal,
         expenses,
         companyExpenses,
         ownerExpenses,
-        supplierDeliveries,
+        supplierDeliveries: allSupplierDeliveries.filter((d) => d.paymentSource === 'DAILY_CASH'),
         allSupplierDeliveries,
+        supplierDeliveryPayments,
         stockPurchasePayments,
         payrollRecords,
         cashLeftovers: sessions.filter(s => s.cashLeftoverAmount != null),

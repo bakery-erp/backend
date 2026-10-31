@@ -658,32 +658,25 @@ export class StockMovementsService {
   ): ServiceResult {
     const where: any = {};
     if (branchId) where.branchId = branchId;
-    if (status && status !== 'ALL') where.status = status;
-    if (user?.role === 'ADMIN') {
-      where.stockMovement = { userId: user.id };
+    if (status && status !== 'ALL') {
+      if (status === 'UNPAID') {
+        where.status = { in: ['UNPAID', 'PARTIAL'] };
+      } else {
+        where.status = status;
+      }
     }
     if (search && search.trim()) {
       const q = search.trim();
-      const searchOr = [
+      where.OR = [
         { supplierName: { contains: q, mode: 'insensitive' } },
-        { stockItem: { name: { contains: q, mode: 'insensitive' } } },
+        { stockMovement: { stockItem: { name: { contains: q, mode: 'insensitive' } } } },
       ];
-      if (user?.role === 'ADMIN') {
-        where.AND = [
-          { stockMovement: { userId: user.id } },
-          { OR: searchOr },
-        ];
-        delete where.stockMovement;
-      } else {
-        where.OR = searchOr;
-      }
     }
 
     const skip = (page - 1) * limit;
 
     const statsWhere: any = {
       ...(branchId ? { branchId } : {}),
-      ...(user?.role === 'ADMIN' ? { stockMovement: { userId: user.id } } : {}),
     };
 
     const [total, loans, statsAggregate, activeLoansCount] = await Promise.all([
@@ -751,19 +744,19 @@ export class StockMovementsService {
     }
 
     const currentUser = await prisma.user.findUnique({ where: { id: userId } });
-    if (currentUser?.role === 'ADMIN' && loan.stockMovement?.userId !== userId) {
-      return { error: 'You do not have permission to pay loans recorded by other users', status: 403 };
+    if (currentUser?.role === 'ADMIN' && currentUser.branchId && loan.branchId && currentUser.branchId !== loan.branchId) {
+      return { error: 'You do not have permission to pay loans for other branches', status: 403 };
     }
 
-    const currentBal = Number(loan.remainingBalance);
-    if (currentBal <= 0 || loan.status === 'PAID') {
+    const currentBal = Number(Number(loan.remainingBalance).toFixed(2));
+    if (currentBal <= 0.001 || loan.status === 'PAID') {
       return { error: 'Loan is already fully paid and settled', status: 400 };
     }
 
     const payAmt = Math.min(currentBal, amt);
-    const newPaid = Number(loan.paidAmount) + payAmt;
-    const newBal = Number(loan.totalAmount) - newPaid;
-    const newStatus = newBal <= 0 ? 'PAID' : 'PARTIAL';
+    const newPaid = Number((Number(loan.paidAmount) + payAmt).toFixed(2));
+    const newBal = Math.max(0, Number((Number(loan.totalAmount) - newPaid).toFixed(2)));
+    const newStatus = newBal <= 0.001 ? 'PAID' : 'PARTIAL';
 
     const result = await prisma.$transaction(async (tx) => {
       const updatedLoan = await tx.stockPurchaseLoan.update({
