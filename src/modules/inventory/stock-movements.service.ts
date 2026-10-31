@@ -215,10 +215,10 @@ export class StockMovementsService {
       if (type === 'IN' && body.loanInfo?.isLoan) {
         const loan = body.loanInfo;
         const paidAmount = Math.max(0, Math.min(totalVal, decimalToNum(loan.paidAmount) ?? 0));
-        const remainingBalance = totalVal - paidAmount;
-        const status = remainingBalance <= 0 ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'UNPAID');
+        const remainingBalance = Math.max(0, totalVal - paidAmount);
+        const status = totalVal > 0 && remainingBalance <= 0.001 ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'UNPAID');
 
-        await tx.stockPurchaseLoan.create({
+        const createdLoan = await tx.stockPurchaseLoan.create({
           data: {
             stockMovementId: movement.id,
             stockItemId,
@@ -230,6 +230,17 @@ export class StockMovementsService {
             status,
           },
         });
+
+        if (paidAmount > 0) {
+          await tx.stockPurchasePayment.create({
+            data: {
+              loanId: createdLoan.id,
+              userId,
+              amount: paidAmount,
+              note: 'Initial down payment at stock addition',
+            },
+          });
+        }
       }
 
       return movement;
@@ -749,7 +760,7 @@ export class StockMovementsService {
     }
 
     const currentBal = Number(Number(loan.remainingBalance).toFixed(2));
-    if (currentBal <= 0.001 || loan.status === 'PAID') {
+    if (currentBal <= 0.001) {
       return { error: 'Loan is already fully paid and settled', status: 400 };
     }
 

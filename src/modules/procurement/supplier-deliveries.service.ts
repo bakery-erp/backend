@@ -87,10 +87,10 @@ export class SupplierDeliveriesService {
 
     for (const d of allDeliveriesForStats) {
       const netQty = Math.max(0, d.quantityReceived - (d.returnedQuantity || 0));
-      const cost = netQty * decimalToNum(d.unitBuyPrice);
-      const paid = d.isPaid && decimalToNum(d.paidAmount) === 0 ? cost : decimalToNum(d.paidAmount);
+      const cost = Number((netQty * decimalToNum(d.unitBuyPrice)).toFixed(2));
+      const paid = Number(decimalToNum(d.paidAmount || 0).toFixed(2));
       totalAmount += cost;
-      totalPaidAmount += paid;
+      totalPaidAmount += Math.min(cost, paid);
     }
 
     const totalUnpaidAmount = Math.max(0, totalAmount - totalPaidAmount);
@@ -166,12 +166,17 @@ export class SupplierDeliveriesService {
         totalBatchCost += netQty * decimalToNum(item.unitBuyPrice || 0);
       }
 
-      // Determine batch payment allocation
-      let remainingBatchPayment = amountPaidNow != null ? Math.max(0, decimalToNum(amountPaidNow)) : (isPaid ? totalBatchCost : 0);
+      // Determine batch payment allocation proportionally across items
+      const totalBatchPayment = amountPaidNow != null 
+        ? Math.min(totalBatchCost, Math.max(0, decimalToNum(amountPaidNow))) 
+        : (isPaid ? totalBatchCost : 0);
+      let allocatedBatchPayment = 0;
 
       const createdDeliveries = await prisma.$transaction(async (tx) => {
         const results = [];
-        for (const item of validItems) {
+        for (let idx = 0; idx < validItems.length; idx++) {
+          const item = validItems[idx];
+          const isLastItem = idx === validItems.length - 1;
           const { productId, quantityReceived, unitBuyPrice, unitSellPrice, returnedQuantity, notes: itemNotes } = item;
 
           let sellPrice = unitSellPrice != null ? decimalToNum(unitSellPrice) : 0;
@@ -184,27 +189,27 @@ export class SupplierDeliveriesService {
           const qty = typeof quantityReceived === 'number' ? quantityReceived : parseInt(String(quantityReceived), 10);
           const retQty = returnedQuantity != null ? parseInt(String(returnedQuantity), 10) : 0;
           const netQty = Math.max(0, qty - retQty);
-          const itemCost = netQty * decimalToNum(unitBuyPrice || 0);
+          const itemCost = Number((netQty * decimalToNum(unitBuyPrice || 0)).toFixed(2));
 
           let itemPaid = 0;
           if (item.paidAmount != null) {
             itemPaid = Math.min(itemCost, Math.max(0, decimalToNum(item.paidAmount)));
-          } else if (remainingBatchPayment > 0) {
-            itemPaid = Math.min(itemCost, remainingBatchPayment);
-            remainingBatchPayment -= itemPaid;
-          } else if (isPaid) {
-            itemPaid = itemCost;
+          } else if (totalBatchCost > 0 && totalBatchPayment > 0) {
+            if (isLastItem) {
+              itemPaid = Math.max(0, Math.min(itemCost, Number((totalBatchPayment - allocatedBatchPayment).toFixed(2))));
+            } else {
+              itemPaid = Math.min(itemCost, Number(((itemCost / totalBatchCost) * totalBatchPayment).toFixed(2)));
+              allocatedBatchPayment += itemPaid;
+            }
           }
 
-          let itemStatus: 'PENDING' | 'PARTIAL' | 'PAID' = 'PENDING';
-          let itemIsPaid = false;
-          if (itemCost === 0 || itemPaid >= itemCost) {
-            itemStatus = 'PAID';
-            itemIsPaid = true;
-          } else if (itemPaid > 0) {
-            itemStatus = 'PARTIAL';
-            itemIsPaid = false;
-          }
+          const isFullySettled = itemCost > 0 && itemPaid >= itemCost - 0.001;
+          const itemStatus: 'PENDING' | 'PARTIAL' | 'PAID' = isFullySettled 
+            ? 'PAID' 
+            : itemPaid > 0 
+            ? 'PARTIAL' 
+            : 'PENDING';
+          const itemIsPaid = isFullySettled;
 
           const del = await tx.supplierDelivery.create({
             data: {
@@ -298,15 +303,13 @@ export class SupplierDeliveriesService {
       itemPaid = itemCost;
     }
 
-    let itemStatus: 'PENDING' | 'PARTIAL' | 'PAID' = 'PENDING';
-    let itemIsPaid = false;
-    if (itemCost === 0 || itemPaid >= itemCost) {
-      itemStatus = 'PAID';
-      itemIsPaid = true;
-    } else if (itemPaid > 0) {
-      itemStatus = 'PARTIAL';
-      itemIsPaid = false;
-    }
+    const isFullySettled = itemCost > 0 && itemPaid >= itemCost - 0.001;
+    const itemStatus: 'PENDING' | 'PARTIAL' | 'PAID' = isFullySettled 
+      ? 'PAID' 
+      : itemPaid > 0 
+      ? 'PARTIAL' 
+      : 'PENDING';
+    const itemIsPaid = isFullySettled;
 
     const delivery = await prisma.$transaction(async (tx) => {
       const del = await tx.supplierDelivery.create({
@@ -391,16 +394,13 @@ export class SupplierDeliveriesService {
       finalPaidAmount = body.isPaid ? totalCost : 0;
     }
 
-    let finalStatus: 'PENDING' | 'PARTIAL' | 'PAID' = 'PENDING';
-    let finalIsPaid = false;
-
-    if (totalCost === 0 || finalPaidAmount >= totalCost) {
-      finalStatus = 'PAID';
-      finalIsPaid = true;
-    } else if (finalPaidAmount > 0) {
-      finalStatus = 'PARTIAL';
-      finalIsPaid = false;
-    }
+    const isFullySettled = totalCost > 0 && finalPaidAmount >= totalCost - 0.001;
+    const finalStatus: 'PENDING' | 'PARTIAL' | 'PAID' = isFullySettled
+      ? 'PAID'
+      : finalPaidAmount > 0
+      ? 'PARTIAL'
+      : 'PENDING';
+    const finalIsPaid = isFullySettled;
 
     const delivery = await prisma.supplierDelivery.update({
       where: { id },
@@ -474,8 +474,8 @@ export class SupplierDeliveriesService {
 
     const actualPayAmount = Math.min(remainingBalance, paymentAmount);
     const newPaidAmount = Number((currentPaid + actualPayAmount).toFixed(2));
-    const isNowPaid = newPaidAmount >= totalCost - 0.001;
-    const newStatus: 'PENDING' | 'PARTIAL' | 'PAID' = isNowPaid ? 'PAID' : 'PARTIAL';
+    const isNowPaid = totalCost > 0 && newPaidAmount >= totalCost - 0.001;
+    const newStatus: 'PENDING' | 'PARTIAL' | 'PAID' = isNowPaid ? 'PAID' : (newPaidAmount > 0 ? 'PARTIAL' : 'PENDING');
     const paySource = (body.paymentSource === 'OWNER' ? 'OWNER' : 'DAILY_CASH') as any;
 
     const result = await prisma.$transaction(async (tx) => {

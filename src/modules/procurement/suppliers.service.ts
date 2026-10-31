@@ -97,13 +97,14 @@ export class SuppliersService {
 
     for (const d of deliveries) {
       const netQty = Math.max(0, d.quantityReceived - (d.returnedQuantity || 0));
-      const cost = netQty * decimalToNum(d.unitBuyPrice);
-      const paid = d.isPaid && decimalToNum(d.paidAmount) === 0 ? cost : decimalToNum(d.paidAmount);
+      const cost = Number((netQty * decimalToNum(d.unitBuyPrice)).toFixed(2));
+      const paid = Number(decimalToNum(d.paidAmount || 0).toFixed(2));
+      const rem = Math.max(0, Number((cost - paid).toFixed(2)));
       totalPurchases += cost;
-      totalPaid += paid;
-      if (d.paymentStatus === 'PAID' || d.isPaid) {
+      totalPaid += Math.min(cost, paid);
+      if (cost > 0 && rem <= 0.001) {
         paidCount += 1;
-      } else if (d.paymentStatus === 'PARTIAL' || paid > 0) {
+      } else if (paid > 0) {
         partialCount += 1;
       } else {
         pendingCount += 1;

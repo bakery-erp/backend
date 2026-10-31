@@ -150,10 +150,10 @@ export class StockItemsService {
         const loan = loanInfo as { isLoan?: boolean; paidAmount?: number; supplierName?: string } | undefined;
         if (loan && loan.isLoan) {
           const paidAmount = Math.max(0, Math.min(totalValue, decimalToNum(loan.paidAmount) ?? 0));
-          const remainingBalance = totalValue - paidAmount;
-          const status = remainingBalance <= 0 ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'UNPAID');
+          const remainingBalance = Math.max(0, totalValue - paidAmount);
+          const status = totalValue > 0 && remainingBalance <= 0.001 ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'UNPAID');
 
-          await tx.stockPurchaseLoan.create({
+          const createdLoan = await tx.stockPurchaseLoan.create({
             data: {
               stockMovementId: movement.id,
               stockItemId: item.id,
@@ -166,6 +166,18 @@ export class StockItemsService {
               createdAt: itemDate,
             },
           });
+
+          if (paidAmount > 0) {
+            await tx.stockPurchasePayment.create({
+              data: {
+                loanId: createdLoan.id,
+                userId,
+                amount: paidAmount,
+                note: 'Initial down payment at stock registration',
+                createdAt: itemDate,
+              },
+            });
+          }
         }
       }
 
@@ -516,10 +528,10 @@ export class StockItemsService {
 
       if (loanInfo && loanInfo.isLoan) {
         const paidAmount = Math.max(0, Math.min(totalValue, decimalToNum(loanInfo.paidAmount) ?? 0));
-        const remainingBalance = totalValue - paidAmount;
-        const status = remainingBalance <= 0 ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'UNPAID');
+        const remainingBalance = Math.max(0, totalValue - paidAmount);
+        const status = totalValue > 0 && remainingBalance <= 0.001 ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'UNPAID');
 
-        await tx.stockPurchaseLoan.create({
+        const createdLoan = await tx.stockPurchaseLoan.create({
           data: {
             stockMovementId: movement.id,
             stockItemId: id,
@@ -532,6 +544,18 @@ export class StockItemsService {
             createdAt: movementDate,
           },
         });
+
+        if (paidAmount > 0) {
+          await tx.stockPurchasePayment.create({
+            data: {
+              loanId: createdLoan.id,
+              userId,
+              amount: paidAmount,
+              note: 'Initial down payment at stock addition',
+              createdAt: movementDate,
+            },
+          });
+        }
       }
 
       return { stockItem: updatedItem, movement };
