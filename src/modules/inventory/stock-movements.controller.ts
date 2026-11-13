@@ -8,7 +8,7 @@ const stockMovementsService = new StockMovementsService();
 
 stockMovementsRouter.use(authMiddleware);
 
-// GET /api/stock-movements?branchId=...&stockItemId=...&type=IN&status=PENDING_CONFIRMATION&from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&limit=20&search=...
+// GET /api/stock-movements?branchId=...&stockItemId=...&type=IN&status=PENDING_CONFIRMATION&from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&limit=20&search=...&location=MAIN|HOME
 stockMovementsRouter.get('/', async (req: AuthRequest, res: Response) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
   const stockItemId = req.query.stockItemId as string | undefined;
@@ -19,6 +19,10 @@ stockMovementsRouter.get('/', async (req: AuthRequest, res: Response) => {
   const search = req.query.search as string | undefined;
   const { page, limit } = parsePagination(req.query, 20, 100);
 
+  const isOwner = req.user?.role === 'OWNER';
+  const rawLocation = req.query.location as string | undefined;
+  const location: 'MAIN' | 'HOME' = (rawLocation === 'HOME' && isOwner) ? 'HOME' : 'MAIN';
+
   const result = await stockMovementsService.getStockMovements(
     branchId,
     stockItemId,
@@ -28,7 +32,8 @@ stockMovementsRouter.get('/', async (req: AuthRequest, res: Response) => {
     from,
     to,
     status,
-    search
+    search,
+    location
   );
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
@@ -39,7 +44,11 @@ stockMovementsRouter.get('/', async (req: AuthRequest, res: Response) => {
 // GET /api/stock-movements/summary?branchId=... — inventory health dashboard widget
 stockMovementsRouter.get('/summary', async (req: AuthRequest, res: Response) => {
   const branchId = (req.query.branchId as string) || req.user?.branchId;
-  const result = await stockMovementsService.getStockSummary(branchId);
+  const isOwner = req.user?.role === 'OWNER';
+  const rawLocation = req.query.location as string | undefined;
+  const location: 'MAIN' | 'HOME' = (rawLocation === 'HOME' && isOwner) ? 'HOME' : 'MAIN';
+
+  const result = await stockMovementsService.getStockSummary(branchId, location);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -53,8 +62,12 @@ stockMovementsRouter.get('/loans/list', async (req: AuthRequest, res: Response) 
   const search = req.query.search as string | undefined;
   const { page, limit } = parsePagination(req.query, 20, 100);
 
+  const isOwner = req.user?.role === 'OWNER';
+  const rawLocation = req.query.location as string | undefined;
+  const location: 'MAIN' | 'HOME' = (rawLocation === 'HOME' && isOwner) ? 'HOME' : 'MAIN';
+
   const user = req.user ? { id: req.user.id, role: req.user.role } : undefined;
-  const result = await stockMovementsService.getStockPurchaseLoans(branchId, status, page, limit, search, user);
+  const result = await stockMovementsService.getStockPurchaseLoans(branchId, status, page, limit, search, user, location);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -110,8 +123,8 @@ stockMovementsRouter.patch('/:id/resubmit', requireRole('OWNER', 'ADMIN'), async
 });
 
 // GET /api/stock-movements/:id
-stockMovementsRouter.get('/:id', async (req, res: Response) => {
-  const result = await stockMovementsService.getStockMovementById(req.params.id);
+stockMovementsRouter.get('/:id', async (req: AuthRequest, res: Response) => {
+  const result = await stockMovementsService.getStockMovementById(req.params.id, req.user?.role);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }
@@ -130,7 +143,7 @@ stockMovementsRouter.post('/', requireRole('OWNER', 'ADMIN', 'STOCK_KEEPER'), as
   if (req.user?.role !== 'OWNER') {
     body.autoConfirm = false;
   }
-  const result = await stockMovementsService.createStockMovement(body, req.user!.id);
+  const result = await stockMovementsService.createStockMovement(body, req.user!.id, req.user?.role);
   if (result.error) {
     return res.status(result.status || 500).json({ error: result.error });
   }

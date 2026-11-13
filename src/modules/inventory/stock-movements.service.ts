@@ -16,12 +16,17 @@ export class StockMovementsService {
     from?: string,
     to?: string,
     status?: string,
-    search?: string
+    search?: string,
+    location: 'MAIN' | 'HOME' = 'MAIN'
   ): ServiceResult {
-    const stockWhere = branchId ? { branchId } : {};
-    const where: any = {};
+    const stockWhere: any = { location };
+    if (branchId) stockWhere.branchId = branchId;
+
+    const where: any = { location };
     if (stockItemId) where.stockItemId = stockItemId;
     else if (branchId) where.stockItem = stockWhere;
+    else where.stockItem = { location };
+
     if (type && type !== 'ALL') where.type = type;
     if (status && status !== 'ALL') where.status = status;
     if (from || to) {
@@ -50,7 +55,7 @@ export class StockMovementsService {
       prisma.stockMovement.findMany({
         where,
         include: {
-          stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true, unitPrice: true } },
+          stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true, unitPrice: true, location: true } },
           user: { select: { id: true, fullName: true, role: true } },
           confirmedBy: { select: { id: true, fullName: true, role: true } },
           purchaseLoan: {
@@ -71,7 +76,7 @@ export class StockMovementsService {
     return { data: buildPaginatedResponse(list, total, page, limit) };
   }
 
-  async getStockMovementById(id: string): ServiceResult {
+  async getStockMovementById(id: string, userRole?: string): ServiceResult {
     const movement = await prisma.stockMovement.findUnique({
       where: { id },
       include: { 
@@ -91,10 +96,13 @@ export class StockMovementsService {
     if (!movement) {
       return { error: 'Stock movement not found', status: 404 };
     }
+    if (movement.location === 'HOME' && userRole !== 'OWNER') {
+      return { error: 'Stock movement not found', status: 404 };
+    }
     return { data: movement };
   }
 
-  async createStockMovement(body: any, userId: string): ServiceResult {
+  async createStockMovement(body: any, userId: string, userRole?: string): ServiceResult {
     const { stockItemId, quantity, type, reason, adjustTo, unitPrice, receivedBy, autoConfirm } = body;
     
     if (!stockItemId || quantity == null || !type) {
@@ -113,7 +121,11 @@ export class StockMovementsService {
     if (!stockItem) {
       return { error: 'Stock item not found', status: 404 };
     }
+    if (stockItem.location === 'HOME' && userRole !== 'OWNER') {
+      return { error: 'Stock item not found', status: 404 };
+    }
 
+    const isHome = stockItem.location === 'HOME';
     const current = Number(stockItem.currentQuantity);
     const itemUnitPrice = unitPrice != null ? decimalToNum(unitPrice) : Number(stockItem.unitPrice ?? 0);
 
@@ -149,6 +161,7 @@ export class StockMovementsService {
             data: {
               stockItemId,
               userId,
+              location: stockItem.location,
               quantity: deltaQty,
               unitPrice: itemUnitPrice,
               totalValue: deltaQty * itemUnitPrice,
@@ -167,7 +180,7 @@ export class StockMovementsService {
         }
       }
 
-      const isAuto = autoConfirm === true || type !== 'IN';
+      const isAuto = isHome ? true : (autoConfirm === true || type !== 'IN');
       const movementStatus = isAuto ? 'CONFIRMED' : 'PENDING_CONFIRMATION';
 
       if (isAuto) {
@@ -183,17 +196,18 @@ export class StockMovementsService {
         data: {
           stockItemId,
           userId,
+          location: stockItem.location,
           quantity: qty,
           unitPrice: itemUnitPrice,
           totalValue: totalVal,
           type: type as any,
           status: movementStatus,
           receivedBy: receivedBy?.trim() || null,
-          reason: reason?.trim() || (type === 'IN' ? 'Manual Stock Addition' : null),
+          reason: reason?.trim() || (type === 'IN' ? (isHome ? 'Home Stock Addition' : 'Manual Stock Addition') : null),
           ...(isAuto ? { confirmedAt: new Date(), confirmedById: userId } : {}),
         },
         include: {
-          stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true, unitPrice: true } },
+          stockItem: { select: { id: true, name: true, unitType: true, currentQuantity: true, unitPrice: true, location: true } },
           user: { select: { id: true, fullName: true, role: true } },
           confirmedBy: { select: { id: true, fullName: true, role: true } },
           purchaseLoan: {
@@ -256,49 +270,51 @@ export class StockMovementsService {
           ).catch((err) => console.error('[Notification] stockPurchaseLoan error:', err));
         }
 
-        if (type === 'OUT' || type === 'PRODUCTION_USAGE') {
-          const actorName = movement.user?.fullName ? `${movement.user.fullName} (${movement.user.role})` : (receivedBy?.trim() || 'Staff');
-          notificationsService.notifyBranchRoles(
-            stockItem.branchId,
-            [Role.OWNER, Role.ADMIN, Role.STOCK_KEEPER],
-            'STOCK_OUTWARD',
-            'notifications.stockOutwardTitle',
-            'notifications.stockOutwardBody',
-            {
-              itemName: stockItem.name,
-              quantity: qty,
-              unit: stockItem.unitType,
-              takenBy: actorName,
-              reason: reason?.trim() || (type === 'PRODUCTION_USAGE' ? 'Baking / Production usage' : 'Material issuance'),
-              remaining: Math.max(0, current - qty),
-            },
-            '/stock'
-          ).catch((err) => console.error('[Notification] stockOutward error:', err));
-        }
+        if (!isHome) {
+          if (type === 'OUT' || type === 'PRODUCTION_USAGE') {
+            const actorName = movement.user?.fullName ? `${movement.user.fullName} (${movement.user.role})` : (receivedBy?.trim() || 'Staff');
+            notificationsService.notifyBranchRoles(
+              stockItem.branchId,
+              [Role.OWNER, Role.ADMIN, Role.STOCK_KEEPER],
+              'STOCK_OUTWARD',
+              'notifications.stockOutwardTitle',
+              'notifications.stockOutwardBody',
+              {
+                itemName: stockItem.name,
+                quantity: qty,
+                unit: stockItem.unitType,
+                takenBy: actorName,
+                reason: reason?.trim() || (type === 'PRODUCTION_USAGE' ? 'Baking / Production usage' : 'Material issuance'),
+                remaining: Math.max(0, current - qty),
+              },
+              '/stock'
+            ).catch((err) => console.error('[Notification] stockOutward error:', err));
+          }
 
-        if (type === 'IN' && movement.status === 'PENDING_CONFIRMATION') {
-          const actorName = movement.user?.fullName ? `${movement.user.fullName} (${movement.user.role})` : 'Management';
-          notificationsService.notifyBranchRoles(
-            stockItem.branchId,
-            [Role.STOCK_KEEPER],
-            'STOCK_INWARD_ADDED',
-            'notifications.stockInwardTitle',
-            'notifications.stockInwardBody',
-            {
-              itemName: stockItem.name,
-              quantity: qty,
-              unit: stockItem.unitType,
-              addedBy: actorName,
-              reason: reason?.trim() || '',
-            },
-            '/stock-movements'
-          ).catch((err) => console.error('[Notification] stockInward error:', err));
-        }
+          if (type === 'IN' && movement.status === 'PENDING_CONFIRMATION') {
+            const actorName = movement.user?.fullName ? `${movement.user.fullName} (${movement.user.role})` : 'Management';
+            notificationsService.notifyBranchRoles(
+              stockItem.branchId,
+              [Role.STOCK_KEEPER],
+              'STOCK_INWARD_ADDED',
+              'notifications.stockInwardTitle',
+              'notifications.stockInwardBody',
+              {
+                itemName: stockItem.name,
+                quantity: qty,
+                unit: stockItem.unitType,
+                addedBy: actorName,
+                reason: reason?.trim() || '',
+              },
+              '/stock-movements'
+            ).catch((err) => console.error('[Notification] stockInward error:', err));
+          }
 
-        if (type !== 'IN' || type === 'ADJUSTMENT') {
-          this.checkAndNotifyStock(stockItemId).catch((err) =>
-            console.error('[Notification] checkStock error:', err)
-          );
+          if (type !== 'IN' || type === 'ADJUSTMENT') {
+            this.checkAndNotifyStock(stockItemId).catch((err) =>
+              console.error('[Notification] checkStock error:', err)
+            );
+          }
         }
 
         return { data: movement };
@@ -311,7 +327,7 @@ export class StockMovementsService {
   async checkAndNotifyStock(stockItemId: string) {
     try {
       const item = await prisma.stockItem.findUnique({ where: { id: stockItemId } });
-      if (!item) return;
+      if (!item || item.location === 'HOME') return;
       const current = Number(item.currentQuantity);
       const min = Number(item.minStockLevel);
 
@@ -619,17 +635,18 @@ export class StockMovementsService {
   }
 
   // Inventory summary — used on web dashboard inventory widget & stock keeper
-  async getStockSummary(branchId?: string | null): ServiceResult {
+  async getStockSummary(branchId?: string | null, location: 'MAIN' | 'HOME' = 'MAIN'): ServiceResult {
     if (!branchId) return { error: 'branchId required', status: 400 };
 
     const items = await prisma.stockItem.findMany({
-      where: { branchId },
+      where: { branchId, location },
       orderBy: { name: 'asc' },
     });
 
     const pendingApprovals = await prisma.stockMovement.count({
       where: {
-        stockItem: { branchId },
+        stockItem: { branchId, location },
+        location,
         status: 'PENDING_CONFIRMATION',
       },
     });
@@ -660,9 +677,12 @@ export class StockMovementsService {
     page: number = 1,
     limit: number = 20,
     search?: string,
-    user?: { id: string; role: string }
+    user?: { id: string; role: string },
+    location: 'MAIN' | 'HOME' = 'MAIN'
   ): ServiceResult {
-    const where: any = {};
+    const where: any = {
+      stockMovement: { location },
+    };
     if (branchId) where.branchId = branchId;
     if (status && status !== 'ALL') {
       if (status === 'UNPAID') {

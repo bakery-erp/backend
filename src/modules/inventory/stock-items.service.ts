@@ -24,13 +24,13 @@ export class StockItemsService {
     unitType?: string,
     lowStockOnly?: boolean,
     category?: string,
-    forRole?: Role
+    forRole?: Role,
+    location: 'MAIN' | 'HOME' = 'MAIN'
   ): ServiceResult {
-    if (!branchId) {
-      return { error: 'branchId required', status: 400 };
+    const where: any = { location };
+    if (branchId) {
+      where.branchId = branchId;
     }
-
-    const where: any = { branchId };
     if (unitType) where.unitType = unitType;
 
     const andConditions: any[] = [];
@@ -85,7 +85,7 @@ export class StockItemsService {
     return { data: result };
   }
 
-  async getStockItemById(id: string): ServiceResult {
+  async getStockItemById(id: string, userRole?: string): ServiceResult {
     const item = await prisma.stockItem.findUnique({
       where: { id },
       include: {
@@ -101,11 +101,23 @@ export class StockItemsService {
     if (!item) {
       return { error: 'Stock item not found', status: 404 };
     }
+    if (item.location === 'HOME' && userRole !== 'OWNER') {
+      return { error: 'Stock item not found', status: 404 };
+    }
     return { data: item };
   }
 
-  async createStockItem(body: Record<string, unknown>, userId: string, userBranchId?: string | null): ServiceResult {
-    const { branchId, name, nameLatin, category, categoryLatin, unitType, currentQuantity, minStockLevel, unitPrice, loanInfo, date, allowedRoles } = body;
+  async createStockItem(
+    body: Record<string, unknown>,
+    userId: string,
+    userBranchId?: string | null,
+    userRole?: string
+  ): ServiceResult {
+    const { branchId, location, name, nameLatin, category, categoryLatin, unitType, currentQuantity, minStockLevel, unitPrice, loanInfo, date, allowedRoles, autoConfirm } = body;
+    const targetLocation = (location === 'HOME' && userRole === 'OWNER') ? 'HOME' : 'MAIN';
+    const isHome = targetLocation === 'HOME';
+    const effectiveAutoConfirm = isHome ? true : (userRole === 'OWNER' ? (autoConfirm === true || autoConfirm === 'true') : false);
+
     let bid = (branchId as string) || userBranchId || undefined;
     if (!bid) {
       const defaultBranch = await prisma.branch.findFirst({ select: { id: true } });
@@ -124,12 +136,13 @@ export class StockItemsService {
       const item = await tx.stockItem.create({
         data: {
           branchId: bid,
+          location: targetLocation,
           name: String(name).trim(),
           nameLatin: nameLatin ? String(nameLatin).trim() : null,
           category: category ? String(category).trim() : null,
           categoryLatin: categoryLatin ? String(categoryLatin).trim() : null,
           unitType: unitType as any,
-          currentQuantity: initQty,
+          currentQuantity: effectiveAutoConfirm ? initQty : 0,
           unitPrice: price,
           minStockLevel: minStockLevel != null ? decimalToNum(minStockLevel) : null,
           allowedRoles: Array.isArray(allowedRoles) ? (allowedRoles as Role[]) : [],
@@ -143,12 +156,15 @@ export class StockItemsService {
           data: {
             stockItemId: item.id,
             userId,
+            location: targetLocation,
             quantity: initQty,
             unitPrice: price,
             totalValue,
             type: 'IN',
-            reason: 'Initial stock item creation',
+            status: effectiveAutoConfirm ? 'CONFIRMED' : 'PENDING_CONFIRMATION',
+            reason: targetLocation === 'HOME' ? 'Initial home stock item registration' : 'Initial stock item creation',
             createdAt: itemDate,
+            ...(effectiveAutoConfirm ? { confirmedAt: itemDate, confirmedById: userId } : {}),
           },
         });
 
@@ -186,8 +202,61 @@ export class StockItemsService {
         }
       }
 
+      // If a new item is created in the bakery catalog (MAIN), automatically create a companion record in HOME catalog with quantity 0
+      if (targetLocation === 'MAIN') {
+        const existingHome = await tx.stockItem.findFirst({
+          where: {
+            branchId: bid,
+            location: 'HOME',
+            name: String(name).trim(),
+          },
+        });
+        if (!existingHome) {
+          await tx.stockItem.create({
+            data: {
+              branchId: bid,
+              location: 'HOME',
+              name: String(name).trim(),
+              nameLatin: nameLatin ? String(nameLatin).trim() : null,
+              category: category ? String(category).trim() : null,
+              categoryLatin: categoryLatin ? String(categoryLatin).trim() : null,
+              unitType: unitType as any,
+              currentQuantity: 0,
+              unitPrice: price,
+              minStockLevel: null,
+              allowedRoles: [],
+              createdAt: itemDate,
+            },
+          });
+        }
+      }
+
       return item;
     });
+
+    if (!isHome && initQty > 0 && !effectiveAutoConfirm) {
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { fullName: true, role: true },
+      }).then((user) => {
+        const addedBy = user ? `${user.fullName} (${user.role})` : 'Management';
+        notificationsService.notifyBranchRoles(
+          bid,
+          [Role.STOCK_KEEPER],
+          'STOCK_INWARD_ADDED',
+          'notifications.stockInwardTitle',
+          'notifications.stockInwardBody',
+          {
+            itemName: String(name).trim(),
+            quantity: initQty,
+            unit: String(unitType),
+            addedBy,
+            reason: 'Initial stock item creation',
+          },
+          '/stock-movements'
+        ).catch((err) => console.error('[Notification] createStockItem notifyStockKeeper error:', err));
+      }).catch(() => {});
+    }
 
     return { data: result };
   }
@@ -230,10 +299,14 @@ export class StockItemsService {
             data: {
               stockItemId: id,
               userId,
+              location: updated.location,
               quantity: absDiff,
               unitPrice: effectivePrice,
               totalValue: absDiff * effectivePrice,
               type: diff > 0 ? 'IN' : 'OUT',
+              status: 'CONFIRMED',
+              confirmedAt: new Date(),
+              confirmedById: userId,
               reason: `Stock updated via edit (changed from ${oldQty} to ${newQty} ${updated.unitType})`,
             },
           });
@@ -256,7 +329,7 @@ export class StockItemsService {
     }
 
     const items = await prisma.stockItem.findMany({
-      where: { branchId },
+      where: { branchId, location: 'MAIN' },
       select: {
         id: true,
         name: true,
@@ -280,7 +353,7 @@ export class StockItemsService {
 
     const targetSet = new Set(stockItemIds);
     const branchItems = await prisma.stockItem.findMany({
-      where: { branchId },
+      where: { branchId, location: 'MAIN' },
       select: { id: true, allowedRoles: true },
     });
 
@@ -327,13 +400,17 @@ export class StockItemsService {
     page: number = 1,
     limit: number = 20,
     type?: string,
-    date?: string
+    date?: string,
+    userRole?: string
   ): ServiceResult {
     const stockItem = await prisma.stockItem.findUnique({
       where: { id },
       include: { branch: { select: { id: true, name: true } } },
     });
     if (!stockItem) return { error: 'Stock item not found', status: 404 };
+    if (stockItem.location === 'HOME' && userRole !== 'OWNER') {
+      return { error: 'Stock item not found', status: 404 };
+    }
 
     const where: any = { stockItemId: id };
     if (type && type !== 'ALL') {
@@ -451,13 +528,14 @@ export class StockItemsService {
     };
   }
 
-  async getLowStockAlerts(branchId?: string | null): ServiceResult {
+  async getLowStockAlerts(branchId?: string | null, location: 'MAIN' | 'HOME' = 'MAIN'): ServiceResult {
     if (!branchId) {
       return { error: 'branchId required', status: 400 };
     }
     const items = await prisma.stockItem.findMany({
       where: {
         branchId,
+        location,
         minStockLevel: { not: null },
       },
       orderBy: { name: 'asc' },
@@ -481,7 +559,8 @@ export class StockItemsService {
     loanInfo?: { isLoan?: boolean; paidAmount?: number; supplierName?: string },
     newUnitPrice?: number | string,
     autoConfirm: boolean = false,
-    date?: string | Date
+    date?: string | Date,
+    userRole?: string
   ): ServiceResult {
     const qty = Number(quantityToAdd);
     if (isNaN(qty) || qty <= 0) {
@@ -492,6 +571,12 @@ export class StockItemsService {
     if (!item) {
       return { error: 'Stock item not found', status: 404 };
     }
+    if (item.location === 'HOME' && userRole !== 'OWNER') {
+      return { error: 'Stock item not found', status: 404 };
+    }
+
+    const isHome = item.location === 'HOME';
+    const effectiveAutoConfirm = isHome ? true : autoConfirm;
 
     const parsedPrice = newUnitPrice !== undefined && newUnitPrice !== null && newUnitPrice !== ''
       ? Number(newUnitPrice)
@@ -504,7 +589,7 @@ export class StockItemsService {
 
     const result = await prisma.$transaction(async (tx) => {
       let updatedItem = item;
-      if (autoConfirm) {
+      if (effectiveAutoConfirm) {
         const updateData: any = { currentQuantity: { increment: qty } };
         if (parsedPrice !== undefined && !isNaN(parsedPrice) && parsedPrice >= 0) {
           updateData.unitPrice = parsedPrice;
@@ -520,14 +605,15 @@ export class StockItemsService {
         data: {
           stockItemId: id,
           userId,
+          location: item.location,
           quantity: qty,
           unitPrice: price,
           totalValue,
           type: 'IN',
-          status: autoConfirm ? 'CONFIRMED' : 'PENDING_CONFIRMATION',
-          reason: reason?.trim() || 'Manual Stock Addition',
+          status: effectiveAutoConfirm ? 'CONFIRMED' : 'PENDING_CONFIRMATION',
+          reason: reason?.trim() || (isHome ? 'Home Stock Addition' : 'Manual Stock Addition'),
           createdAt: movementDate,
-          ...(autoConfirm ? { confirmedAt: movementDate, confirmedById: userId } : {}),
+          ...(effectiveAutoConfirm ? { confirmedAt: movementDate, confirmedById: userId } : {}),
         },
       });
 
@@ -566,30 +652,32 @@ export class StockItemsService {
       return { stockItem: updatedItem, movement };
     });
 
-    // Notify Stock Keeper that new inward stock was added awaiting their physical confirmation
-    prisma.user.findUnique({
-      where: { id: userId },
-      select: { fullName: true, role: true },
-    }).then((user) => {
-      const addedBy = user ? `${user.fullName} (${user.role})` : 'Management';
-      notificationsService.notifyBranchRoles(
-        item.branchId,
-        [Role.STOCK_KEEPER],
-        'STOCK_INWARD_ADDED',
-        'notifications.stockInwardTitle',
-        'notifications.stockInwardBody',
-        {
-          itemName: item.name,
-          quantity: qty,
-          unit: item.unitType,
-          addedBy,
-          reason: reason?.trim() || '',
-        },
-        '/stock-movements'
-      ).catch((err) => console.error('[Notification] addStockItem notifyStockKeeper error:', err));
-    }).catch(() => {});
+    // Notify Stock Keeper ONLY if it is MAIN bakery stock! Never notify for HOME stock!
+    if (!isHome) {
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { fullName: true, role: true },
+      }).then((user) => {
+        const addedBy = user ? `${user.fullName} (${user.role})` : 'Management';
+        notificationsService.notifyBranchRoles(
+          item.branchId,
+          [Role.STOCK_KEEPER],
+          'STOCK_INWARD_ADDED',
+          'notifications.stockInwardTitle',
+          'notifications.stockInwardBody',
+          {
+            itemName: item.name,
+            quantity: qty,
+            unit: item.unitType,
+            addedBy,
+            reason: reason?.trim() || '',
+          },
+          '/stock-movements'
+        ).catch((err) => console.error('[Notification] addStockItem notifyStockKeeper error:', err));
+      }).catch(() => {});
+    }
 
-    if (loanInfo && loanInfo.isLoan) {
+    if (loanInfo && loanInfo.isLoan && !isHome) {
       notificationsService.notifyAdminsAndOwners(
         item.branchId,
         'STOCK_PURCHASE_LOAN',
@@ -607,7 +695,14 @@ export class StockItemsService {
     return { data: result };
   }
 
-  async reduceStockItem(id: string, userId: string, quantityToReduce: number, reason?: string, receivedBy?: string): ServiceResult {
+  async reduceStockItem(
+    id: string,
+    userId: string,
+    quantityToReduce: number,
+    reason?: string,
+    receivedBy?: string,
+    userRole?: string
+  ): ServiceResult {
     const qty = Number(quantityToReduce);
     if (isNaN(qty) || qty <= 0) {
       return { error: 'Valid positive quantity required for reduction', status: 400 };
@@ -615,6 +710,9 @@ export class StockItemsService {
 
     const item = await prisma.stockItem.findUnique({ where: { id } });
     if (!item) {
+      return { error: 'Stock item not found', status: 404 };
+    }
+    if (item.location === 'HOME' && userRole !== 'OWNER') {
       return { error: 'Stock item not found', status: 404 };
     }
 
@@ -638,51 +736,55 @@ export class StockItemsService {
         data: {
           stockItemId: id,
           userId,
+          location: item.location,
           quantity: qty,
           unitPrice: price,
           totalValue: qty * price,
           type: 'OUT',
           status: 'CONFIRMED',
           receivedBy: receivedBy?.trim() || null,
-          reason: reason?.trim() || 'Manual stock reduction / material issuance',
+          reason: reason?.trim() || (item.location === 'HOME' ? 'Home stock reduction' : 'Manual stock reduction / material issuance'),
         },
       });
 
       return { stockItem: updatedItem, movement };
     });
 
-    // Notify management & stock keeper that material was taken from warehouse
-    prisma.user.findUnique({
-      where: { id: userId },
-      select: { fullName: true, role: true },
-    }).then((user) => {
-      const takenBy = receivedBy?.trim() || (user ? `${user.fullName} (${user.role})` : 'Staff');
-      notificationsService.notifyBranchRoles(
-        item.branchId,
-        [Role.OWNER, Role.ADMIN, Role.STOCK_KEEPER],
-        'STOCK_OUTWARD',
-        'notifications.stockOutwardTitle',
-        'notifications.stockOutwardBody',
-        {
-          itemName: item.name,
-          quantity: qty,
-          unit: item.unitType,
-          takenBy,
-          reason: reason?.trim() || 'Material usage / issuance',
-          remaining: Number(result.stockItem.currentQuantity),
-        },
-        '/stock'
-      ).catch((err) => console.error('[Notification] reduceStockItem outward error:', err));
-    }).catch(() => {});
+    // Notify management & stock keeper only if MAIN bakery stock
+    if (item.location !== 'HOME') {
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { fullName: true, role: true },
+      }).then((user) => {
+        const takenBy = receivedBy?.trim() || (user ? `${user.fullName} (${user.role})` : 'Staff');
+        notificationsService.notifyBranchRoles(
+          item.branchId,
+          [Role.OWNER, Role.ADMIN, Role.STOCK_KEEPER],
+          'STOCK_OUTWARD',
+          'notifications.stockOutwardTitle',
+          'notifications.stockOutwardBody',
+          {
+            itemName: item.name,
+            quantity: qty,
+            unit: item.unitType,
+            takenBy,
+            reason: reason?.trim() || 'Material usage / issuance',
+            remaining: Number(result.stockItem.currentQuantity),
+          },
+          '/stock'
+        ).catch((err) => console.error('[Notification] reduceStockItem outward error:', err));
+      }).catch(() => {});
 
-    this.checkStockAndNotify(result.stockItem).catch((err) =>
-      console.error('[Notification] reduceStockItem checkStock error:', err)
-    );
+      this.checkStockAndNotify(result.stockItem).catch((err) =>
+        console.error('[Notification] reduceStockItem checkStock error:', err)
+      );
+    }
 
     return { data: result };
   }
 
-  private async checkStockAndNotify(item: { id: string; name: string; unitType: string; branchId: string; currentQuantity: any; minStockLevel: any }) {
+  private async checkStockAndNotify(item: { id: string; name: string; unitType: string; branchId: string; location?: string; currentQuantity: any; minStockLevel: any }) {
+    if (item.location === 'HOME') return;
     try {
       const remaining = Number(item.currentQuantity);
       const min = Number(item.minStockLevel);

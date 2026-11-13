@@ -177,7 +177,7 @@ export class ProductionBatchesService {
         return { error: `Invalid material quantity for stock item ${m.stockItemId}`, status: 400 };
       }
       const item = await prisma.stockItem.findUnique({ where: { id: m.stockItemId } });
-      if (!item) {
+      if (!item || item.location !== 'MAIN') {
         return { error: `Stock item not found: ${m.stockItemId}`, status: 404 };
       }
     }
