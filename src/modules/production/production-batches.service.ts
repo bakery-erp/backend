@@ -154,7 +154,7 @@ export class ProductionBatchesService {
   }
 
   async createProductionBatch(body: any, userId: string, userBranchId?: string | null): ServiceResult {
-    const { branchId, date, shift, items, materialUsages } = body;
+    const { branchId, date, shift, items, materialUsages, employeeId } = body;
     const bid = branchId || userBranchId;
 
     if (!bid) {
@@ -190,14 +190,26 @@ export class ProductionBatchesService {
       orderBy: { date: 'desc' },
     });
 
-
-
-    // Creator seen timestamp
+    // Creator seen timestamp and employee attribution
     const creator = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
     const now = new Date();
     const seenData: any = {};
     if (creator?.role === 'OWNER') {
       seenData.ownerSeenAt = now;
+      seenData.adminSeenAt = now;
+    } else if (creator?.role === 'ADMIN') {
+      seenData.adminSeenAt = now;
+    }
+
+    let batchUserId = userId;
+    if ((creator?.role === 'OWNER' || creator?.role === 'ADMIN') && employeeId) {
+      const employee = await prisma.user.findUnique({
+        where: { id: employeeId },
+        select: { id: true, fullName: true, role: true },
+      });
+      if (employee) {
+        batchUserId = employee.id;
+      }
     }
 
     // Execute atomic transaction for batch creation
@@ -205,7 +217,7 @@ export class ProductionBatchesService {
       const batch = await tx.productionBatch.create({
         data: {
           branchId: bid,
-          userId,
+          userId: batchUserId,
           sessionId: activeSession?.id || null,
           date: batchDate,
           shift: (shift as any) || null,
@@ -227,7 +239,7 @@ export class ProductionBatchesService {
             : undefined,
         },
         include: {
-          user: { select: { id: true, fullName: true } },
+          user: { select: { id: true, fullName: true, role: true } },
           items: { include: { product: true } },
           materialUsages: { include: { stockItem: true } },
         },
@@ -646,6 +658,7 @@ export class ProductionBatchesService {
           ...(batchDate ? { date: batchDate } : {}),
           ...(shift ? { shift: shift as any } : {}),
           ...(status ? { status: status as any } : {}),
+          ...(isAdminOrOwner && body.employeeId ? { userId: body.employeeId } : {}),
           isEdited: hasChanges ? true : existing.isEdited,
           editedAt: hasChanges ? new Date() : existing.editedAt,
           editHistory: updatedHistory,

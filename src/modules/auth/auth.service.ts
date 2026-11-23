@@ -68,6 +68,14 @@ export class AuthService {
       };
     }
 
+    const ALLOWED_LOGIN_ROLES = ['OWNER', 'ADMIN', 'STOCK_KEEPER'];
+    if (!ALLOWED_LOGIN_ROLES.includes(user.role) || user.canLogin === false) {
+      return {
+        error: 'ይህ አካውንት ለውስጥ ስራ መከታተያ ብቻ የተመዘገበ በመሆኑ ወደ ሲስተሙ መግባት አይችልም። እባክዎ አስተዳዳሪውን ያነጋግሩ። (This account is registered for internal work tracking only and cannot log in to the portal.)',
+        status: 403,
+      };
+    }
+
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) {
       return { error: 'Invalid credentials', status: 401 };

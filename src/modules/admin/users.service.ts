@@ -9,6 +9,7 @@ const userSelect = {
   role: true,
   branchId: true,
   isActive: true,
+  canLogin: true,
   createdAt: true,
   salary: true,
   dailyExpense: true,
@@ -41,6 +42,7 @@ export class UsersService {
         role: true,
         branchId: true,
         isActive: true,
+        canLogin: true,
         createdAt: true,
         salary: isPrivileged,
         dailyExpense: isPrivileged,
@@ -188,17 +190,26 @@ export class UsersService {
     const finalFilesUrl = fileUrl || bodyFilesUrl;
     const phoneTrim = phone?.trim();
 
-    if (!fullName?.trim() || !phoneTrim || !password) {
-      return { error: 'fullName, phone, password required', status: 400 };
+    const isWorkerRole = ['BAKER', 'CAKE_WORKER', 'SAMBUSA_WORKER', 'CASHIER', 'EMPLOYEE'].includes(role);
+    const canLoginValue = body.canLogin !== undefined ? Boolean(body.canLogin) : !isWorkerRole;
+
+    if (!fullName?.trim() || !phoneTrim) {
+      return { error: 'fullName and phone required', status: 400 };
+    }
+
+    let effectivePassword = password?.trim();
+    if (canLoginValue && (!effectivePassword || effectivePassword.length < 4)) {
+      return { error: 'Password must be at least 4 characters long for portal users', status: 400 };
+    }
+    if (!effectivePassword) {
+      effectivePassword = Math.random().toString(36).slice(-8) + 'Wk9!';
+    } else if (effectivePassword.length < 4) {
+      return { error: 'Password must be at least 4 characters long', status: 400 };
     }
 
     // Phone format validation (Ethiopian mobile numbers)
     if (!/^(?:\+251|0)[97]\d{8}$/.test(phoneTrim)) {
       return { error: 'Invalid Ethiopian phone number. Must be 10 digits starting with 09 or 07 (or +251).', status: 400 };
-    }
-
-    if (password.length < 4) {
-      return { error: 'Password must be at least 4 characters long', status: 400 };
     }
 
     if (!finalFilesUrl?.trim()) {
@@ -216,7 +227,7 @@ export class UsersService {
       return { error: 'Phone already exists', status: 400 };
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(effectivePassword, 10);
     const salaryNum = toDecimal(salary);
     const dailyExpenseNum = toDecimal(dailyExpense);
 
@@ -227,6 +238,7 @@ export class UsersService {
         passwordHash,
         role: role as any,
         branchId: branchId || null,
+        canLogin: canLoginValue,
         salary: salaryNum ?? undefined,
         dailyExpense: dailyExpenseNum ?? undefined,
         startDate: startDate ? new Date(startDate) : undefined,
@@ -253,6 +265,7 @@ export class UsersService {
       password,
       currentPassword,
       role,
+      canLogin,
       branchId,
       isActive,
       salary,
@@ -319,6 +332,12 @@ export class UsersService {
       data.phone = phoneTrim;
     }
     if (typeof role === 'string') data.role = role;
+    if (canLogin !== undefined) {
+      data.canLogin = typeof canLogin === 'boolean' ? canLogin : canLogin === 'true';
+    } else if (typeof role === 'string' && role !== targetUser.role) {
+      const isWorkerRole = ['BAKER', 'CAKE_WORKER', 'SAMBUSA_WORKER', 'CASHIER', 'EMPLOYEE'].includes(role);
+      data.canLogin = !isWorkerRole;
+    }
     if (branchId !== undefined) data.branchId = branchId || null;
     if (typeof isActive === 'boolean') data.isActive = isActive;
     if (salary !== undefined) data.salary = toDecimal(salary);

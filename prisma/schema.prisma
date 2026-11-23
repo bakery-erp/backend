@@ -164,6 +164,7 @@ model Branch {
   sales Sale[]
   leftoverRecords LeftoverRecord[]
   notifications Notification[]
+  dailyCashLogs DailyCashLog[]
 
   @@index([companyId])
 }
@@ -176,6 +177,7 @@ model User {
   role          Role      // OWNER/ADMIN = more privileges; BAKER, CASHIER, SAMBUSA_WORKER = staff
   branchId      String?
   isActive      Boolean   @default(true)
+  canLogin      Boolean   @default(true)
   // Salary / billing (all users are staff; optional for OWNER/ADMIN if not paid via payroll)
   salary        Decimal?  @db.Decimal(12, 2)
   dailyExpense  Decimal?  @db.Decimal(12, 2)
@@ -200,6 +202,7 @@ model User {
   passwordResetRequests PasswordResetRequest[]
   notifications Notification[]
   pushSubscriptions PushSubscription[]
+  dailyCashLogs DailyCashLog[] @relation("DailyCashLogUser")
 
   @@index([branchId])
   @@index([role])
@@ -422,7 +425,9 @@ model DailySession {
   id           String        @id @default(cuid())
   branchId     String
   branch       Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  date         DateTime      @db.Date   // Calendar day; opens at 00:00, ends after 24h; can register for any day (incl. past)
+  date         DateTime      @db.Date   // Start date of session (opens at 00:00 of day 1)
+  endDate      DateTime?     @db.Date   // End date of session (e.g. Day 2 for 48h cycle)
+  durationHours Int?         @default(48) // Target session duration in hours (default 48 for 2-day cycle)
   status       SessionStatus @default(OPEN)
   label              String?   // Optional session label e.g. "Morning Shift", "Shift A"
   openingCashFloat   Decimal? @db.Decimal(12, 2)
@@ -780,6 +785,26 @@ model SystemSetting {
   key       String   @unique
   value     String
   updatedAt DateTime @updatedAt
+}
+
+model DailyCashLog {
+  id              String   @id @default(cuid())
+  branchId        String
+  branch          Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  date            DateTime @db.Date
+  cashInDrawer    Decimal  @default(0) @db.Decimal(12, 2)
+  cbeTransfer     Decimal  @default(0) @db.Decimal(12, 2)
+  telebirr        Decimal  @default(0) @db.Decimal(12, 2)
+  tomorrowFloat   Decimal  @default(0) @db.Decimal(12, 2)
+  notes           String?
+  recordedById    String
+  recordedBy      User     @relation("DailyCashLogUser", fields: [recordedById], references: [id], onDelete: Restrict)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([branchId, date])
+  @@index([branchId])
+  @@index([date])
 }
 
 
