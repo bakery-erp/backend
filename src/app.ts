@@ -12,6 +12,7 @@ import { stockMovementsRouter } from './modules/inventory/stock-movements.contro
 import { productionBatchesRouter } from './modules/production/production-batches.controller.js';
 import { productConversionsRouter } from './modules/production/product-conversions.controller.js';
 import { dailySessionsRouter, leftoverRecordsRouter, salesRouter, DailySessionsService } from './modules/sessions/index.js';
+import { dailyCashLogsRouter } from './modules/daily-cash-logs/index.js';
 import { suppliersRouter, supplierDeliveriesRouter } from './modules/procurement/index.js';
 import { financialCategoriesRouter, expensesRouter, loansRouter, penaltiesRouter, payrollRouter } from './modules/finance/index.js';
 import { analyticsRouter, dashboardRouter, financialReportsRouter } from './modules/reporting/index.js';
@@ -157,6 +158,7 @@ app.use('/api/stock-movements', stockMovementsRouter);
 app.use('/api/production-batches', productionBatchesRouter);
 app.use('/api/product-conversions', productConversionsRouter);
 app.use('/api/daily-sessions', dailySessionsRouter);
+app.use('/api/daily-cash-logs', dailyCashLogsRouter);
 app.use('/api/sales', salesRouter);
 app.use('/api/leftover-records', leftoverRecordsRouter);
 app.use('/api/suppliers', suppliersRouter);

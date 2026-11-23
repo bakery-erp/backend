@@ -65,9 +65,12 @@ export class DailySessionsService {
     if (branchId) where.branchId = branchId;
     if (status) where.status = status;
     if (from || to) {
-      where.date = {};
-      if (from) where.date.gte = new Date(from);
-      if (to) where.date.lte = new Date(to);
+      const fromDate = from ? new Date(from) : undefined;
+      const toDate = to ? new Date(to) : undefined;
+      where.AND = [
+        ...(fromDate ? [{ OR: [{ date: { gte: fromDate } }, { endDate: { gte: fromDate } }] }] : []),
+        ...(toDate ? [{ date: { lte: toDate } }] : []),
+      ];
     }
 
     const isPaginated = page != null && limit != null;
@@ -100,12 +103,27 @@ export class DailySessionsService {
     }
     const d = businessDateUtcNoon(parts.y, parts.mo, parts.day);
 
+    // 1. If there is already an active (OPEN or CLOSE_PENDING) session for this branch, return it
     let session = await prisma.dailySession.findFirst({
-      where: { branchId, date: d },
+      where: {
+        branchId,
+        status: { in: ['OPEN', 'CLOSE_PENDING'] },
+      },
       include: {
         _count: { select: { sales: true, leftoverRecords: true } },
       },
+      orderBy: { date: 'desc' },
     });
+
+    // 2. If no active session, check if a session exists starting on date d
+    if (!session) {
+      session = await prisma.dailySession.findFirst({
+        where: { branchId, date: d },
+        include: {
+          _count: { select: { sales: true, leftoverRecords: true } },
+        },
+      });
+    }
 
     if (!session) {
       const previousClosed = await prisma.dailySession.findFirst({
@@ -122,11 +140,15 @@ export class DailySessionsService {
         ? decimalToNum(previousClosed.cashLeftoverAmount)
         : (previousClosed?.actualCashAmount != null ? decimalToNum(previousClosed.actualCashAmount) : 0);
 
-      const sessionLabel = `Closing - ${dateToYmdUtc(d)}`;
+      // Default to 48 hours / 2 days
+      const endDate = new Date(d.getTime() + 24 * 60 * 60 * 1000);
+      const sessionLabel = `Closing — ${dateToYmdUtc(d)} → ${dateToYmdUtc(endDate)} (48h)`;
       const createdSession = await prisma.dailySession.create({
         data: {
           branchId,
           date: d,
+          endDate,
+          durationHours: 48,
           status: 'OPEN',
           label: sessionLabel,
           openingCashFloat: carriedFloat,
@@ -171,13 +193,16 @@ export class DailySessionsService {
       return { error: 'Session not found', status: 404 };
     }
 
-    // Aggregate production totals per product for this session/date
+    const sessionStartDate = session.date;
+    const sessionEndDate = session.endDate || session.date;
+
+    // Aggregate production totals per product for this session/date range
     const batches = await prisma.productionBatch.findMany({
       where: {
         branchId: session.branchId,
         OR: [
           { sessionId: id },
-          { date: session.date },
+          { date: { gte: sessionStartDate, lte: sessionEndDate } },
         ],
       },
       include: {
@@ -318,13 +343,16 @@ export class DailySessionsService {
         where: {
           branchId: session.branchId,
           type: 'CUSTOMER',
-          date: session.date,
+          date: { gte: sessionStartDate, lte: sessionEndDate },
         },
       }),
       prisma.customerCredit.findMany({
         where: {
           branchId: session.branchId,
-          date: session.date,
+          OR: [
+            { sessionId: session.id },
+            { date: { gte: sessionStartDate, lte: sessionEndDate } },
+          ],
         },
       }),
     ]);
@@ -414,7 +442,7 @@ export class DailySessionsService {
     const customerLoanPayments = await prisma.loanPayment.findMany({
       where: {
         loan: { branchId: session.branchId, type: 'CUSTOMER' },
-        date: session.date,
+        date: { gte: sessionStartDate, lte: sessionEndDate },
       },
     });
     const creditReceivedFromLoan = customerLoanPayments.reduce((sum, p) => sum + Number(p.amountPaid), 0);
@@ -452,7 +480,7 @@ export class DailySessionsService {
   }
 
   async createDailySession(body: any, userBranchId?: string | null): ServiceResult {
-    const { branchId, date, label } = body;
+    const { branchId, date, endDate: customEndDate, durationHours: customDuration, label } = body;
     let bid = branchId || userBranchId;
     if (bid) {
       const branchExists = await prisma.branch.findUnique({ where: { id: bid } });
@@ -477,6 +505,17 @@ export class DailySessionsService {
     const { y, mo, day } = parts;
     const d = businessDateUtcNoon(y, mo, day);
 
+    let endD: Date;
+    let durHours = customDuration != null ? Number(customDuration) : 48;
+    if (customEndDate) {
+      const endParts = parseYmd(customEndDate);
+      endD = endParts ? businessDateUtcNoon(endParts.y, endParts.mo, endParts.day) : new Date(d.getTime() + 24 * 60 * 60 * 1000);
+    } else if (durHours === 24) {
+      endD = d;
+    } else {
+      endD = new Date(d.getTime() + 24 * 60 * 60 * 1000);
+    }
+
     const existing = await prisma.dailySession.findFirst({
       where: {
         branchId: bid,
@@ -495,7 +534,7 @@ export class DailySessionsService {
       return { data: existing };
     }
 
-    const sessionLabel = label?.trim() || `Daily Closing - ${dateToYmdUtc(d)}`;
+    const sessionLabel = label?.trim() || `Daily Closing — ${dateToYmdUtc(d)} → ${dateToYmdUtc(endD)} (${durHours}h)`;
 
     try {
       // Find most recent closed session to seed opening float and leftover inventory
@@ -521,6 +560,8 @@ export class DailySessionsService {
         data: {
           branchId: bid,
           date: d,
+          endDate: endD,
+          durationHours: durHours,
           status: 'OPEN',
           label: sessionLabel,
           openingCashFloat: openingFloatVal,
@@ -565,10 +606,13 @@ export class DailySessionsService {
   private async checkLeftoverStockLimits(session: any, leftoverRecords: any[]): Promise<string | null> {
     if (!Array.isArray(leftoverRecords) || leftoverRecords.length === 0) return null;
 
+    const sessionStartDate = session.date;
+    const sessionEndDate = session.endDate || session.date;
+
     const batches = await prisma.productionBatch.findMany({
       where: {
         branchId: session.branchId,
-        OR: [{ sessionId: session.id }, { date: session.date }],
+        OR: [{ sessionId: session.id }, { date: { gte: sessionStartDate, lte: sessionEndDate } }],
         status: { in: ['STARTED', 'COMPLETED', 'PENDING_APPROVAL'] },
       },
       include: { items: true },
@@ -639,13 +683,16 @@ export class DailySessionsService {
         where: {
           branchId: session.branchId,
           type: 'CUSTOMER',
-          date: session.date,
+          date: { gte: sessionStartDate, lte: sessionEndDate },
         },
       }),
       prisma.customerCredit.findMany({
         where: {
           branchId: session.branchId,
-          date: session.date,
+          OR: [
+            { sessionId: session.id },
+            { date: { gte: sessionStartDate, lte: sessionEndDate } },
+          ],
         },
       }),
     ]);
@@ -1108,7 +1155,8 @@ export class DailySessionsService {
         ? null
         : decimalToNum(cashLeftoverAmountRaw);
 
-    const sessionBusinessDate = session.date;
+    const sessionStartDate = session.date;
+    const sessionEndDate = session.endDate || session.date;
 
     // Upsert leftover records (including damaged quantities)
     if (Array.isArray(leftoverRecords)) {
@@ -1146,7 +1194,7 @@ export class DailySessionsService {
       where: {
         branchId: session.branchId,
         status: 'CLOSED',
-        date: { lt: sessionBusinessDate },
+        date: { lt: sessionStartDate },
       },
       include: { leftoverRecords: true },
       orderBy: { date: 'desc' },
@@ -1157,11 +1205,14 @@ export class DailySessionsService {
       openingByProduct[row.productId] = (openingByProduct[row.productId] ?? 0) + row.quantityRemaining;
     }
 
-    // Production totals for this session's calendar date
+    // Production totals for this session's date range
     const batches = await prisma.productionBatch.findMany({
       where: {
         branchId: session.branchId,
-        date: sessionBusinessDate,
+        OR: [
+          { sessionId },
+          { date: { gte: sessionStartDate, lte: sessionEndDate } },
+        ],
       },
       include: { items: { include: { product: true } } },
     });
@@ -1173,42 +1224,38 @@ export class DailySessionsService {
       }
     }
 
-    // Supplier purchases received this calendar day
-    const sessionYmd = dateToYmdUtc(sessionBusinessDate);
-    const dayRange = utcDayRangeInclusive(sessionYmd);
+    // Supplier purchases received during this session's period
     const boughtByProduct: Record<string, number> = {};
+    const dayDeliveries = await prisma.supplierDelivery.findMany({
+      where: {
+        supplier: { branchId: session.branchId },
+        OR: [
+          { sessionId },
+          { createdAt: { gte: sessionStartDate, lte: new Date(sessionEndDate.getTime() + 24 * 60 * 60 * 1000 - 1) } },
+        ],
+      },
+    });
 
-    if (dayRange) {
-      const dayDeliveries = await prisma.supplierDelivery.findMany({
-        where: {
-          supplier: { branchId: session.branchId },
-          createdAt: { gte: dayRange.start, lte: dayRange.end },
-        },
-      });
-
-      for (const d of dayDeliveries) {
-        const net = Math.max(0, d.quantityReceived - (d.returnedQuantity ?? 0));
-        if (net <= 0) continue;
-        boughtByProduct[d.productId] = (boughtByProduct[d.productId] ?? 0) + net;
-      }
+    for (const d of dayDeliveries) {
+      const net = Math.max(0, d.quantityReceived - (d.returnedQuantity ?? 0));
+      if (net <= 0) continue;
+      boughtByProduct[d.productId] = (boughtByProduct[d.productId] ?? 0) + net;
     }
 
-    // Product conversions recorded during this session's calendar day
+    // Product conversions recorded during this session's period
     const convertedInByProduct: Record<string, number> = {};
     const convertedOutByProduct: Record<string, number> = {};
 
-    if (dayRange) {
-      const dayConversions = await prisma.productConversion.findMany({
-        where: {
-          branchId: session.branchId,
-          createdAt: { gte: dayRange.start, lte: dayRange.end },
-        },
-      });
+    const dayConversions = await prisma.productConversion.findMany({
+      where: {
+        branchId: session.branchId,
+        createdAt: { gte: sessionStartDate, lte: new Date(sessionEndDate.getTime() + 24 * 60 * 60 * 1000 - 1) },
+      },
+    });
 
-      for (const c of dayConversions) {
-        convertedOutByProduct[c.fromProductId] = (convertedOutByProduct[c.fromProductId] ?? 0) + c.fromQuantity;
-        convertedInByProduct[c.toProductId] = (convertedInByProduct[c.toProductId] ?? 0) + c.toQuantity;
-      }
+    for (const c of dayConversions) {
+      convertedOutByProduct[c.fromProductId] = (convertedOutByProduct[c.fromProductId] ?? 0) + c.fromQuantity;
+      convertedInByProduct[c.toProductId] = (convertedInByProduct[c.toProductId] ?? 0) + c.toQuantity;
     }
 
     // Keep rows for products that have opening stock, today's production, purchases, or conversions
@@ -1264,13 +1311,13 @@ export class DailySessionsService {
 
     const productMap = new Map(products.map((p) => [p.id, p]));
 
-    // Load customer credits taken for this session or date to deduct them from derived cash sales
+    // Load customer credits taken for this session or date range to deduct them from derived cash sales
     const [sessionCustomerCredits, sessionLegacyLoans] = await Promise.all([
       prisma.customerCredit.findMany({
         where: {
           OR: [
             { sessionId },
-            { branchId: session.branchId, date: sessionBusinessDate },
+            { branchId: session.branchId, date: { gte: sessionStartDate, lte: sessionEndDate } },
           ],
         },
         select: { description: true },
@@ -1279,7 +1326,7 @@ export class DailySessionsService {
         where: {
           branchId: session.branchId,
           type: 'CUSTOMER',
-          date: sessionBusinessDate,
+          date: { gte: sessionStartDate, lte: sessionEndDate },
         },
         select: { entityId: true },
       }),
@@ -1355,6 +1402,7 @@ export class DailySessionsService {
       where: { id: sessionId },
       data: {
         status: 'CLOSED',
+        endDate: sessionEndDate,
         ...(cashLeftoverAmount !== null && { cashLeftoverAmount }),
         ...(actualCashAmount != null && { actualCashAmount: decimalToNum(actualCashAmount) }),
         ...(actualCbeAmount != null && { actualCbeAmount: decimalToNum(actualCbeAmount) }),
@@ -1388,7 +1436,10 @@ export class DailySessionsService {
     const dayExpenses = await prisma.expense.findMany({
       where: {
         branchId: session.branchId,
-        date: sessionBusinessDate,
+        OR: [
+          { sessionId },
+          { date: { gte: sessionStartDate, lte: sessionEndDate } },
+        ],
         type: 'COMPANY',
       },
     });
@@ -1399,7 +1450,7 @@ export class DailySessionsService {
     const customerLoanPayments = await prisma.loanPayment.findMany({
       where: {
         loan: { branchId: session.branchId, type: 'CUSTOMER' },
-        date: sessionBusinessDate,
+        date: { gte: sessionStartDate, lte: sessionEndDate },
       },
     });
     const creditReceivedFromLoan = customerLoanPayments.reduce((sum, p) => sum + Number(p.amountPaid), 0);
@@ -1459,7 +1510,7 @@ export class DailySessionsService {
       }
     }
 
-    await this.cascadeRecalculateForwardSessions(session.branchId, sessionBusinessDate, userId);
+    await this.cascadeRecalculateForwardSessions(session.branchId, sessionStartDate, userId);
 
     return { data: resultData };
   }
@@ -1471,7 +1522,7 @@ export class DailySessionsService {
     const session = await prisma.dailySession.findFirst({
       where: {
         branchId,
-        status: 'OPEN',
+        status: { in: ['OPEN', 'CLOSE_PENDING'] },
       },
       include: {
         leftoverRecords: { include: { product: true } },
@@ -1541,6 +1592,7 @@ export class DailySessionsService {
     const activeSession = await prisma.dailySession.findFirst({
       where: {
         branchId: bid,
+        status: { in: ['OPEN', 'CLOSE_PENDING'] },
       },
       include: {
         leftoverRecords: { include: { product: true } },
@@ -1549,7 +1601,8 @@ export class DailySessionsService {
       orderBy: { date: 'desc' },
     });
 
-    const sessionDate = activeSession ? activeSession.date : new Date();
+    const sessionStartDate = activeSession ? activeSession.date : new Date();
+    const sessionEndDate = activeSession?.endDate || sessionStartDate;
 
     // 1. All active products
     const allProducts = await prisma.product.findMany({
@@ -1567,7 +1620,10 @@ export class DailySessionsService {
     const batches = await prisma.productionBatch.findMany({
       where: {
         branchId: bid,
-        date: sessionDate,
+        OR: [
+          ...(activeSession ? [{ sessionId: activeSession.id }] : []),
+          { date: { gte: sessionStartDate, lte: sessionEndDate } },
+        ],
         status: { in: ['STARTED', 'COMPLETED', 'PENDING_APPROVAL'] },
       },
       include: { items: true },
@@ -1583,14 +1639,21 @@ export class DailySessionsService {
     const delivMap: Record<string, number> = {};
     const deliveries = activeSession?.supplierDeliveries && activeSession.supplierDeliveries.length > 0
       ? activeSession.supplierDeliveries
-      : await prisma.supplierDelivery.findMany({ where: { supplier: { branchId: bid } } });
+      : await prisma.supplierDelivery.findMany({
+          where: {
+            supplier: { branchId: bid },
+            createdAt: { gte: sessionStartDate, lte: new Date(sessionEndDate.getTime() + 24 * 60 * 60 * 1000 - 1) },
+          },
+        });
     for (const d of deliveries || []) {
       delivMap[d.productId] = (delivMap[d.productId] || 0) + d.quantityReceived;
     }
 
     // 4. Sales
     const sales = await prisma.sale.findMany({
-      where: activeSession ? { OR: [{ sessionId: activeSession.id }, { branchId: bid, date: sessionDate }] } : { branchId: bid, date: sessionDate },
+      where: activeSession
+        ? { OR: [{ sessionId: activeSession.id }, { branchId: bid, date: { gte: sessionStartDate, lte: sessionEndDate } }] }
+        : { branchId: bid, date: { gte: sessionStartDate, lte: sessionEndDate } },
       include: { items: true },
     });
     const soldMap: Record<string, number> = {};
@@ -1602,7 +1665,10 @@ export class DailySessionsService {
 
     // 5. Conversions
     const conversions = await prisma.productConversion.findMany({
-      where: { branchId: bid, createdAt: { gte: sessionDate } },
+      where: {
+        branchId: bid,
+        createdAt: { gte: sessionStartDate, lte: new Date(sessionEndDate.getTime() + 24 * 60 * 60 * 1000 - 1) },
+      },
     });
     const convOutMap: Record<string, number> = {};
     const convInMap: Record<string, number> = {};
@@ -1616,7 +1682,7 @@ export class DailySessionsService {
       where: {
         branchId: bid,
         status: 'CLOSED',
-        date: { lt: sessionDate },
+        date: { lt: sessionStartDate },
       },
       orderBy: { date: 'desc' },
       include: { leftoverRecords: true },
@@ -1638,13 +1704,16 @@ export class DailySessionsService {
         where: {
           branchId: bid,
           type: 'CUSTOMER',
-          date: sessionDate,
+          date: { gte: sessionStartDate, lte: sessionEndDate },
         },
       }),
       prisma.customerCredit.findMany({
         where: {
           branchId: bid,
-          date: sessionDate,
+          OR: [
+            ...(activeSession ? [{ sessionId: activeSession.id }] : []),
+            { date: { gte: sessionStartDate, lte: sessionEndDate } },
+          ],
         },
       }),
     ]);
@@ -1698,7 +1767,7 @@ export class DailySessionsService {
       data: {
         hasActiveSession: true,
         sessionId: activeSession?.id || null,
-        sessionDate: dateToYmdUtc(sessionDate),
+        sessionDate: dateToYmdUtc(sessionStartDate),
         sessionStatus: 'OPEN',
         products,
       },
@@ -1711,13 +1780,14 @@ export class DailySessionsService {
     });
     if (!session) return 0;
 
-    const sessionBusinessDate = session.date;
+    const sessionStartDate = session.date;
+    const sessionEndDate = session.endDate || session.date;
 
     const previousClosed = await prisma.dailySession.findFirst({
       where: {
         branchId: session.branchId,
         status: 'CLOSED',
-        date: { lt: sessionBusinessDate },
+        date: { lt: sessionStartDate },
       },
       include: { leftoverRecords: true },
       orderBy: { date: 'desc' },
@@ -1731,7 +1801,10 @@ export class DailySessionsService {
     const batches = await prisma.productionBatch.findMany({
       where: {
         branchId: session.branchId,
-        date: sessionBusinessDate,
+        OR: [
+          { sessionId },
+          { date: { gte: sessionStartDate, lte: sessionEndDate } },
+        ],
       },
       include: { items: { include: { product: true } } },
     });
@@ -1742,36 +1815,33 @@ export class DailySessionsService {
       }
     }
 
-    const sessionYmd = dateToYmdUtc(sessionBusinessDate);
-    const dayRange = utcDayRangeInclusive(sessionYmd);
     const boughtByProduct: Record<string, number> = {};
-    if (dayRange) {
-      const dayDeliveries = await prisma.supplierDelivery.findMany({
-        where: {
-          supplier: { branchId: session.branchId },
-          createdAt: { gte: dayRange.start, lte: dayRange.end },
-        },
-      });
-      for (const d of dayDeliveries) {
-        const net = Math.max(0, d.quantityReceived - (d.returnedQuantity ?? 0));
-        if (net <= 0) continue;
-        boughtByProduct[d.productId] = (boughtByProduct[d.productId] ?? 0) + net;
-      }
+    const dayDeliveries = await prisma.supplierDelivery.findMany({
+      where: {
+        supplier: { branchId: session.branchId },
+        OR: [
+          { sessionId },
+          { createdAt: { gte: sessionStartDate, lte: new Date(sessionEndDate.getTime() + 24 * 60 * 60 * 1000 - 1) } },
+        ],
+      },
+    });
+    for (const d of dayDeliveries) {
+      const net = Math.max(0, d.quantityReceived - (d.returnedQuantity ?? 0));
+      if (net <= 0) continue;
+      boughtByProduct[d.productId] = (boughtByProduct[d.productId] ?? 0) + net;
     }
 
     const convertedInByProduct: Record<string, number> = {};
     const convertedOutByProduct: Record<string, number> = {};
-    if (dayRange) {
-      const dayConversions = await prisma.productConversion.findMany({
-        where: {
-          branchId: session.branchId,
-          createdAt: { gte: dayRange.start, lte: dayRange.end },
-        },
-      });
-      for (const c of dayConversions) {
-        convertedOutByProduct[c.fromProductId] = (convertedOutByProduct[c.fromProductId] ?? 0) + c.fromQuantity;
-        convertedInByProduct[c.toProductId] = (convertedInByProduct[c.toProductId] ?? 0) + c.toQuantity;
-      }
+    const dayConversions = await prisma.productConversion.findMany({
+      where: {
+        branchId: session.branchId,
+        createdAt: { gte: sessionStartDate, lte: new Date(sessionEndDate.getTime() + 24 * 60 * 60 * 1000 - 1) },
+      },
+    });
+    for (const c of dayConversions) {
+      convertedOutByProduct[c.fromProductId] = (convertedOutByProduct[c.fromProductId] ?? 0) + c.fromQuantity;
+      convertedInByProduct[c.toProductId] = (convertedInByProduct[c.toProductId] ?? 0) + c.toQuantity;
     }
 
     const leftovers = await prisma.leftoverRecord.findMany({
@@ -1802,13 +1872,13 @@ export class DailySessionsService {
       : [];
     const productMap = new Map(products.map((p) => [p.id, p]));
 
-    // Load customer credits taken for this session or date to deduct them from derived cash sales
+    // Load customer credits taken for this session or date range to deduct them from derived cash sales
     const [sessionCustomerCredits, sessionLegacyLoans] = await Promise.all([
       prisma.customerCredit.findMany({
         where: {
           OR: [
             { sessionId },
-            { branchId: session.branchId, date: sessionBusinessDate },
+            { branchId: session.branchId, date: { gte: sessionStartDate, lte: sessionEndDate } },
           ],
         },
         select: { description: true },
@@ -1817,7 +1887,7 @@ export class DailySessionsService {
         where: {
           branchId: session.branchId,
           type: 'CUSTOMER',
-          date: sessionBusinessDate,
+          date: { gte: sessionStartDate, lte: sessionEndDate },
         },
         select: { entityId: true },
       }),
